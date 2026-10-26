@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <title>ch003.xhtml</title>
+  <style>
+  </style>
+  <link rel="stylesheet" type="text/css" href="../styles/stylesheet1.css" />
+</head>
+<body epub:type="bodymatter">
+<section id="preface" class="level1 unnumbered">
+<h1 class="unnumbered">Preface</h1>
+<section id="what-is-this-book-about" class="level2 unnumbered">
+<h2 class="unnumbered">What Is This Book About</h2>
+<p>The world of backend development is <strong>vast</strong>.</p>
+<p>The context you operate into has a huge impact on the optimal tools and practices to tackle the problem you are working on.</p>
+<p>For example, <a href="https://cloud.google.com/solutions/devops/devops-tech-trunk-based-development">trunk-based development</a> works <a href="https://services.google.com/fh/files/misc/state-of-devops-2019.pdf">extremely well</a> to write software that is continuously deployed in a Cloud environment.<br />
+The very same approach might fit poorly the business model and the challenges faced by a team that sells software that is hosted and run on-premise by their customers - they are more likely to benefit from a <a href="https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow">Gitflow</a> approach.<br />
+If you are working alone, you can just push straight to <code>main</code>.</p>
+<p>There are few absolutes in the field of software development and I feel it’s beneficial to clarify your point of view when evaluating the pros and cons of any technique or approach.</p>
+<blockquote>
+<p><em>Zero To Production</em> will focus on the challenges of writing Cloud-native applications in a team of four or five engineers with different levels of experience and proficiency.</p>
+</blockquote>
+<section id="cloud-native-applications" class="level3 unnumbered">
+<h3 class="unnumbered">Cloud-native applications</h3>
+<p>Defining what <em>Cloud-native application</em> means is, by itself, a topic for a whole new book<a href="#fn1" class="footnote-ref" id="fnref1" epub:type="noteref">1</a>. Instead of prescribing what Cloud-native applications should <em>look like</em>, we can lay down what we expect them to <em>do</em>.<br />
+Paraphrasing Cornelia Davis, we expect Cloud-native applications:</p>
+<ul>
+<li>To achieve high-availability while running in fault-prone environments;</li>
+<li>To allow us to continuously release new versions with zero downtime;</li>
+<li>To handle dynamic workloads (e.g. request volumes).</li>
+</ul>
+<p>These requirements have a deep impact on the viable solution space for the architecture of our software.</p>
+<p>High availability implies that our application should be able to serve requests with no downtime even if one or more of our machines suddenly starts failing (a <em>common</em> occurrence in a Cloud environment<a href="#fn2" class="footnote-ref" id="fnref2" epub:type="noteref">2</a>). This forces our application to be <em>distributed</em> - there should be multiple instances of it running on multiple machines.<br />
+The same is true if we want to be able to handle dynamic workloads - we should be able to <strong>measure</strong> if our system is under load and throw more compute at the problem by spinning up new instances of the application. This also requires our infrastructure to be elastic to avoid overprovisioning and its associated costs.<br />
+Running a replicated application influences our approach to data persistence - we will avoid using the local filesystem as our primary storage solution, relying instead on databases for our persistence needs.</p>
+<p><em>Zero To Production</em> will thus extensively cover topics that might seem tangential to pure backend application development. But Cloud-native software is all about rainbows and DevOps, therefore we will be spending plenty of time on topics traditionally associated with the craft of <strong>operating</strong> systems.</p>
+<p>We will cover how to <strong>instrument</strong> your Rust application to collect logs, traces and metrics to be able to <strong>observe</strong> our system.</p>
+<p>We will cover how to set up and evolve your database schema via migrations.</p>
+<p>We will cover all the material required to use Rust to tackle both day one and day two concerns of a Cloud-native API.</p>
+</section>
+<section id="working-in-a-team" class="level3 unnumbered">
+<h3 class="unnumbered">Working in a team</h3>
+<p>The impact of those three requirements goes beyond the technical characteristics of our system: it influences how we <strong>build</strong> our software.</p>
+<p>To be able to quickly release a new version of our application to our users we need to be sure that our application works.<br />
+If you are working on a solo project you can rely on your thorough understanding of the whole system: you wrote it, it might be small enough to fit entirely in your head at any point in time.<a href="#fn3" class="footnote-ref" id="fnref3" epub:type="noteref">3</a><br />
+If you are working in a team on a commercial project, you will be very often working on code that was neither written or reviewed by you. The original authors might not be around anymore.</p>
+<p>You will end up being paralysed by fear every time you are about to introduce changes if you are relying on your comprehensive understanding of what the code does to prevent it from breaking.</p>
+<p>You want automated tests.<br />
+Running on every commit. On every branch. Keeping <code>main</code> healthy.</p>
+<p>You want to leverage the type system to make undesirable states difficult or impossible to represent.</p>
+<p>You want to use every tool at your disposal to empower each member of the team to evolve that piece of software. To contribute fully to the development process even if they might not be as experienced as you or equally familiar with the codebase or the technologies you are using.</p>
+<p><em>Zero To Production</em> will therefore put a strong emphasis on test-driven development and continuous integration from the get-go - we will have a CI pipeline set up before we even have a web server up and running!</p>
+<p>We will be covering techniques such as black-box testing for APIs and HTTP mocking - not wildly popular or well documented in the Rust community yet extremely powerful.</p>
+<p>We will also borrow terminology and techniques from the <a href="https://www.youtube.com/watch?v=PLFl95c-IiU">Domain Driven Design</a> world, combining them with <a href="https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/">type-driven design</a> to ensure the correctness of our systems.</p>
+<blockquote>
+<p>Our main focus is <em>enterprise software</em>: correct code which is expressive enough to model the domain and supple enough to support its evolution over time.</p>
+</blockquote>
+<p>We will thus have a bias for boring and correct solutions, even if they incur a performance overhead that could be optimised away with a more careful and chiseled approach.<br />
+Get it to run first, optimise it later (if needed).</p>
+</section>
+</section>
+<section id="who-is-this-book-for" class="level2 unnumbered">
+<h2 class="unnumbered">Who Is This Book For</h2>
+<p>The Rust ecosystem has had a remarkable focus on smashing adoption barriers with amazing material geared towards beginners and newcomers, a relentless effort that goes from documentation to the continuous polishing of the compiler diagnostics.<br />
+There is value in serving the largest possible audience.<br />
+At the same time, trying to <strong>always</strong> speak to <strong>everybody</strong> can have harmful side-effects: material that would be relevant to intermediate and advanced users but definitely too much too soon for beginners ends up being neglected.</p>
+<p>I struggled with it first-hand when I started to play around with <code>async/await</code>.<br />
+There was a significant gap between the knowledge I needed to be productive and the knowledge I had built reading <em>The Rust Book</em> or working in the Rust numerical ecosystem.<br />
+I wanted to get an answer to a straight-forward question:</p>
+<blockquote>
+<p>Can Rust be a <em>productive</em> language for API development?</p>
+</blockquote>
+<p><strong>Yes</strong>.</p>
+<p>But it can take some time to figure out <em>how</em>.<br />
+That’s why I am writing this book.</p>
+<p>I am writing this book for the seasoned backend developers who have read The Rust Book and are now trying to port over a couple of simple systems.</p>
+<p>I am writing this book for the new engineers on my team, a trail to help them make sense of the codebases they will contribute to over the coming weeks and months.</p>
+<p>I am writing this book for a niche whose needs I believe are currently underserved by the articles and resources available in the Rust ecosystem.</p>
+<p>I am writing this book for myself a year ago.<br />
+To socialise the knowledge gained during the journey: what does your toolbox look like if you are using Rust for backend development in 2022? What are the design patterns? Where are the pitfalls?</p>
+<p>If you do not fit this description but you are working towards it I will do my best to help you on the journey: while we won’t be covering a lot of material directly (e.g. most Rust language features) I will try to provide references and links where needed to help you pick up/brush off those concepts along the way.</p>
+<p>Let’s get started.</p>
+</section>
+</section>
+<section id="footnotes" class="footnotes footnotes-end-of-document" epub:type="footnotes">
+<hr />
+<aside epub:type="footnote" id="fn1">
+<p><a href="#fnref1" class="footnote-back" role="doc-backlink">1</a>. Like the excellent <a href="https://www.manning.com/books/cloud-native-patterns"><em>Cloud-native patterns</em></a> by Cornelia Davis!</p>
+</aside>
+<aside epub:type="footnote" id="fn2">
+<p><a href="#fnref2" class="footnote-back" role="doc-backlink">2</a>. For example, many companies run their software on <a href="https://aws.amazon.com/ec2/spot/">AWS Spot Instances</a> to reduce their infrastructure bills. The price of Spot instances is the result of a continuous auction and it can be substantially cheaper than the corresponding full price for On Demand instances (up to 90% cheaper!).<br />
+There is one gotcha: AWS can decommission your Spot instances at any point in time. Your software <strong>must</strong> be fault-tolerant to leverage this opportunity.</p>
+</aside>
+<aside epub:type="footnote" id="fn3">
+<p><a href="#fnref3" class="footnote-back" role="doc-backlink">3</a>. Assuming you wrote it recently.<br />
+Your past self from one year ago counts as a stranger for all intents and purposes in the world of software development. Pray that your past self wrote comments for your present self if you are about to pick up again an old project of yours.</p>
+</aside>
+</section>
+</body>
+</html>

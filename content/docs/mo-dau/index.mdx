@@ -1,0 +1,87 @@
+---
+title: "Mở Đầu: Giới Thiệu Cuốn Sách & Lời Tựa"
+description: "Tổng quan về cuốn sách Zero To Production In Rust của tác giả Luca Palmieri, lộ trình làm chủ phát triển Cloud-native API bằng Rust."
+---
+
+# Mở Đầu: Zero To Production In Rust
+
+Chào mừng bạn đến với **Zero To Production In Rust** — một trong những cuốn cẩm nang thực chiến toàn diện và giá trị nhất hiện nay về việc đưa ngôn ngữ lập trình Rust vào xây dựng các hệ thống dịch vụ phụ trợ (backend), vi dịch vụ (microservices) và API quy mô doanh nghiệp (*Cloud-native Enterprise Applications*).
+
+Tác giả **Luca Palmieri** — kỹ sư hệ thống giàu kinh nghiệm tại AWS và diễn giả quen thuộc trong cộng đồng Rust quốc tế — đã chắt lọc những trải nghiệm thực chiến xương máu để mang đến một lộ trình rõ ràng, thực tế và không đi tắt đón đầu (*no cutting corners*).
+
+<Callout type="info">
+  **Thông điệp cốt lõi của cuốn sách:**  
+  Rust không chỉ là ngôn ngữ lập trình hệ thống (Systems Programming) dành riêng cho hệ điều hành, trình duyệt hay thiết bị nhúng. Rust hoàn toàn có thể trở thành một ngôn ngữ cực kỳ hiệu quả, tin cậy và vững chãi để phát triển các hệ thống Backend API chạy trên môi trường điện toán đám mây.
+</Callout>
+
+---
+
+## I. Tại Sao Lại Là Rust Cho Ứng Dụng Backend?
+
+Trong nhiều năm qua, thế giới phát triển Backend chủ yếu xoay quanh các ngôn ngữ có bộ thu gom rác (Garbage Collector) như Java/Kotlin, C# (.NET), Go, hoặc các ngôn ngữ kịch bản năng động như Python, Node.js (TypeScript) và Ruby. Mỗi hệ sinh thái đều có những thế mạnh riêng, nhưng khi đối mặt với các bài toán hạ tầng quy mô lớn:
+
+1. **Hiệu năng và Tài nguyên Phần cứng**: Bộ thu gom rác (GC) thường gây ra hiện tượng *GC pause*, tiêu tốn nhiều bộ nhớ RAM dự phòng và khó đoán định độ trễ đuôi (*tail latency / p99*). Rust mang lại hiệu năng tương đương C/C++ với mức tiêu thụ tài nguyên tối thiểu và không cần GC.
+2. **Tính An Toàn Bộ Nhớ (Memory Safety)**: Hệ thống kiểu dữ liệu (*Type System*) chặt chẽ cùng mô hình Sở hữu (*Ownership & Borrowing*) loại bỏ hoàn toàn các lỗi kinh điển như *Null Pointer Dereference*, *Use-After-Free*, *Double Free* hay *Data Races* trong lập trình đa luồng ngay từ thời điểm biên dịch (*compile-time*).
+3. **Mô Hình Hóa Nghiệp Vụ Chuẩn Xác (Type-Driven Design)**: Rust sở hữu hệ thống kiểu đại số (*Algebraic Data Types*) với `enum` linh hoạt và `match` triệt để (*exhaustive matching*), giúp lập trình viên hiện thực hóa nguyên lý: *“Biến các trạng thái không hợp lệ thành điều không thể biểu diễn trong code”* (*Make invalid states unrepresentable*).
+
+Tuy nhiên, chuyển dịch từ việc đọc sách lý thuyết (*The Rust Book*) sang việc tự tay thiết kế một dịch vụ Backend hoàn chỉnh có kết nối Database, xử lý xác thực, ghi log/trace phân tán và chịu lỗi trên Production là một khoảng cách rất lớn. Cuốn sách này được sinh ra để thu hẹp khoảng cách đó.
+
+---
+
+## II. Lộ Trình Học Tập Của Cuốn Sách
+
+Không đi theo lối mòn giải thích lý thuyết ngôn ngữ đơn thuần, cuốn sách áp dụng phương pháp **Học tập dựa trên vấn đề thực tế (Problem-based Learning)**. Chúng ta sẽ cùng nhau bắt tay xây dựng một hệ thống phân phối bản tin email (*Email Newsletter API*) từ con số 0 đến khi sẵn sàng phục vụ người dùng thực tế:
+
+```text
+[Bắt đầu & Toolchain] ───> [Phân tích Yêu cầu] ───> [Khởi tạo HTTP Server]
+       (Chương 1)               (Chương 2)                 (Chương 3)
+                                                               │
+                                                               ▼
+[Triển khai Production] <─── [Giám sát Telemetry] <─── [Tích hợp Database]
+       (Chương 5)               (Chương 4)                 (Chương 3)
+           │
+           ▼
+[Kiểm tra & Xác thực Dữ liệu] ───> [Quản lý Lỗi Chuẩn Senior]
+       (Chương 6 & 7)                     (Chương 8)
+                                              │
+                                              ▼
+[Quy trình Phân tán Bất đồng bộ] <─── [Bảo mật & Cấp quyền API]
+         (Chương 11)                           (Chương 9 & 10)
+```
+
+Lộ trình được chia thành 4 chặng then chốt:
+
+### Chặng 1: Thiết Lập Nền Móng & Văn Hóa Kỹ Thuật (Chương 1 – Chương 2)
+* Làm chủ Rust Toolchain (`rustup`, `cargo`, compiler targets, release channels).
+* Tối ưu hóa vòng lặp phát triển nhanh (*Inner Development Loop*) với fast linker (`lld`, `mold`) và `cargo-watch`.
+* Thiết lập đường ống tích hợp liên tục (*Continuous Integration - CI*) khép kín với kiểm thử, đo độ bao phủ (*tarpaulin*), phân tích tĩnh (*clippy*), chuẩn hóa định dạng (*rustfmt*) và kiểm toán bảo mật (*cargo-audit*).
+* Phân tích yêu cầu bài toán qua các User Story và hoạch định chiến lược phát triển theo từng vòng lặp (*Iterations*).
+
+### Chặng 2: Xây Dựng Ứng Dụng Web & Tích Hợp Dữ Liệu (Chương 3 – Chương 5)
+* Lựa chọn web framework hiện đại (`actix-web`) và cấu trúc dự án chuẩn modular.
+* Xây dựng kiến trúc kiểm thử hộp đen (*Black-box Integration Testing*) cho HTTP API.
+* Tích hợp cơ sở dữ liệu quan hệ PostgreSQL với `sqlx`, quản lý tiến hóa lược đồ thông qua Database Migrations.
+* Thiết lập hệ thống giám sát phân tán (*Structured Logging & Telemetry*) bằng `tracing` để thu thập log, span, context propagation.
+* Đóng gói ứng dụng thành Docker Container và triển khai lên hạ tầng Cloud thực tế.
+
+### Chặng 3: Chuẩn Hóa Miền Nghiệp Vụ & Quản Trị Lỗi (Chương 6 – Chương 8)
+* Ứng dụng tư duy Domain-Driven Design (DDD) và Type-Driven Design: Sử dụng mẫu *Parse, don't validate* để bảo vệ tính toàn vẹn dữ liệu.
+* Xây dựng luồng xác nhận email kép (*Two-phase confirmation flow*), ngăn ngừa đăng ký rác.
+* Tư duy Senior về xử lý lỗi (*Error Handling*): Phân tách rạch ròi giữa lỗi nội bộ dành cho kỹ sư vận hành (*internal root cause*) và thông điệp lỗi an toàn trả về cho người dùng cuối (*user-facing response*), tận dụng `thiserror` và `anyhow`.
+
+### Chặng 4: Bảo Mật, Xác Thực & Xử Lý Bất Đồng Bộ Phân Tán (Chương 9 – Chương 11)
+* Hiện thực hóa tính năng gửi bản tin tới hàng loạt người dùng.
+* Bảo vệ API với các cơ chế xác thực HTTP Basic Auth, mã hóa mật khẩu an toàn (`argon2`), quản lý phiên làm việc (*Session-based authentication*).
+* Thiết kế quy trình xử lý công việc bất đồng bộ chịu lỗi (*Fault-tolerant asynchronous workflows*), đảm bảo tính lũy kế (*idempotency*), ngăn chặn việc gửi trùng lặp email khi hệ thống gặp sự cố mạng hoặc khởi động lại.
+
+---
+
+## III. Tâm Thế Tiếp Cận Dành Cho Kỹ Sư
+
+Để tiếp thu tối đa giá trị kiến thức từ cuốn sách, bạn nên chuẩn bị cho mình một tâm thế chủ động:
+
+1. **Pair Programming Cùng Trình Biên Dịch (Compiler)**: Trình biên dịch Rust (`rustc`) không phải là kẻ cản đường, mà là một đồng nghiệp nghiêm khắc giúp bạn phát hiện mọi rủi ro tiềm ẩn trước khi đưa code ra môi trường thật. Đọc kỹ thông báo lỗi của compiler là kỹ năng quan trọng nhất.
+2. **Chạy Đúng Trước, Tối Ưu Sau**: Chúng ta ưu tiên các giải pháp rõ ràng, đúng đắn và dễ bảo trì cho ứng dụng doanh nghiệp. Không tối ưu hóa sớm (*premature optimization*) bằng các kỹ thuật phức tạp nếu bài toán chưa thực sự đòi hỏi.
+3. **Tự Tay Gõ Code Và Kiểm Thử**: Đừng chỉ đọc lướt qua code mẫu. Hãy tạo dự án, gõ từng dòng lệnh, chạy bộ kiểm thử tự động và quan sát kết quả trả về trong terminal.
+
+Hãy chuyển sang bài học tiếp theo để cùng lắng nghe những chia sẻ tâm huyết từ **Florian Gilcher** (Đồng sáng lập Rust Foundation) trong phần **Lời Tựa (Foreword)**.

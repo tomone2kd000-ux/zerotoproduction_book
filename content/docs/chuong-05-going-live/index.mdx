@@ -1,0 +1,63 @@
+---
+title: "Tổng Quan Chương 5: Triển Khai Ứng Dụng Thực Tế"
+description: "Đóng gói ứng dụng Rust với Docker container, tối ưu hóa multi-stage build với cargo-chef và triển khai Continuous Deployment lên Cloud"
+---
+
+# Tổng Quan Chương 5: Triển Khai Ứng Dụng Thực Tế (Going Live)
+
+Chúng ta đã có một nguyên mẫu hoạt động hoàn hảo của dịch vụ bản tin email (newsletter API) kèm theo hệ thống đo đạc khả năng quan sát (observability & telemetry) vững chắc. Đã đến lúc đưa ứng dụng chính thức **lên sóng (Going Live)**!
+
+Trong chương này, chúng ta sẽ học cách đóng gói ứng dụng Rust thành một Docker container chuẩn mực, tối ưu hóa kích thước image và tốc độ biên dịch bằng kiến trúc Multi-stage build và `cargo-chef`, sau đó thiết lập quy trình **Triển khai liên tục (Continuous Deployment - CD)** lên nền tảng đám mây DigitalOcean App Platform.
+
+Khi hoàn thành chương 5, mỗi khi bạn đẩy một commit mới lên nhánh `main`, hệ thống sẽ tự động kích hoạt tiến trình build container, kiểm thử, cập nhật schema cơ sở dữ liệu và triển khai phiên bản mới nhất đến người dùng mà không cần can thiệp thủ công.
+
+---
+
+## 🎯 Mục Tiêu Kỹ Thuật
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       CONTINUOUS DEPLOYMENT PIPELINE                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+  Developer (git push main)
+        │
+        ▼
+  GitHub Repository
+        │
+        ▼ (Webhook Trigger)
+  DigitalOcean App Platform
+        │
+        ├─► [Planner Stage] (cargo-chef: Phân tích cây dependencies)
+        │
+        ├─► [Builder Stage] (Biên dịch thư viện & binary release tối ưu)
+        │
+        ├─► [Runtime Stage] (Tạo minimal container ~125MB trên Debian Slim)
+        │
+        ▼
+  Live Production Environment
+        ├─► Managed PostgreSQL Cluster (SSL Encrypted Connection)
+        ├─► Ingress / Automatic HTTPS Termination
+        └─► Zero2Prod Application Container (Port 8000, 0.0.0.0)
+```
+
+1. **Hiểu rõ triết lý Continuous Deployment**: Tại sao chúng ta cần bàn về deployment ngay từ Chương 5 thay vì đợi đến cuối sách? Quy trình CD ảnh hưởng thế nào tới tư duy thiết kế phần mềm, di cư cơ sở dữ liệu và bảo mật?
+2. **Ảo hóa với Docker & giải quyết bài toán Offline Mode của SQLx**: Khắc phục triệt để lỗi kiểm tra schema tại thời điểm biên dịch của `sqlx` bằng lệnh `cargo sqlx prepare`.
+3. **Cấu hình phân cấp (Hierarchical Configuration)**: Thiết kế hệ thống nạp cấu hình linh hoạt theo môi trường (`local` vs `production`) kết hợp ghi đè an toàn từ biến môi trường (`APP_` prefix).
+4. **Tối ưu hóa Docker Image chuyên sâu**:
+   - Áp dụng `.dockerignore` và Multi-stage build để giảm kích thước image từ **3.65 GB** xuống vỏn vẹn **125 MB** (giảm gần 30 lần!).
+   - Tận dụng `cargo-chef` để cache tầng biên dịch dependencies, giảm thời gian build Docker từ 15-20 phút xuống chỉ còn vài chục giây cho mỗi lần cập nhật mã nguồn.
+5. **Vận hành Production trên DigitalOcean App Platform**: Khai báo App Specification (`spec.yaml`), cấu hình kết nối CSDL có mã hóa SSL (`require_ssl`), nạp bí mật bảo mật và chạy migration trực tiếp.
+
+---
+
+## 🗺️ Lộ Trình Các Bài Học
+
+| Bài học | Trọng tâm kỹ thuật |
+| :--- | :--- |
+| **[01. Chiến Lược Deployment & Docker](/docs/chuong-05-going-live/01-chien-luoc-deployment-va-docker)** | Triết lý triển khai liên tục, nghịch lý "It works on my machine", ảo hóa bằng container và lựa chọn PaaS DigitalOcean. |
+| **[02. Xây Dựng Dockerfile Tối Ưu & SQLx](/docs/chuong-05-going-live/02-xay-dung-dockerfile-toi-uu-va-sqlx)** | Dockerfile cho Rust, SQLx Offline Mode, Networking `0.0.0.0`, Cấu hình phân cấp, Multi-stage builds và `cargo-chef`. |
+| **[03. Deploy DigitalOcean & Môi Trường](/docs/chuong-05-going-live/03-deploy-digitalocean-va-moi-truong)** | DigitalOcean App Platform, khai báo `spec.yaml`, inject secrets, kết nối Managed Postgres qua SSL và deploy thực tế. |
+
+<Callout type="info">
+  "Một dòng code chưa được triển khai lên Production là một dòng code chưa mang lại bất kỳ giá trị thực tế nào." Hãy cùng nhau xây dựng bệ phóng đưa ứng dụng Rust của chúng ta ra thế giới thực!
+</Callout>

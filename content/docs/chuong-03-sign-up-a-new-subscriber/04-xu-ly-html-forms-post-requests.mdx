@@ -1,0 +1,364 @@
+---
+title: "3.7 Xử Lý HTML Forms & POST Requests Trong Actix-web"
+description: "Đặc tả yêu cầu nhận dữ liệu form URL-encoded, viết kiểm thử tham số hóa (Table-driven tests) và giải mã cơ chế Extractor cùng framework Serde."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info">
+  **Trọng tâm bài học:** Triển khai endpoint `POST /subscriptions` để tiếp nhận dữ liệu từ biểu mẫu HTML. Chúng ta sẽ làm quen với phương pháp viết kiểm thử tham số hóa (Table-driven testing), giải mã cơ chế Extractor trong `actix-web` qua trait `FromRequest`, và khám phá sức mạnh của framework tuần tự hóa dữ liệu `serde` (tính trừu tượng zero-cost qua cơ chế Monomorphization).
+</Callout>
+
+## I. Tinh Chỉnh Yêu Cầu Nghiệp Vụ (Refining Our Requirements)
+
+Để đăng ký một độc giả mới vào hệ thống bản tin email, chúng ta cần thu thập những thông tin gì từ họ?
+
+Dĩ nhiên, thông tin bắt buộc đầu tiên là **địa chỉ email** (đây là bản tin *email newsletter*). Nhưng liệu chừng đó đã đủ chưa?
+
+Trong các buổi thảo luận sản phẩm thực tế giữa kỹ sư và Product Manager, câu hỏi này sẽ được cân nhắc kỹ:
+- Nhiều người dùng có thói quen sử dụng email phụ hoặc email ẩn danh.
+- Việc thu thập thêm một trường `name` (tên gọi) sẽ rất hữu ích: chúng ta có thể cá nhân hóa lời chào mở đầu trong email (`Xin chào {{subscriber.name}}!`), hoặc dễ dàng nhận ra người quen trong danh sách đăng ký.
+- Chúng ta không phải cảnh sát và không có nhu cầu xác thực "tên thật trên căn cước". Độc giả hoàn toàn có thể nhập bất kỳ biệt danh (handle) nào họ thích, chẳng hạn như `DenverCoder9` hay `GrugArchitect`.
+
+Do đó, chúng ta chốt lại yêu cầu: **Mỗi lượt đăng ký mới sẽ bao gồm cặp thông tin `name` và `email`**.
+
+```text
++-------------------------------------------------------------------------+
+|                  ĐẶC TẢ GIAO THỨC HTTP CHO /subscriptions              |
+|                                                                         |
+|  POST /subscriptions HTTP/1.1                                           |
+|  Host: localhost:8000                                                   |
+|  Content-Type: application/x-www-form-urlencoded                       |
+|                                                                         |
+|  name=le%20guin&email=ursula_le_guin%40gmail.com                       |
++------------------------------------+------------------------------------+
+                                     |
+                                     v
++------------------------------------+------------------------------------+
+|  - Cung cấp đủ name & email        | ===> Phản hồi HTTP 200 OK          |
+|  - Thiếu name hoặc thiếu email     | ===> Phản hồi HTTP 400 BAD REQUEST |
++-------------------------------------------------------------------------+
+```
+
+### Định Dạng Mã Hóa: `application/x-www-form-urlencoded`
+
+Dữ liệu biểu mẫu HTML khi được gửi bằng phương thức `POST` thường sử dụng định dạng `application/x-www-form-urlencoded`. Theo chuẩn kỹ thuật web:
+- Các trường dữ liệu được biểu diễn dưới dạng các cặp `key=value`, phân tách nhau bởi dấu `&`.
+- Các ký tự không phải chữ và số (non-alphanumeric) sẽ được mã hóa phần trăm (percent-encoded). Ví dụ: dấu cách `" "` chuyển thành `%20`, dấu `@` chuyển thành `%40`.
+- Chuỗi gửi lên mẫu: `name=le%20guin&email=ursula_le_guin%40gmail.com`.
+
+---
+
+## II. Đóng Khung Yêu Cầu Bằng Kiểm Thử (Capturing Requirements As Tests)
+
+Áp dụng tư duy Test-Driven, chúng ta viết ngay các bài kiểm thử để định hình hành vi mong đợi trong file `tests/health_check.rs`:
+
+```rust
+//! tests/health_check.rs
+
+// [...] Giữ nguyên helper spawn_app và test health_check_works
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // Arrange
+    let app_address = spawn_app();
+    let client = reqwest::Client::new();
+
+    // Act
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    let response = client
+        .post(&format!("{}/subscriptions", &app_address))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    // Assert
+    assert_eq!(200, response.status().as_u16());
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_data_is_missing() {
+    // Arrange
+    let app_address = spawn_app();
+    let client = reqwest::Client::new();
+    let test_cases = vec![
+        ("name=le%20guin", "thiếu trường email"),
+        ("email=ursula_le_guin%40gmail.com", "thiếu trường name"),
+        ("", "thiếu cả name lẫn email"),
+    ];
+
+    for (invalid_body, error_message) in test_cases {
+        // Act
+        let response = client
+            .post(&format!("{}/subscriptions", &app_address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(invalid_body)
+            .send()
+            .await
+            .expect("Thực thi request thất bại.");
+
+        // Assert
+        assert_eq!(
+            400,
+            response.status().as_u16(),
+            "API không trả về 400 Bad Request khi payload {}.",
+            error_message
+        );
+    }
+}
+```
+
+<Callout type="info">
+  **Table-Driven Testing (Kiểm thử tham số hóa):** Bài test `subscribe_returns_a_400_when_data_is_missing` sử dụng kỹ thuật duyệt qua một bảng danh sách các trường hợp kiểm thử (test cases). Thay vì sao chép mã assertion nhiều lần, ta chỉ cần lặp qua tập hợp dữ liệu không hợp lệ. Hãy luôn kèm theo thông báo lỗi chi tiết (`error_message`) để khi test fail, bạn biết chính xác trường hợp nào bị lỗi!
+</Callout>
+
+Chạy `cargo test`, cả hai bài test mới sẽ đỏ rực vì server hiện tại chưa có handler cho `/subscriptions` và mặc định trả về `404 NOT FOUND`:
+
+```text
+failures:
+    health_check::subscribe_returns_a_200_for_valid_form_data
+    health_check::subscribe_returns_a_400_when_data_is_missing
+```
+
+---
+
+## III. Phân Tích Dữ Liệu Form Từ POST Request
+
+### 1. Đăng ký Route `/subscriptions`
+
+Bước đầu tiên, thêm một route mới trong `src/lib.rs`:
+
+```rust
+//! src/lib.rs
+
+use actix_web::dev::Server;
+use actix_web::{web, App, HttpResponse, HttpServer};
+use std::net::TcpListener;
+
+async fn health_check() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+// Handler tạm thời luôn trả về 200 OK
+async fn subscribe() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+pub fn run(listener: TcpListener) -> Result<Server, std::io::Error> {
+    let server = HttpServer::new(|| {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+    })
+    .listen(listener)?
+    .run();
+    
+    Ok(server)
+}
+```
+
+Chạy lại `cargo test`:
+- `subscribe_returns_a_200_for_valid_form_data` chuyển sang **Xanh (Pass)** vì handler chấp nhận mọi thứ.
+- `subscribe_returns_a_400_when_data_is_missing` vẫn **Đỏ (Fail)** vì server trả về 200 thay vì 400 khi thiếu dữ liệu!
+
+Đã đến lúc chúng ta cần thực hiện việc bóc tách và kiểm tra tính hợp lệ của request body.
+
+---
+
+## IV. Cơ Chế Extractor Trong Actix-web
+
+Trong hướng dẫn của `actix-web`, khái niệm **Extractor** đóng vai trò hạt nhân. Đúng như tên gọi, Extractor là công cụ giúp trích xuất các mẩu thông tin cụ thể từ HTTP request gửi đến và chuyển đổi chúng thành các kiểu dữ liệu có kiểu tĩnh (strongly-typed) trong Rust:
+
+- `web::Path`: Trích xuất các tham số động trên URL (ví dụ `/users/{id}`).
+- `web::Query`: Trích xuất các query parameters trên URL (ví dụ `?page=2`).
+- `web::Json`: Tự động parse request body định dạng JSON.
+- `web::Form`: Tự động parse request body định dạng `application/x-www-form-urlencoded`.
+
+Một hàm handler trong `actix-web` có thể nhận tối đa 10 extractors khác nhau trong danh sách tham số, và thứ tự đặt tham số không hề ảnh hưởng!
+
+### Khai Báo `FormData` Cùng `web::Form`
+
+Định nghĩa struct chứa dữ liệu nhận về trong `src/lib.rs`:
+
+```rust
+//! src/lib.rs
+
+#[derive(serde::Deserialize)]
+struct FormData {
+    email: String,
+    name: String,
+}
+
+async fn subscribe(_form: web::Form<FormData>) -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+```
+
+Bổ sung crate `serde` kèm cờ `derive` vào file `Cargo.toml`:
+
+```toml
+[dependencies]
+actix-web = "4"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+Chạy lại `cargo test`:
+
+```text
+running 3 tests
+test health_check_works ... ok
+test subscribe_returns_a_200_for_valid_form_data ... ok
+test subscribe_returns_a_400_when_data_is_missing ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Cả 3 bài test đều đã chuyển sang màu xanh trọn vẹn!
+
+Nhưng câu hỏi quan trọng của một Senior Developer là: **Tại sao nó lại hoạt động? Điều gì đang diễn ra phía sau nắp ca-pô?**
+
+---
+
+## V. Khám Phá Bản Chất: `Form` Và Trait `FromRequest`
+
+Hãy nhìn vào định nghĩa của `web::Form` trong mã nguồn của `actix-web`:
+
+```rust
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub struct Form<T>(pub T);
+```
+
+Bản thân struct `Form<T>` chỉ là một vỏ bọc mỏng (*newtype wrapper*) generic trên kiểu `T`. Toàn bộ "phép thuật" bóc tách dữ liệu nằm ở trait **`FromRequest`**.
+
+```text
+HTTP Request (Headers & Byte Payload)
+                 |
+                 v
++-----------------------------------------------------------------+
+|                       Actix-web Dispatcher                      |
+|                                                                 |
+|   1. Duyệt qua từng tham số của handler function                |
+|   2. Gọi <T as FromRequest>::from_request(&req, &mut payload)   |
++--------------------------------+--------------------------------+
+                                 |
+                 +---------------+---------------+
+                 |                               |
+          [Thành công]                      [Thất bại]
+                 |                               |
+                 v                               v
+    Gọi handler(form, ...)              Dừng lại ngay lập tức!
+    với dữ liệu đã parse                Trả về HTTP 400 Bad Request
+    thành kiểu dữ liệu Rust             (Handler không bao giờ được gọi)
+```
+
+Rút gọn định nghĩa của trait `FromRequest`:
+
+```rust
+pub trait FromRequest: Sized {
+    type Error = Into<actix_web::Error>;
+
+    async fn from_request(
+        req: &HttpRequest, 
+        payload: &mut Payload
+    ) -> Result<Self, Self::Error>;
+}
+```
+
+Quy trình hoạt động:
+1. Trước khi thực thi hàm handler `subscribe`, `actix-web` kiểm tra tất cả các tham số đầu vào của hàm. Mọi tham số bắt buộc phải cài đặt trait `FromRequest`.
+2. Framework lần lượt gọi `from_request` cho từng tham số.
+3. Nếu tất cả các tham số đều trích xuất thành công, hàm handler mới được gọi với dữ liệu đã được ép kiểu mạnh.
+4. **Nếu có bất kỳ một extractor nào thất bại** (ví dụ: client gửi thiếu trường `email`, hoặc request body rỗng), quá trình xử lý dừng lại ngay lập tức. Lỗi được chuyển thành một `HttpResponse` (mặc định là mã `400 Bad Request`) và gửi ngược về cho client. Hàm handler của bạn thậm chí không cần phải chạy một dòng code nào!
+
+### Cầu Nối `serde_urlencoded`
+
+Bên trong implementation của `Form<T>::from_request`, sau khi gom đủ các luồng byte payload từ mạng, `actix-web` thực hiện dòng lệnh mấu chốt:
+
+```rust
+serde_urlencoded::from_bytes::<T>(&body).map_err(|_| UrlencodedError::Parse)
+```
+
+Để `from_bytes::<T>` có thể parse chuỗi byte thành struct `T` của bạn, `T` bắt buộc phải cài đặt trait `DeserializeOwned` của `serde`.
+
+---
+
+## VI. Chuyên Sâu Về Tuần Tự Hóa: Framework Serde
+
+Tại sao cả hệ sinh thái Rust đều sử dụng `serde`?
+Đúng như tên gọi ghép từ **Ser**ializing và **De**serializing: `serde` là framework tuần tự hóa và giải tuần tự hóa cấu trúc dữ liệu trong Rust một cách **hiệu quả** (efficiently) và **tổng quát** (generically).
+
+### 1. Tính Tổng Quát (Generically)
+
+`serde` không hề chứa bất kỳ dòng mã nào liên quan trực tiếp đến định dạng JSON, YAML hay URL-encoded. Thay vào đó, `serde` định nghĩa một **Data Model trừu tượng gồm 29 kiểu dữ liệu nguyên thủy** (boolean, i32, string, seq, map,...).
+
+```text
++---------------------+                      +---------------------+
+|   Rust Data Types   |                      |    Data Formats     |
+|   (struct FormData, |                      |  (JSON, YAML,       |
+|    Vec, Enum, ...)  |                      |   URL-encoded, ...) |
++----------+----------+                      +----------+----------+
+           |                                            ^
+           | [Serialize]                                | [Serializer]
+           v                                            |
++-------------------------------------------------------+----------+
+|                         SERDE DATA MODEL                         |
+|   (29 Kiểu dữ liệu trừu tượng: boolean, integer, string, map...) |
++-------------------------------------------------------+----------+
+           ^                                            |
+           | [Deserialize]                              | [Deserializer]
+           |                                            v
++----------+----------+                      +----------+----------+
+|   Rust Data Types   |                      |    Data Formats     |
++---------------------+                      +---------------------+
+```
+
+- **Phía Định Dạng Dữ Liệu:** Một thư viện hỗ trợ định dạng mới (như `serde_json` hay `serde_urlencoded`) chỉ cần cài đặt trait `Serializer` và `Deserializer`.
+- **Phía Kiểu Dữ Liệu Rust:** Struct của bạn chỉ cần cài đặt trait `Serialize` và `Deserialize`.
+
+Nhờ sự phân tách này, bạn chỉ cần implement `Deserialize` một lần duy nhất cho `FormData`. Sau đó, bạn có thể giải mã struct này từ JSON, YAML, URL-encoded hay bất kỳ định dạng nào khác trên `crates.io` mà không cần viết lại một dòng code!
+
+### 2. Tính Hiệu Quả Tuyệt Đối (Efficiently & Zero-Cost Abstraction)
+
+Các ngôn ngữ như Java, C# hay Python dựa vào **Runtime Reflection** (soi chiếu thời gian chạy) để quét tên trường và kiểu dữ liệu của class khi parse dữ liệu. Reflection gây hao tổn CPU và phân bổ bộ nhớ không cần thiết.
+
+Rust hoàn toàn không có runtime reflection. `serde` đạt được tốc độ vượt trội nhờ cơ chế **Monomorphization (Đơn hình hóa)**:
+- Tại thời điểm biên dịch, trình biên dịch Rust sẽ sinh ra một bản sao mã máy chuyên biệt cho từng cặp kiểu dữ liệu cụ thể.
+- Hai macro `#[derive(Serialize)]` và `#[derive(Deserialize)]` tự động phân tích cú pháp struct của bạn tại compile-time và sinh ra mã nguồn giải mã tối ưu tương đương với mã viết tay thủ công.
+- Kết quả: bạn có được sự tiện lợi của lập trình cấp cao mà không phải đánh đổi bất kỳ một chu kỳ CPU lãng phí nào ở runtime!
+
+---
+
+## VII. Bức Tranh Tổng Thể (Putting Everything Together)
+
+Hãy cùng nhìn lại toàn bộ hành trình của một request khi gửi đến endpoint `/subscriptions`:
+
+```text
+[Client gửi POST /subscriptions với body: name=le%20guin&email=ursula%40gmail.com]
+                                |
+                                v
+[HttpServer nhận kết nối TCP, chuyển payload cho App worker]
+                                |
+                                v
+[App đối chiếu routing table: Khớp POST và path /subscriptions]
+                                |
+                                v
+[Actix-web gọi Form::<FormData>::from_request]
+                                |
+                                v
+[serde_urlencoded giải mã từng cặp key-value dựa trên trait Deserialize]
+                                |
+          +---------------------+---------------------+
+          |                                           |
+   [Giải mã thành công]                       [Thiếu trường / Sai format]
+          |                                           |
+          v                                           v
+[Chuyển FormData vào handler subscribe]     [Tự động ngắt request, trả về 400 Bad Request]
+          |
+          v
+[Handler trả về 200 OK]
+```
+
+Một khối mã nhìn bề ngoài có vẻ vô cùng ngắn gọn và đơn giản, nhưng ẩn giấu bên dưới là sự kết hợp ăn ý tuyệt đối giữa hệ thống kiểu dữ liệu mạnh mẽ của Rust, cơ chế trait dispatch tĩnh không tốn chi phí và kiến trúc pipeline tinh gọn của `actix-web`!

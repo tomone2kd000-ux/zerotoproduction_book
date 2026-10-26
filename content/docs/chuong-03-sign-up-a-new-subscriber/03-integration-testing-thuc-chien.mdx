@@ -1,0 +1,407 @@
+---
+title: "3.4 - 3.6 Viết Integration Test Đầu Tiên Cho API"
+description: "Thiết lập kiểm thử tích hợp hộp đen (Black-box testing) với reqwest, tái cấu trúc nhị phân thành thư viện và giải quyết bài toán cổng ngẫu nhiên (Port 0)."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info">
+  **Ý tưởng cốt lõi:** Một bài kiểm thử API tốt không nên gọi trực tiếp hàm handler hay phụ thuộc vào framework nội bộ. Chúng ta sẽ xây dựng kiểm thử tích hợp hộp đen (black-box testing) thực thụ: khởi động ứng dụng trên một tiến trình nền với cổng ngẫu nhiên do hệ điều hành cấp phát (Port 0), sau đó dùng một HTTP client độc lập (`reqwest`) gửi request thật qua mạng để kiểm chứng toàn bộ hành vi của hệ thống.
+</Callout>
+
+## I. Kiểm Thử Một Endpoint Như Thế Nào? (How Do You Test An Endpoint?)
+
+Ở phần trước, chúng ta đã kiểm tra endpoint `/health_check` bằng cách chạy server rồi dùng `curl` gõ lệnh bằng tay.
+
+Tuy nhiên, kiểm thử thủ công là một cái bẫy tốn kém thời gian: khi ứng dụng phình to với hàng chục, hàng trăm endpoint, việc kiểm tra thủ công toàn bộ hệ thống sau mỗi lần sửa code là bất khả thi. Chúng ta bắt buộc phải **tự động hóa** toàn bộ các bước kiểm tra này trong đường ống CI để ngăn chặn lỗi hồi quy (regressions).
+
+### API Là Một Bản Khế Ước (Contract)
+
+Một API sinh ra để phục vụ thế giới bên ngoài. Các endpoint bạn phơi ra chính là một **bản hợp đồng (contract)** giữa bạn và các hệ thống client: một cam kết bất thành văn về cấu trúc dữ liệu đầu vào và đầu ra.
+
+```text
+                  API CONTRACT (BẢN KHẾ ƯỚC)
+              /                                \
+             v                                  v
++---------------------------+       +---------------------------+
+| Tương thích ngược         |       | Phá vỡ hợp đồng           |
+| (Backwards-compatible)    |       | (Breaking Changes)        |
+| - Thêm endpoint mới       |       | - Xóa bỏ endpoint         |
+| - Bổ sung field không bắt |       | - Đổi kiểu dữ liệu        |
+|   buộc vào response       |       | - Xóa bỏ một trường JSON  |
+| => Client cũ chạy tốt     |       | => Phá hủy client đang chạy|
++---------------------------+       +---------------------------+
+```
+
+Việc phá vỡ hợp đồng một cách có chủ đích (ví dụ khi nâng cấp phiên bản API v1 sang v2) là điều bình thường, nhưng việc **vô tình làm gãy hợp đồng** do sơ suất là một thảm họa sản phẩm.
+
+Làm thế nào để đảm bảo bạn không vô tình làm gãy hợp đồng API?
+Phương pháp tin cậy nhất chính là: **Tương tác với API y hệt như cách mà một người dùng thực thụ sẽ làm** — gửi HTTP request qua giao thức mạng và xác nhận các kỳ vọng trên HTTP response nhận về.
+
+Đây chính là triết lý **Kiểm thử hộp đen (Black-box Testing)**: kiểm chứng hành vi hệ thống dựa trên đầu vào và đầu ra mà không cần quan tâm đến chi tiết mã nguồn bên trong.
+
+### Cạm Bẫy Của Việc Gọi Trực Tiếp Handler
+
+Dưới góc nhìn này, một bài test gọi trực tiếp hàm handler như dưới đây là **hoàn toàn vô nghĩa và nguy hiểm**:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use crate::health_check;
+
+    #[tokio::test]
+    async fn health_check_succeeds() {
+        let response = health_check().await;
+        assert!(response.status().is_success());
+    }
+}
+```
+
+Tại sao bài test này lại cho bạn cảm giác an toàn giả tạo?
+- Bạn chưa hề kiểm tra xem handler có thực sự được gắn vào đường dẫn `/health_check` hay không (nếu ai đó sửa nhầm thành `/healthcheck`, test vẫn xanh nhưng production gãy).
+- Bạn chưa hề kiểm tra xem handler có được bảo vệ bởi HTTP method `GET` hay không (nếu ai đó đổi thành `POST`, test vẫn xanh).
+
+Thay vì phụ thuộc vào các helper test nội bộ của `actix-web` (vốn gây gắn kết chặt chẽ mã test vào framework), chúng ta sẽ chọn giải pháp hộp đen tuyệt đối: **Khởi chạy ứng dụng chạy ngầm ở đầu mỗi ca test và tương tác qua HTTP client `reqwest`**.
+
+---
+
+## II. Tổ Chức Mã Nguồn Kiểm Thử Trong Rust (Where Should I Put My Tests?)
+
+Rust cung cấp 3 vị trí để bạn đặt mã nguồn kiểm thử:
+
+1. **Embedded Test Module (`#[cfg(test)] mod tests`):** Nằm ngay trong cùng file mã nguồn với logic nghiệp vụ.
+2. **Thư mục bên ngoài `tests/`:** Nằm ở thư mục gốc của dự án.
+3. **Doc Tests:** Các ví dụ code được viết ngay trong comment tài liệu `///`.
+
+```text
+my_project/
+├── Cargo.toml
+├── src/
+│   ├── lib.rs       <--- [1. Embedded Tests]: Có thể soi vào private struct/fn
+│   └── main.rs
+└── tests/           <--- [2. Integration Tests]: Coi crate như dependency ngoài
+    └── health_check.rs
+```
+
+Sự khác biệt cốt lõi nằm ở **quyền hiển thị (visibility)**:
+- **Embedded Test Module:** Có đặc quyền truy cập vào toàn bộ các struct, hàm, trường nội bộ (private) của module. Rất thích hợp cho các dự án kiểu "tảng băng chìm" (Iceberg projects) — nơi giao diện công khai rất nhỏ nhưng bộ máy tính toán chìm bên dưới cực kỳ phức tạp.
+- **Thư mục `tests/`:** Được biên dịch thành một file nhị phân độc lập hoàn toàn. Nó chỉ có thể tương tác với mã nguồn của bạn thông qua các hàm `pub` được export từ thư viện. Đây chính là nơi hoàn hảo cho **Integration Testing**.
+
+---
+
+## III. Tái Cấu Trúc Dự Án Thành Thư Viện & Nhị Phân (Project Restructuring)
+
+Tất cả các file đặt trong thư mục `tests/` đều coi dự án của bạn như một thư viện bên ngoài (external crate). Tuy nhiên, hiện tại dự án của chúng ta chỉ có duy nhất một file thực thi `src/main.rs`. Nếu tạo file `tests/health_check.rs` ngay bây giờ và gọi `use zero2prod::...`, trình biên dịch sẽ báo lỗi `unresolved import zero2prod`.
+
+Chúng ta cần tách dự án thành 2 phần:
+1. **Library crate (`src/lib.rs`):** Nơi chứa toàn bộ logic ứng dụng, hàm handler và cấu hình server.
+2. **Binary crate (`src/main.rs`):** Một vỏ bọc siêu mỏng, chỉ đóng vai trò entrypoint gọi thư viện để khởi chạy.
+
+### 1. Cập nhật `Cargo.toml`
+
+Chúng ta khai báo rõ ràng mục tiêu thư viện và nhị phân trong `Cargo.toml`:
+
+```toml
+[package]
+name = "zero2prod"
+version = "0.1.0"
+authors = ["Luca Palmieri <contact@lpalmieri.com>"]
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+path = "src/main.rs"
+name = "zero2prod"
+
+[dependencies]
+actix-web = "4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+reqwest = "0.11"
+```
+
+<Callout type="info">
+  Mục `[dev-dependencies]` chỉ được nạp khi chạy kiểm thử hoặc ví dụ (`cargo test`). Các thư viện này hoàn toàn không bị đóng gói vào file nhị phân phát hành cuối cùng.
+</Callout>
+
+### 2. Tách mã nguồn vào `src/lib.rs` và `src/main.rs`
+
+Tạo file `src/lib.rs` và đưa logic khởi động vào hàm `run()` công khai:
+
+```rust
+//! src/lib.rs
+
+use actix_web::{web, App, HttpResponse, HttpServer};
+
+async fn health_check() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+pub async fn run() -> Result<(), std::io::Error> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+    })
+    .bind("127.0.0.1:8000")?
+    .run()
+    .await
+}
+```
+
+File `src/main.rs` lúc này trở nên vô cùng ngắn gọn:
+
+```rust
+//! src/main.rs
+
+use zero2prod::run;
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    run().await
+}
+```
+
+Chạy `cargo check` để đảm bảo dự án biên dịch hoàn hảo.
+
+---
+
+## IV. Hiện Thực Bài Kiểm Thử Tích Hợp Đầu Tiên
+
+Bây giờ hãy chuyển bản đặc tả nghiệp vụ của `/health_check` thành một bài kiểm thử thực thụ trong file `tests/health_check.rs`:
+
+```rust
+//! tests/health_check.rs
+
+#[tokio::test]
+async fn health_check_works() {
+    // Arrange (Chuẩn bị môi trường)
+    spawn_app().await.expect("Không thể khởi động ứng dụng.");
+    let client = reqwest::Client::new();
+
+    // Act (Thực hiện hành động)
+    let response = client
+        .get("http://127.0.0.1:8000/health_check")
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    // Assert (Xác nhận kỳ vọng)
+    assert!(response.status().is_success());
+    assert_eq!(Some(0), response.content_length());
+}
+
+async fn spawn_app() -> Result<(), std::io::Error> {
+    todo!()
+}
+```
+
+Hãy dành một phút để chiêm ngưỡng vẻ đẹp của bài test này:
+- Toàn bộ bài test hoàn toàn **độc lập với chi tiết công nghệ**. Nếu ngày mai bạn quyết định đập đi viết lại backend bằng Ruby on Rails hay Go, bài test này vẫn giữ nguyên giá trị kiểm chứng 100%!
+- Bài test bao phủ trọn vẹn 4 đặc tính quan trọng: Route `/health_check` có tồn tại, nhận phương thức `GET`, trả về mã 200, và có nội dung body rỗng.
+
+### Bài toán Server Chạy Vô Tận & Giải Pháp `tokio::spawn`
+
+Nếu bên trong `spawn_app` chúng ta chỉ gọi đơn giản:
+
+```rust
+async fn spawn_app() -> Result<(), std::io::Error> {
+    zero2prod::run().await
+}
+```
+
+Và chạy `cargo test`, bạn sẽ thấy bài test bị treo vĩnh viễn và không bao giờ kết thúc:
+
+```text
+running 1 test
+test health_check_works ... 
+test health_check_works has been running for over 60 seconds
+```
+
+**Nguyên nhân:** Lời gọi `HttpServer::run().await` lắng nghe kết nối liên tục không ngừng nghỉ. Future này không bao giờ tự kết thúc, khiến luồng thực thi trong `spawn_app` bị giữ chặt và các dòng lệnh test bên dưới không bao giờ có cơ hội được chạy!
+
+Chúng ta cần chạy ứng dụng như một **tác vụ nền (background task)**. Tiện ích `tokio::spawn` chính là cứu cánh: nó nhận vào một future và bàn giao cho runtime thực thi mà không bắt luồng gọi phải chờ đợi.
+
+Để làm được điều đó, hàm `run()` của chúng ta không nên gọi `.await` bên trong, mà cần trả về chính đối tượng `Server`:
+
+```rust
+//! src/lib.rs
+
+use actix_web::dev::Server;
+use actix_web::{web, App, HttpResponse, HttpServer};
+
+async fn health_check() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+// Bỏ từ khóa async, trả về Result<Server, std::io::Error>
+pub fn run() -> Result<Server, std::io::Error> {
+    let server = HttpServer::new(|| {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+    })
+    .bind("127.0.0.1:8000")?
+    .run();
+    
+    Ok(server)
+}
+```
+
+Cập nhật lại `src/main.rs`:
+
+```rust
+//! src/main.rs
+
+use zero2prod::run;
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    run()?.await
+}
+```
+
+Bây giờ, chúng ta viết hàm `spawn_app` trong `tests/health_check.rs`:
+
+```rust
+//! tests/health_check.rs
+
+fn spawn_app() {
+    let server = zero2prod::run().expect("Không thể bind địa chỉ");
+    // Bắn server chạy nền trên Tokio runtime
+    let _ = tokio::spawn(server);
+}
+
+#[tokio::test]
+async fn health_check_works() {
+    spawn_app();
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get("http://127.0.0.1:8000/health_check")
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    assert!(response.status().is_success());
+    assert_eq!(Some(0), response.content_length());
+}
+```
+
+Chạy `cargo test` ngay:
+
+```text
+running 1 test
+test health_check_works ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Tuyệt vời! Bài kiểm thử tích hợp đầu tiên của chúng ta đã chuyển sang màu xanh rực rỡ!
+
+---
+
+## V. Tinh Chỉnh & Giải Quyết Đụng Độ Cổng (Polishing & Random Port)
+
+Mặc dù bài test đã chạy thành công, thiết kế hiện tại vẫn tiềm ẩn rủi ro lớn: Cổng `8000` bị gán cứng (hardcoded).
+- Nếu máy bạn đang chạy một dịch vụ khác ở cổng 8000, test sẽ gãy lập tức.
+- Khi viết nhiều bài test chạy song song (`cargo test` mặc định chạy đa luồng), chỉ một test chiếm được cổng 8000, tất cả các test còn lại sẽ sập với lỗi `Address already in use`.
+
+### Cổng Số 0 (Port 0) Của Hệ Điều Hành
+
+Hệ điều hành cung cấp một cơ chế thông minh: **Port 0**. Khi một ứng dụng yêu cầu lắng nghe trên cổng 0 (ví dụ `127.0.0.1:0`), hệ điều hành sẽ tự động tìm kiếm một cổng TCP còn trống ngẫu nhiên và gán cho ứng dụng.
+
+Để làm được điều này, chúng ta sẽ tự bind socket bằng `std::net::TcpListener`, sau đó bàn giao listener cho `HttpServer` thông qua phương thức `.listen()`:
+
+```rust
+//! src/lib.rs
+
+use actix_web::dev::Server;
+use actix_web::{web, App, HttpResponse, HttpServer};
+use std::net::TcpListener;
+
+async fn health_check() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+pub fn run(listener: TcpListener) -> Result<Server, std::io::Error> {
+    let server = HttpServer::new(|| {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+    })
+    .listen(listener)?
+    .run();
+    
+    Ok(server)
+}
+```
+
+Cập nhật `src/main.rs`:
+
+```rust
+//! src/main.rs
+
+use std::net::TcpListener;
+use zero2prod::run;
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    let listener = TcpListener::bind("127.0.0.1:8000")?;
+    run(listener)?.await
+}
+```
+
+Bây giờ, trong file `tests/health_check.rs`, chúng ta yêu cầu hệ điều hành cấp cổng ngẫu nhiên và lấy ra cổng thực tế bằng phương thức `.local_addr().unwrap().port()`:
+
+```rust
+//! tests/health_check.rs
+
+use std::net::TcpListener;
+
+// Trả về địa chỉ URL đầy đủ của server test
+fn spawn_app() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .expect("Không thể bind cổng ngẫu nhiên");
+    let port = listener.local_addr().unwrap().port();
+    
+    let server = zero2prod::run(listener).expect("Không thể khởi động server");
+    let _ = tokio::spawn(server);
+    
+    format!("http://127.0.0.1:{}", port)
+}
+
+#[tokio::test]
+async fn health_check_works() {
+    // Arrange
+    let address = spawn_app();
+    let client = reqwest::Client::new();
+
+    // Act
+    let response = client
+        .get(&format!("{}/health_check", &address))
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    // Assert
+    assert!(response.status().is_success());
+    assert_eq!(Some(0), response.content_length());
+}
+```
+
+<Callout type="tip">
+  **Cơ chế dọn dẹp tài nguyên (Clean up):** Bạn có thể tự hỏi: Server chạy ngầm trong `tokio::spawn` có trở thành tiến trình ma (zombie) sau khi test chạy xong không?  
+  Câu trả lời là **không**. Mỗi hàm kiểm thử `#[tokio::test]` khởi tạo một runtime riêng biệt. Khi hàm test kết thúc, runtime bị drop và toàn bộ các background tasks được gắn với nó sẽ bị hủy bỏ ngay lập tức.
+</Callout>
+
+---
+
+## VI. Định Hướng Lại (Refocus)
+
+Chúng ta đã trải qua một chặng đường dài và xây dựng được nền móng kiểm thử vô cùng vững chắc. Giờ là lúc quay trở lại với mục tiêu chính của chương: **User Story Đăng Ký Bản Tin Email**.
+
+Ở bài học tiếp theo, chúng ta sẽ bắt tay vào:
+- Xử lý dữ liệu gửi lên từ HTML form qua định dạng `application/x-www-form-urlencoded`.
+- Viết kiểm thử tham số hóa (Table-driven test).
+- Mổ xẻ cơ chế hoạt động của các Extractors trong `actix-web` và thư viện giải mã dữ liệu đỉnh cao `serde`.

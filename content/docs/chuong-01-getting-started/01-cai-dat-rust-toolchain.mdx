@@ -1,0 +1,120 @@
+---
+title: "1.1 Cài Đặt Rust Toolchain"
+description: "Cơ chế quản lý Toolchain trong Rust thông qua rustup, phân tầng mục tiêu biên dịch (compilation targets) và các kênh phát hành (release channels)."
+---
+
+# 1.1 Cài Đặt Rust Toolchain
+
+Có nhiều cách khác nhau để cài đặt Rust lên hệ điều hành của bạn, nhưng con đường chuẩn mực và được khuyến nghị chính thức bởi cộng đồng là thông qua công cụ [**`rustup`**](https://rustup.rs/).
+
+Bản chất của `rustup` vượt xa một trình cài đặt thông thường — giá trị cốt lõi nhất của nó nằm ở khả năng **quản lý bộ công cụ (Toolchain Management)**. 
+
+<Callout type="info">
+  Một **Toolchain** trong thế giới Rust là sự kết hợp chặt chẽ giữa một **Mục tiêu biên dịch (Compilation Target)** và một **Kênh phát hành (Release Channel)**.
+</Callout>
+
+```text
+                  CẤU TRÚC MỘT RUST TOOLCHAIN
+┌─────────────────────────────────────────────────────────────┐
+│                       RUST TOOLCHAIN                        │
+│                                                             │
+│   ┌──────────────────────────┐   ┌───────────────────────┐  │
+│   │   Compilation Target     │ + │    Release Channel    │  │
+│   │ (x86_64-unknown-linux-gnu│   │ (stable, beta, nightly│  │
+│   │  aarch64-apple-darwin...)│   │   hoặc 1.72.0...)     │  │
+│   └──────────────────────────┘   └───────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## I. Mục Tiêu Biên Dịch (Compilation Targets)
+
+Nhiệm vụ hàng đầu của trình biên dịch Rust (`rustc`) là biến đổi các đoạn mã nguồn Rust trừu tượng thành **mã máy (Machine Code)** — tập hợp các chỉ thị nhị phân mà vi xử lý (CPU) và hệ điều hành cụ thể có thể hiểu và thực thi trực tiếp.
+
+Do đó, bạn sẽ cần một backend tương ứng của trình biên dịch cho từng **Mục tiêu biên dịch (Compilation Target)**, tức là cho từng nền tảng phần cứng và hệ điều hành mà bạn muốn sản phẩm chạy trên đó (chẳng hạn như Linux 64-bit, macOS ARM64 Apple Silicon, hay Windows x86_64).
+
+Dự án Rust cam kết hỗ trợ một phổ rộng các nền tảng phần cứng khác nhau, được phân cấp theo các **tầng bảo đảm (Tiers)**:
+
+| Phân Tầng (Tier) | Tên Gọi | Mức Độ Đảm Bảo Chất Lượng |
+| :--- | :--- | :--- |
+| **Tier 1** | *Guaranteed-to-work* | Đảm bảo hoạt động hoàn hảo 100%. Mọi commit vào compiler đều phải vượt qua toàn bộ bộ kiểm thử tự động trên nền tảng này trước khi được merge. |
+| **Tier 2** | *Guaranteed-to-build* | Đảm bảo biên dịch thành công. Mã nguồn compiler build được cho target này, nhưng có thể chưa chạy kiểm thử toàn diện trên thiết bị thực tế. |
+| **Tier 3** | *Best-effort* | Hỗ trợ theo nỗ lực tối đa của cộng đồng. Không có cam kết tự động hóa kiểm thử chính thức từ phía Rust core team. |
+
+Bạn có thể tra cứu danh sách các nền tảng được hỗ trợ đầy đủ và cập nhật nhất tại [Trang Rust Forge Platform Support](https://forge.rust-lang.org/release/platform-support.html).
+
+---
+
+## II. Các Kênh Phát Hành (Release Channels)
+
+Bản thân trình biên dịch Rust cũng là một phần mềm sống động: nó liên tục tiến hóa, tối ưu và sửa lỗi hàng ngày nhờ sự đóng góp bền bỉ của hàng trăm tình nguyện viên khắp thế giới.
+
+Dự án Rust theo đuổi triết lý nhất quán: **"Ổn định nhưng không trì trệ" (Stability without stagnation)**. Theo tài liệu chính thức của Rust:
+
+> *"Bạn không bao giờ phải lo sợ việc nâng cấp lên một phiên bản mới của Rust ổn định (Stable Rust). Mỗi lần nâng cấp đều phải diễn ra êm đẹp, không làm gãy vỡ mã nguồn cũ, đồng thời mang lại cho bạn các tính năng mới, ít lỗi hơn và thời gian biên dịch nhanh hơn."*
+
+Mô hình phát hành của Rust được tổ chức thành 3 kênh (Release Channels):
+
+```text
+    master branch (rust-lang/rust)
+                  │
+                  ▼
+         ┌─────────────────┐
+         │     nightly     │  ──> Ra lò mỗi đêm, chứa các feature flags chưa ổn định
+         └────────┬────────┘
+                  │ (Chu kỳ 6 tuần)
+                  ▼
+         ┌─────────────────┐
+         │      beta       │  ──> Ứng viên phát hành, kiểm thử hồi quy bằng crater
+         └────────┬────────┘
+                  │ (Chu kỳ 6 tuần)
+                  ▼
+         ┌─────────────────┐
+         │     stable      │  ──> Bản phát hành chính thức, chuẩn mực cho Production
+         └─────────────────┘
+```
+
+### 1. Kênh Ổn Định (`stable`)
+Đối với phát triển ứng dụng thực tế trong doanh nghiệp, bạn **luôn luôn nên dựa vào kênh `stable`** để biên dịch, kiểm thử và vận hành mã nguồn. 
+
+Kênh `stable` phát hành một phiên bản mới đều đặn **mỗi 6 tuần một lần** theo mô hình đoàn tàu (*train release model*). Khi một phiên bản mới ra mắt, nó đã trải qua hàng tháng trời kiểm tra kỹ lưỡng.
+
+### 2. Kênh Thử Nghiệm (`beta`)
+Đây là nhánh ứng viên cho bản phát hành `stable` tiếp theo. Việc các đội ngũ kỹ sư thử nghiệm dự án của họ trên trình biên dịch `beta` là một hành động đóng góp tuyệt vời cho cộng đồng: nó giúp phát hiện các lỗi hồi quy (*regressions*) trước khi bản phát hành chính thức đến tay hàng triệu lập trình viên.
+
+<details>
+<summary><b>Góc nhìn Chuyên sâu: Công cụ Crater của Rust Core Team</b></summary>
+
+Dự án Rust rất hiếm khi phát sinh lỗi làm gãy mã nguồn cũ nhờ vào hệ thống CI/CD phi thường. Một trong những thành phần cốt lõi là [**`crater`**](https://github.com/rust-lang/crater) — công cụ tự động cào hàng chục ngàn dự án mã nguồn mở trên [crates.io](https://crates.io) và GitHub, sau đó biên dịch và chạy lại toàn bộ test suite của chúng trên bản compiler mới để phát hiện bất kỳ thay đổi ngoài ý muốn nào.
+</details>
+
+### 3. Kênh Ban Đêm (`nightly`)
+Được biên dịch tự động mỗi đêm từ nhánh `master` của repository `rust-lang/rust`. 
+
+Kênh `nightly` phục vụ mục đích duy nhất: cho phép các nhà phát triển sớm trải nghiệm các tính năng ngôn ngữ đang trong quá trình thai nghén thông qua các cờ tính năng (*feature flags*) trước khi chúng được ổn định hóa.
+
+<Callout type="warn">
+  **Cảnh báo kỹ sư:**  
+  Nếu bạn đang có ý định vận hành một hệ thống phần mềm thương mại trên kênh `nightly`, hãy suy nghĩ lại thật kỹ. Kênh này được gọi là "unstable" là có lý do chính đáng: cú pháp và hành vi của các tính năng thử nghiệm có thể bị thay đổi hoặc gỡ bỏ hoàn toàn bất cứ lúc nào!
+</Callout>
+
+---
+
+## III. Chúng Ta Cần Toolchain Nào Cho Dự Án Này?
+
+Khi bạn cài đặt `rustup`, hệ thống sẽ mặc định tải về trình biên dịch thuộc kênh **`stable`** mới nhất dành riêng cho nền tảng máy tính bạn đang sử dụng (*host platform*). Đây cũng chính là kênh mà chúng ta sẽ sử dụng xuyên suốt toàn bộ cuốn sách.
+
+Bạn có thể dễ dàng cập nhật bộ toolchain lên phiên bản mới nhất bằng câu lệnh:
+
+```bash
+rustup update
+```
+
+Để kiểm tra danh sách các toolchain đang có trên máy:
+
+```bash
+rustup toolchain list
+```
+
+Chúng ta sẽ **không cần thực hiện kỹ thuật biên dịch chéo (cross-compilation)** phức tạp trên máy cá nhân. Trong các chương tiếp theo, ứng dụng backend của chúng ta sẽ được đóng gói và vận hành bên trong các Docker Container Linux, cho phép mã nguồn được biên dịch trực tiếp trong đúng môi trường mục tiêu của Production.

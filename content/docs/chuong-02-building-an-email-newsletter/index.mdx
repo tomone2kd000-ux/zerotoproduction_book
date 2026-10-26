@@ -1,0 +1,54 @@
+---
+title: "Chương 2: Thiết Kế Email Newsletter"
+description: "Tổng quan Chương 2: Lựa chọn bài toán thực chiến Email Newsletter, phân tích yêu cầu bằng User Stories và chiến lược phát triển theo từng vòng lặp."
+---
+
+# Chương 2: Thiết Kế Email Newsletter
+
+Ở phần Lời Nói Đầu, chúng ta đã khẳng định tôn chỉ cốt lõi:
+
+> *Zero To Production sẽ tập trung giải quyết những thách thức khi xây dựng ứng dụng Cloud-native trong một đội ngũ gồm 4-5 kỹ sư với trình độ và thâm niên khác nhau.*
+
+Nhưng làm thế nào để hiện thực hóa tôn chỉ ấy một cách thuyết phục nhất?  
+Câu trả lời rất thẳng thắn: **Bằng cách bắt tay vào tự mình xây dựng một hệ thống thật từ con số 0!**
+
+<Callout type="info">
+  Chúng ta không học lý thuyết suông bằng những ví dụ đồ chơi (*toy examples*) kiểu "Hello World" hay "Todo App". Chúng ta sẽ cùng nhau đối mặt với những vấn đề thực tế nảy sinh trong một sản phẩm backend thực thụ: kết nối cơ sở dữ liệu, di chuyển dữ liệu (migrations), xác thực đầu vào, gửi email bất đồng bộ, bảo mật và khả năng chịu lỗi.
+</Callout>
+
+---
+
+## I. Bản Đồ Nội Dung Chương 2
+
+Chương 2 đóng vai trò như một bản kế hoạch kiến trúc sản phẩm, định hình rõ ràng phạm vi bài toán và phương pháp làm việc:
+
+```text
+               CHIẾN LƯỢC ĐỊNH HÌNH DỰ ÁN TRONG CHƯƠNG 2
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  1. Phương Pháp Học Tập Dựa Trên Vấn Đề (Problem-based Learning)       │
+│     └── Để bài toán thực tế dẫn dắt nhu cầu học các khái niệm mới      │
+│                                                                        │
+│  2. Ranh Giới Nghiệp Vụ Của Hệ Thống (Project Scope)                   │
+│     ├── Tránh tham vọng quá đà (không phải là Mailchimp/ConvertKit)    │
+│     └── Tập trung vào giá trị cốt lõi: Đăng ký & Gửi bản tin blog      │
+│                                                                        │
+│  3. Bắt Giữ Yêu Cầu Bằng User Stories                                  │
+│     ├── Story 1: Người đọc đăng ký nhận tin mới                        │
+│     └── Story 2: Tác giả phát hành bản tin tới toàn bộ người đăng ký   │
+│                                                                        │
+│  4. Phát Triển Theo Từng Vòng Lặp (Working in Iterations)              │
+│     ├── Hoàn thiện luồng sản phẩm xuyên suốt (End-to-End Flow)         │
+│     └── Lặp lại tính năng (Features), giữ nguyên chất lượng (Quality)  │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## II. Các Mục Tiêu Cần Nắm Vững
+
+* **Hiểu phương pháp Problem-based Learning**: Nhận thức rõ lý do tại sao kiến thức chỉ thực sự có ý nghĩa khi nó trực tiếp phục vụ cho việc giải quyết vấn đề trước mắt.
+* **Xác định phạm vi sản phẩm (Product Scoping)**: Biết cách cắt tỉa những tính năng chưa cần thiết để tập trung vào luồng giá trị cốt lõi nhất.
+* **Tư duy lặp (Iterative Mindset)**: Hiểu sự khác biệt giữa việc "tối ưu hóa cục bộ một tính năng" và "cung cấp một hành trình trải nghiệm hoàn chỉnh cho người dùng".
+* **Chất lượng Production ngay từ vạch xuất phát**: Nắm vững nguyên tắc code ở bất kỳ iteration nào cũng phải được kiểm thử tự động và sẵn sàng đưa lên môi trường thật.

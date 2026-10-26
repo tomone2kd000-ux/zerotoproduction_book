@@ -1,0 +1,12 @@
+{
+  "title": "Chương 3: Đăng Ký Người Dùng Mới",
+  "pages": [
+    "index",
+    "01-chien-luoc-va-chon-web-framework",
+    "02-endpoint-health-check-va-kien-truc",
+    "03-integration-testing-thuc-chien",
+    "04-xu-ly-html-forms-post-requests",
+    "05-luu-tru-du-lieu-postgresql-sqlx",
+    "06-persist-subscriber-va-app-state"
+  ]
+}

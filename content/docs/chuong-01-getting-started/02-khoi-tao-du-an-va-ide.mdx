@@ -1,0 +1,116 @@
+---
+title: "1.2 Khởi Tạo Dự Án & Lựa Chọn IDE"
+description: "Khởi tạo khung xương dự án với Cargo, cấu trúc thư mục Rust chuẩn mực và lựa chọn môi trường phát triển (IDE) tối ưu."
+---
+
+# 1.2 Khởi Tạo Dự Án & Lựa Chọn IDE
+
+Sau khi bộ công cụ Rust đã sẵn sàng trên máy tính, chúng ta sẽ bắt đầu thiết lập khung xương (*skeleton*) cho dự án và cấu hình một môi trường phát triển tích hợp (IDE) hiệu quả.
+
+---
+
+## I. Khởi Tạo Dự Án Mẫu Với Cargo
+
+Việc cài đặt toolchain thông qua `rustup` sẽ đóng gói sẵn nhiều thành phần quan trọng. Một trong số đó là chính trình biên dịch Rust: `rustc`. Bạn có thể kiểm tra nhanh bằng lệnh:
+
+```bash
+rustc --version
+```
+
+Tuy nhiên, trong công việc phát triển hàng ngày, bạn sẽ rất hiếm khi phải tương tác trực tiếp với `rustc`. Giao diện chính để bạn xây dựng, kiểm thử, quản lý gói phụ thuộc và chạy các ứng dụng Rust là **`cargo`** — công cụ quản lý dự án và build tool chính thức của Rust.
+
+Hãy kiểm tra xem `cargo` đã hoạt động tốt hay chưa:
+
+```bash
+cargo --version
+```
+
+Bây giờ, chúng ta sẽ dùng `cargo` để khởi tạo khung dự án sẽ đồng hành cùng chúng ta xuyên suốt cuốn sách này:
+
+```bash
+cargo new zero2prod
+```
+
+Lệnh trên sẽ tạo ra một thư mục mới mang tên `zero2prod` với cấu trúc tệp tin tiêu chuẩn:
+
+```text
+zero2prod/
+  ├── Cargo.toml      # File manifest khai báo metadata và dependencies của dự án
+  ├── .gitignore      # Tự động bỏ qua thư mục build target/
+  ├── .git/           # Kho lưu trữ Git được khởi tạo sẵn
+  └── src/
+      └── main.rs     # Điểm vào chính (entrypoint) của binary crate
+```
+
+Dự án đã được cấu hình sẵn như một Git repository hoàn chỉnh. Nếu bạn dự định lưu trữ mã nguồn trên GitHub, bạn chỉ cần tạo một repository trống trên tài khoản của mình và thực hiện các lệnh sau:
+
+```bash
+cd zero2prod
+git add .
+git commit -am "Project skeleton"
+git remote add origin git@github.com:YourGitHubNickName/zero2prod.git
+git push -u origin main 
+```
+
+<Callout type="info">
+  Trong cuốn sách này, chúng ta sẽ lấy GitHub làm quy chuẩn tham chiếu nhờ tính phổ biến và tính năng **GitHub Actions** mạnh mẽ để xây dựng các đường ống CI/CD. Tuy nhiên, bạn hoàn toàn tự do lựa chọn GitLab, Bitbucket hay bất kỳ giải pháp Git nào khác phù hợp với tổ chức của mình.
+</Callout>
+
+---
+
+## II. Lựa Chọn Môi Trường Lập Trình (IDE)
+
+Khung dự án đã sẵn sàng, giờ là lúc bạn mở trình soạn thảo yêu thích lên.
+
+Mỗi kỹ sư đều có thói quen và sở thích riêng về công cụ, nhưng tiêu chuẩn tối thiểu cần có — đặc biệt khi bắt đầu làm quen với một ngôn ngữ đòi hỏi tính chặt chẽ cao như Rust — là một môi trường hỗ trợ:
+1. **Tô màu cú pháp (Syntax Highlighting)**: Cảnh báo ngay lập tức những lỗi cú pháp hiển nhiên trước khi bạn kịp nhấn lưu file.
+2. **Điều hướng mã nguồn (Code Navigation)**: Khả năng nhảy tức thì vào định nghĩa của một struct, hàm hay trait (`Go to Definition`).
+3. **Gợi ý mã tự động (Code Completion)**: Hỗ trợ phong cách *lập trình khám phá (exploratory programming)* — giúp bạn xem nhanh danh sách phương thức có sẵn của một struct hay enum được import từ thư viện bên ngoài mà không cần liên tục chuyển qua lại trình duyệt để tra cứu trên [docs.rs](https://docs.rs).
+
+Hiện nay, bạn có hai lựa chọn môi trường lập trình hàng đầu:
+
+```text
+               CÁC LỰA CHỌN IDE HÀNG ĐẦU CHO RUST
+┌─────────────────────────────────┐   ┌─────────────────────────────────┐
+│          rust-analyzer          │   │   IntelliJ Rust / RustRover     │
+│   (Language Server Protocol)    │   │         (JetBrains)             │
+├─────────────────────────────────┤   ├─────────────────────────────────┤
+│ • Chuẩn LSP mở                  │   │ • Hệ sinh thái JetBrains        │
+│ • Hoạt động với VS Code, Neovim,│   │ • Trải nghiệm Out-of-the-box    │
+│   Emacs, Sublime Text, Helix    │   │ • Tích hợp sâu debugger & GUI   │
+│ • Nhẹ nhàng, tốc độ phản hồi cao│   │ • Có bản miễn phí & thương mại  │
+└─────────────────────────────────┘   └─────────────────────────────────┘
+```
+
+### 1. `rust-analyzer` (Chuẩn Mực LSP)
+
+[`rust-analyzer`](https://rust-analyzer.github.io/) là một bản hiện thực hóa của giao thức **Language Server Protocol (LSP)** dành cho Rust.
+
+Nhờ chuẩn LSP, `rust-analyzer` có thể tích hợp mượt mà vào hầu như mọi trình soạn thảo hiện đại, bao gồm Visual Studio Code, Neovim, Helix, Emacs và Sublime Text. Bạn có thể xem hướng dẫn cài đặt chi tiết cho từng editor tại [Trang chủ rust-analyzer](https://rust-analyzer.github.io/manual.html#installation).
+
+<details>
+<summary><b>Lịch sử phát triển: Từ RLS đến rust-analyzer</b></summary>
+
+`rust-analyzer` không phải là nỗ lực đầu tiên nhằm triển khai LSP cho Rust. Tiền thân của nó là **RLS (Rust Language Server)**. RLS tiếp cận theo cơ chế xử lý hàng loạt (*batch-processing*): mỗi thay đổi nhỏ trong bất kỳ file nào cũng kích hoạt compiler biên dịch lại toàn bộ dự án. Chiến lược này bộc lộ giới hạn nghiêm trọng về hiệu năng và độ trễ phản hồi trên các dự án lớn. 
+
+Đề xuất [RFC2912](https://github.com/rust-lang/rfcs/pull/2912) đã chính thức cho RLS "nghỉ hưu" và công nhận `rust-analyzer` là giải pháp LSP chính thức của hệ sinh thái Rust.
+</details>
+
+### 2. IntelliJ Rust & RustRover (Hệ Sinh Thái JetBrains)
+
+JetBrains cung cấp hỗ trợ chuyên sâu cho Rust thông qua plugin **IntelliJ Rust** (trên IntelliJ IDEA, CLion) hoặc IDE độc lập chuyên dụng **RustRover**.
+
+Nếu bạn yêu thích môi trường hoàn chỉnh (*all-in-one*) với hệ thống giao diện trực quan mạnh mẽ, bộ gỡ lỗi (*debugger*) tích hợp sẵn và khả năng tái cấu trúc mã (*refactoring*) vượt trội, JetBrains là một lựa chọn cực kỳ sáng giá.
+
+---
+
+## III. Lời Khuyên Thực Chiến Dành Cho Bạn
+
+* Nếu bạn yêu thích sự nhẹ nhàng, tùy biến cao và phổ biến: Hãy chọn **VS Code** kết hợp cùng extension chính thức **`rust-analyzer`**.
+* Nếu bạn là tín đồ của dòng lệnh và modal editing: **Neovim** (cấu hình `nvim-lspconfig`) cùng `rust-analyzer` mang lại trải nghiệm vô cùng nhanh nhẹn.
+* Nếu bạn quen thuộc với các IDE đầy đủ tính năng của JetBrains: **RustRover** hoặc **CLion** với plugin Rust sẽ giúp bạn vào guồng ngay lập tức.
+
+<Callout type="info">
+  **Xu hướng tương lai (Library-ification của rustc):**  
+  Cộng đồng Rust đang tiến hành một nỗ lực lớn nhằm "thư viện hóa" (*library-ification*) trình biên dịch `rustc`. Thay vì duy trì hai bộ phân tích cú pháp riêng biệt giữa `rustc` và `rust-analyzer`, codebase của compiler đang được tách thành các module nhỏ tái sử dụng được. Điều này giúp `rust-analyzer` ngày càng thông minh hơn, phân tích mã theo yêu cầu (*on-demand analysis*) với độ chính xác tuyệt đối như chính compiler.
+</Callout>

@@ -1,0 +1,48 @@
+---
+title: "Tổng Quan Chương 10: Kiến Trúc Bảo Mật & Xác Thực API Trong Rust"
+description: "Thiết kế kiến trúc bảo mật toàn diện cho Web Service trong Rust: từ Password Hashing với Argon2id, xử lý blocking task trên Tokio, đến Session Management với Redis và Actix Middleware."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# Tổng Quan Chương 10: Kiến Trúc Bảo Mật & Xác Thực API Trong Rust
+
+Trong Chương 9, chúng ta đã triển khai thành công endpoint `POST /newsletters` để phát hành bản tin. Tuy nhiên, hệ thống đang phải đối mặt với một lỗ hổng an ninh chí mạng: **bất kỳ ai trên Internet cũng có thể gửi request để phát tán nội dung tới toàn bộ người đăng ký của bạn**.
+
+Chương 10 là chương dài nhất và toàn diện nhất của cuốn sách, nâng cấp toàn bộ hệ thống phòng thủ của ứng dụng. Chúng ta sẽ cùng nhau xây dựng một hệ thống xác thực (Authentication) và phân quyền (Authorization) hoàn chỉnh theo chuẩn mực bảo mật của **OWASP**:
+- Phân tích 3 yếu tố xác thực căn bản và nguyên lý xác thực đa yếu tố (**MFA**).
+- Triển khai **HTTP Basic Authentication** và nhận diện các nguy cơ rò rỉ dữ liệu.
+- Kỹ thuật lưu trữ mật khẩu an toàn: Tại sao SHA-256 là sai lầm, sức mạnh của hàm băm tốn kém tài nguyên **Argon2id**, **Salting**, và chuẩn định dạng **PHC String**.
+- **Quy tắc sinh tử trong Async Rust**: Tuyệt đối không chặn Async Executor với CPU-bound tasks, giải pháp tách luồng với `tokio::task::spawn_blocking`.
+- Xây dựng luồng đăng nhập Web hoàn chỉnh: HTML Forms, chống tấn công **XSS**, thông báo lỗi ngữ cảnh bằng **HMAC Tag** và Cookies.
+- Quản lý phiên (**Session-based Authentication**) kết hợp bộ nhớ đệm phân tán **Redis** và crate `actix-session`.
+- Khởi tạo **Seed Users** thông qua SQLx Migration và tính năng đổi mật khẩu.
+- Tái cấu trúc mã nguồn bằng **Middleware** chuẩn mực trong Actix-web với `actix_web_lab::from_fn`.
+
+---
+
+## I. Lộ Trình Nội Dung Chương 10
+
+Chương này gồm 4 bài học chuyên sâu:
+
+- **[10.1 - 10.4: Cơ Chế Xác Thực & Password Authentication](/docs/chuong-10-securing-our-api/01-co-che-xac-thuc-va-password-auth)**:
+  Phân tích 3 trụ cột xác thực. Triển khai Basic Auth. Đi sâu vào mật mã học: Dictionary Attack, Rainbow Tables, thuật toán băm Argon2id và Salting. Kỹ thuật đưa tác vụ nặng sang Thread Pool với `spawn_blocking` và phòng chống tấn công dò người dùng (User Enumeration Timing Attacks).
+
+- **[10.5 - 10.6: Xử Lý Form Đăng Nhập & Phục Vụ Trang HTML](/docs/chuong-10-securing-our-api/02-login-forms-va-giao-dien-html)**:
+  Phục vụ giao diện HTML bằng Actix-web. Xử lý form đăng nhập `POST /login` và chuyển hướng HTTP 303 See Other. Xử lý lỗi đăng nhập an toàn: phòng chống Cross-Site Scripting (XSS), giải pháp bảo vệ tính toàn vẹn thông báo lỗi bằng mã xác thực thông điệp HMAC (Message Authentication Codes) và Cookie tạm thời.
+
+- **[10.7: Quản Lý Phiên (Session-based Auth) Với Redis & actix-session](/docs/chuong-10-securing-our-api/03-session-based-auth-va-actix-session)**:
+  Tại sao HTTP là stateless và sự cần thiết của Session. So sánh các giải pháp Session Store (In-memory, Client Cookie, Postgres, Redis). Tích hợp Redis và `actix-session` vào vòng đời ứng dụng. Xây dựng trang Admin Dashboard được bảo vệ nghiêm ngặt.
+
+- **[10.8 - 10.10: Khởi Tạo Seed Users, Đổi Mật Khẩu & Actix Middleware](/docs/chuong-10-securing-our-api/04-seed-users-va-viet-actix-middleware)**:
+  Tạo admin đầu tiên qua Database Migration `seed_user`. Xây dựng luồng đổi mật khẩu và đăng xuất an toàn. Tái cấu trúc: cách viết một Middleware tùy biến chuẩn mực với `actix_web_lab::from_fn`, trích xuất thông tin người dùng qua Request Extensions.
+
+---
+
+## II. Các Nguyên Tắc Bảo Mật Bất Biến
+
+<Callout type="warn" title="Khắc Cốt Ghi Tâm Khi Lập Trình Backend Security">
+1. **Không bao giờ tự phát minh thuật toán mã hóa (Never roll your own crypto)**: Luôn sử dụng các thuật toán chuẩn hóa quốc tế được OWASP khuyến nghị (Argon2id cho mật khẩu, HMAC-SHA256 cho chữ ký).
+2. **Không chạy tác vụ băm mật khẩu trực tiếp trên Async Threads**: Các thuật toán băm mật khẩu được thiết kế để ngốn CPU trong hàng chục mili-giây. Chạy trực tiếp trên luồng worker của Tokio sẽ làm tê liệt toàn bộ web server. Luôn bọc chúng trong `spawn_blocking`.
+3. **Phòng ngừa Timing Attacks**: Thời gian thực thi của một hàm xác thực không được phép để lộ thông tin tài khoản có tồn tại trong cơ sở dữ liệu hay không.
+</Callout>

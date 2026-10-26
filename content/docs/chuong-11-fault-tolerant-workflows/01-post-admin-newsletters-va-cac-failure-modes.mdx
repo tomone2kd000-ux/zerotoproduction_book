@@ -1,0 +1,135 @@
+---
+title: "11.1 - 11.3 Ôn Lại POST /admin/newsletters & Các Loại Lỗi Hệ Thống"
+description: "Phân tích kiến trúc của endpoint phát hành bản tin, xác định mục tiêu Best-effort delivery và mổ xẻ 4 chế độ lỗi chí mạng trong môi trường mạng phân tán."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 11.1 - 11.3 Ôn Lại POST /admin/newsletters & Các Loại Lỗi Hệ Thống
+
+Trong các chương trước, chúng ta đã đưa endpoint xuất bản bản tin vào hoạt động đằng sau lớp bảo vệ của session và middleware: `POST /admin/newsletters`. Mỗi khi tác giả gửi form, ứng dụng sẽ duyệt qua danh sách người đăng ký và gọi API của Postmark để gửi từng email một.
+
+Tuy nhiên, trong một hệ thống phân tán thực tế kết nối qua mạng Internet, mọi thứ có thể hỏng hóc theo những cách không thể lường trước. Bài học này sẽ mổ xẻ tường tận các **chế độ lỗi (failure modes)** của kiến trúc hiện tại để hiểu tại sao nó không thể tồn tại an toàn trên môi trường Production.
+
+---
+
+## I. Ôn Lại Luồng Xử Lý Của `POST /admin/newsletters`
+
+Hãy nhìn lại cách thức vận hành hiện tại của handler trong `src/routes/admin/newsletter/post.rs`:
+
+```rust
+//! src/routes/admin/newsletter/post.rs
+
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    title: String,
+    text_content: String,
+    html_content: String,
+}
+
+#[tracing::instrument(
+    name = "Publish a newsletter issue",
+    skip_all,
+    fields(user_id=%&*user_id)
+)]
+pub async fn publish_newsletter(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>,
+    user_id: web::ReqData<UserId>,
+) -> Result<HttpResponse, actix_web::Error> {
+    // 1. Lấy danh sách subscriber đã xác nhận từ PostgreSQL
+    let subscribers = get_confirmed_subscribers(&pool).await.map_err(e500)?;
+    
+    // 2. Lặp tuần tự qua từng người để gửi email qua Postmark
+    for subscriber in subscribers {
+        match subscriber {
+            Ok(subscriber) => {
+                email_client
+                    .send_email(
+                        &subscriber.email,
+                        &form.title,
+                        &form.html_content,
+                        &form.text_content,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("Failed to send newsletter issue to {}", subscriber.email)
+                    })
+                    .map_err(e500)?;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error.cause_chain = ?error,
+                    "Skipping a confirmed subscriber. Their stored contact details are invalid",
+                );
+            }
+        }
+    }
+    
+    // 3. Gửi thông báo Flash Message và chuyển hướng về trang form
+    FlashMessage::info("The newsletter issue has been published!").send();
+    Ok(see_other("/admin/newsletters"))
+}
+```
+
+---
+
+## II. Mục Tiêu Kiến Trúc Của Chúng Ta
+
+Khi phát hành một số bản tin, mục tiêu cao nhất của hệ thống là đạt được cơ chế **Chuyển phát nỗ lực tối đa (Best-effort delivery)**:
+1. **Đảm bảo phân phối tới toàn bộ độc giả**: Chúng ta cố gắng hết sức để gửi bản tin tới mọi subscriber hợp lệ. (Dĩ nhiên không thể bảo đảm 100% người nhận mở được thư vì hòm thư đích có thể vừa bị xóa hoặc bị đầy).
+2. **Giảm thiểu tối đa việc gửi trùng lặp (Minimize Duplicates)**: Một độc giả tuyệt đối không nên bị nhận bức thư đó hai hay nhiều lần.
+
+---
+
+## III. Mổ Xẻ 4 Chế Độ Lỗi Hệ Thống (Failure Modes)
+
+Liệu kiến trúc hiện tại có đạt được mục tiêu "Best-effort delivery" khi đối mặt với sự cố? Hãy cùng phân tích 4 kịch bản lỗi:
+
+### 1. Dữ liệu đầu vào không hợp lệ (Invalid Inputs)
+Request gửi lên bị thiếu trường thông tin (ví dụ thiếu tiêu đề) hoặc người gửi chưa đăng nhập.
+- Kịch bản này đã được xử lý hoàn hảo: Extractor `web::Form` tự động trả về `400 Bad Request`, và middleware tự động chuyển hướng người chưa xác thực về `/login`. Chưa có tác dụng phụ nào diễn ra.
+
+### 2. Sự Cố Mạng I/O (Network I/O)
+
+#### A. Lỗi kết nối PostgreSQL
+Khi truy vấn danh sách người đăng ký, kết nối database bị đứt quãng.
+- Ứng dụng trả về mã `500 Internal Server Error`. Tác giả có thể bấm thử lại sau đó. Vì chưa có email nào được gửi đi, việc thử lại là hoàn toàn an toàn.
+
+#### B. Lỗi từ dịch vụ gửi email bên thứ ba (Postmark API Error)
+Giả sử bạn có 100 người đăng ký. Ứng dụng gửi thành công cho 49 người đầu tiên. Đến người thứ 50, API của Postmark trả về lỗi `500` hoặc bị mạng timeout.
+- Vì đoạn code sử dụng toán tử lan truyền lỗi `.map_err(e500)?`, vòng lặp lập tức bị hủy bỏ và ứng dụng trả về mã `500 Internal Server Error` cho tác giả!
+
+Tác giả sẽ làm gì khi thấy màn hình báo lỗi 500?
+- **Nếu tác giả bấm "Thử lại" (Retry)**: 49 người đầu tiên sẽ bị **nhận email lần thứ hai (Spamming)**!
+- **Nếu tác giả KHÔNG bấm thử lại**: 50 người còn lại ở cuối danh sách sẽ **vĩnh viễn không bao giờ nhận được bản tin**!
+
+<Callout type="warn" title="Tấn Bi Kịch Của Hệ Thống Phân Tán">
+*"Tiến thoái lưỡng nan: Thử lại thì gây trùng lặp, không thử lại thì mất mát dữ liệu."*
+Trong Chương 7, ta giải quyết bài toán chuỗi thao tác nhiều bước bằng **SQL Transaction (Giao dịch ACID)**: hoặc tất cả thành công, hoặc rollback toàn bộ. Nhưng API của bên thứ ba (như Postmark, Stripe, Twilio) **không có khái niệm Transaction xuyên mạng**: mỗi lời gọi HTTP là một thao tác độc lập đã diễn ra và không thể rút lại được!
+</Callout>
+
+### 3. Ứng Dụng Bị Crash Đột Ngột (Application Crashes)
+Máy chủ có thể bị hết bộ nhớ (Out-Of-Memory / OOM Killer), hoặc nhà cung cấp đám mây (AWS/DigitalOcean) khởi động lại node máy ảo mà ứng dụng đang chạy.
+
+Nếu sự cố crash xảy ra giữa lúc vòng lặp đang gửi thư dở dang, tác giả sẽ nhận thông báo lỗi từ trình duyệt. Việc submit lại form một lần nữa sẽ gây ra hiện tượng gửi thư trùng lặp trên diện rộng.
+
+### 4. Hành Động Của Người Dùng (Author Actions)
+Nếu danh sách độc giả lớn (hàng ngàn người), vòng lặp tuần tự sẽ mất hàng chục giây hoặc vài phút:
+- Trình duyệt của tác giả có thể hết thời gian chờ (Client-side Timeout) và tự động ngắt kết nối.
+- Tác giả sốt ruột và **bấm nút "Submit" lần thứ hai** hoặc liên tục nhấn F5.
+
+Khi đó, hai luồng xử lý độc lập sẽ chạy song song trên server, cùng duyệt qua danh sách và gửi thư đè lên nhau, khiến toàn bộ độc giả nhận hai bức thư giống hệt nhau cùng một lúc!
+
+---
+
+## IV. Căn Nguyên Vấn Đề: Endpoint Không An Toàn Khi Thử Lại
+
+Tất cả các rủi ro trên đều bắt nguồn từ một khiếm khuyết kiến trúc cốt lõi duy nhất:
+
+<Callout type="error" title="Kết Luận">
+**Endpoint `POST /admin/newsletters` hiện tại KHÔNG CÓ TÍNH CHỊU LỖI vì nó KHÔNG AN TOÀN KHI THỬ LẠI (NOT RETRY-SAFE).**
+</Callout>
+
+Nếu chúng ta có thể biến endpoint này thành một thao tác **an toàn tuyệt đối khi thử lại**, mọi kịch bản lỗi mạng, crash máy chủ hay người dùng bấm đúp đều sẽ được giải quyết triệt để. Khái niệm đó trong khoa học máy tính được gọi là **Tính Bất Biến (Idempotency)**.

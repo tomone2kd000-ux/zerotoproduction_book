@@ -1,0 +1,10 @@
+{
+  "title": "Chương 10: Bảo Mật & Xác Thực API",
+  "pages": [
+    "index",
+    "01-co-che-xac-thuc-va-password-auth",
+    "02-login-forms-va-giao-dien-html",
+    "03-session-based-auth-va-actix-session",
+    "04-seed-users-va-viet-actix-middleware"
+  ]
+}

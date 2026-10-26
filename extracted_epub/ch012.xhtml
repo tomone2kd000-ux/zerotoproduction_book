@@ -1,0 +1,1041 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <title>ch012.xhtml</title>
+  <style>
+    /* CSS for syntax highlighting */
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+      }
+    pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+    div.sourceCode
+      { color: #cccccc; background-color: #303030; }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ffcfaf; } /* Alert */
+    code span.an { color: #7f9f7f; font-weight: bold; } /* Annotation */
+    code span.at { } /* Attribute */
+    code span.bn { color: #dca3a3; } /* BaseN */
+    code span.bu { } /* BuiltIn */
+    code span.cf { color: #f0dfaf; } /* ControlFlow */
+    code span.ch { color: #dca3a3; } /* Char */
+    code span.cn { color: #dca3a3; font-weight: bold; } /* Constant */
+    code span.co { color: #7f9f7f; } /* Comment */
+    code span.cv { color: #7f9f7f; font-weight: bold; } /* CommentVar */
+    code span.do { color: #7f9f7f; } /* Documentation */
+    code span.dt { color: #dfdfbf; } /* DataType */
+    code span.dv { color: #dcdccc; } /* DecVal */
+    code span.er { color: #c3bf9f; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #c0bed1; } /* Float */
+    code span.fu { color: #efef8f; } /* Function */
+    code span.im { } /* Import */
+    code span.in { color: #7f9f7f; font-weight: bold; } /* Information */
+    code span.kw { color: #f0dfaf; } /* Keyword */
+    code span.op { color: #f0efd0; } /* Operator */
+    code span.ot { color: #efef8f; } /* Other */
+    code span.pp { color: #ffcfaf; font-weight: bold; } /* Preprocessor */
+    code span.sc { color: #dca3a3; } /* SpecialChar */
+    code span.ss { color: #cc9393; } /* SpecialString */
+    code span.st { color: #cc9393; } /* String */
+    code span.va { } /* Variable */
+    code span.vs { color: #cc9393; } /* VerbatimString */
+    code span.wa { color: #7f9f7f; font-weight: bold; } /* Warning */
+  </style>
+  <link rel="stylesheet" type="text/css" href="../styles/stylesheet1.css" />
+</head>
+<body epub:type="bodymatter">
+<section id="naive-newsletter-delivery" class="level1" data-number="9">
+<h1 data-number="9"><span class="header-section-number">9</span> Naive Newsletter Delivery</h1>
+<p>Our project is not yet a viable newsletter service: it cannot send out a new episode!</p>
+<p>We will use this chapter to bootstrap newsletter delivery using a naive implementation.<br />
+It will be an opportunity to deepen our understanding of techniques we touched upon in previous chapters while building the foundation for tackling more advanced topics (e.g. authentication/authorization, fault tolerance).</p>
+<section id="user-stories-are-not-set-in-stone" class="level2" data-number="9.1">
+<h2 data-number="9.1"><span class="header-section-number">9.1</span> User Stories Are Not Set In Stone</h2>
+<p>What are we trying to achieve, exactly?</p>
+<p>We can go back to the user story we wrote down in Chapter 2:</p>
+<blockquote>
+<p>As the blog author,<br />
+I want to send an email to all my subscribers,<br />
+So that I can notify them when new content is published.</p>
+</blockquote>
+<p>It looks simple, at least on the surface. The devil, as always, is in the details.<br />
+For example, in Chapter 7 we refined our domain model of a subscriber - we now have <strong>confirmed</strong> and <strong>unconfirmed</strong> subscribers.<br />
+Which ones should receive our newsletter issues?</p>
+<p>That user story, as it stands, cannot help us - it was written before we started to make the distinction!</p>
+<p>Make a habit of revisiting user stories throughout the lifecycle of a project.<br />
+When you spend time working on a problem you end up deepening your understanding of its <strong>domain</strong>. You often acquire a more precise <strong>language</strong> that can be used to refine earlier attempts of describing the desired functionality.</p>
+<p>For this specific case: we only want newsletter issues to be sent to <strong>confirmed</strong> subscribers. Let’s amend the user story accordingly:</p>
+<blockquote>
+<p>As the blog author,<br />
+I want to send an email to all my confirmed subscribers,<br />
+So that I can notify them when new content is published.</p>
+</blockquote>
+</section>
+<section id="do-not-spam-unconfirmed-subscribers" class="level2" data-number="9.2">
+<h2 data-number="9.2"><span class="header-section-number">9.2</span> Do Not Spam Unconfirmed Subscribers</h2>
+<p>We can get started by writing an integration test that specifies what should <em>not</em> happen: unconfirmed subscribers should not receive newsletter issues.</p>
+<p>In Chapter 7 we selected Postmark as our email delivery service. If we are not calling Postmark, we are not sending an email out.<br />
+We can build on this fact to orchestrate a scenario that allows us to verify our business rule: if all subscribers are unconfirmed, no request is fired to Postmark when we publish a newsletter issue.</p>
+<p>Let’s translate that into code:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/main.rs</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="co">// New test module!</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="kw">mod</span> newsletter<span class="op">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/newsletter.rs</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="kw">crate</span><span class="pp">::helpers::</span><span class="op">{</span>spawn_app<span class="op">,</span> TestApp<span class="op">};</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">wiremock::matchers::</span><span class="op">{</span>any<span class="op">,</span> method<span class="op">,</span> path<span class="op">};</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">wiremock::</span><span class="op">{</span>Mock<span class="op">,</span> ResponseTemplate<span class="op">};</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>test<span class="at">]</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> newsletters_are_not_delivered_to_unconfirmed_subscribers() <span class="op">{</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Arrange</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> app <span class="op">=</span> spawn_app()<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>    create_unconfirmed_subscriber(<span class="op">&amp;</span>app)<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>    <span class="pp">Mock::</span>given(any())</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>respond_with(<span class="pp">ResponseTemplate::</span>new(<span class="dv">200</span>))</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>        <span class="co">// We assert that no request is fired at Postmark!</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="dv">0</span>)</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>mount(<span class="op">&amp;</span>app<span class="op">.</span>email_server)</span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Act</span></span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a>    <span class="co">// A sketch of the newsletter payload structure.</span></span>
+<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a>    <span class="co">// We might change it later on.</span></span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> newsletter_request_body <span class="op">=</span> <span class="pp">serde_json::json!</span>(<span class="op">{</span></span>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>         <span class="st">&quot;title&quot;</span><span class="op">:</span> <span class="st">&quot;Newsletter title&quot;</span><span class="op">,</span></span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>         <span class="st">&quot;content&quot;</span><span class="op">:</span> <span class="op">{</span></span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>             <span class="st">&quot;text&quot;</span><span class="op">:</span> <span class="st">&quot;Newsletter body as plain text&quot;</span><span class="op">,</span></span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>             <span class="st">&quot;html&quot;</span><span class="op">:</span> <span class="st">&quot;&lt;p&gt;Newsletter body as HTML&lt;/p&gt;&quot;</span><span class="op">,</span></span>
+<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a>         <span class="op">}</span></span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span>)<span class="op">;</span></span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> response <span class="op">=</span> <span class="pp">reqwest::Client::</span>new()</span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a>         <span class="op">.</span>post(<span class="op">&amp;</span><span class="pp">format!</span>(<span class="st">&quot;{}/newsletters&quot;</span><span class="op">,</span> <span class="op">&amp;</span>app<span class="op">.</span>address))</span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a>         <span class="op">.</span>json(<span class="op">&amp;</span>newsletter_request_body)</span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>         <span class="op">.</span>send()</span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>         <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a>         <span class="op">.</span>expect(<span class="st">&quot;Failed to execute request.&quot;</span>)<span class="op">;</span></span>
+<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Assert</span></span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a>    <span class="pp">assert_eq!</span>(response<span class="op">.</span>status()<span class="op">.</span>as_u16()<span class="op">,</span> <span class="dv">200</span>)<span class="op">;</span></span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Mock verifies on Drop that we haven&#39;t sent the newsletter email </span></span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a><span class="co">/// Use the public API of the application under test to create</span></span>
+<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a><span class="co">/// an unconfirmed subscriber.</span></span>
+<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> create_unconfirmed_subscriber(app<span class="op">:</span> <span class="op">&amp;</span>TestApp) <span class="op">{</span></span>
+<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> body <span class="op">=</span> <span class="st">&quot;name=le%20guin&amp;email=ursula_le_guin%40gmail.com&quot;</span><span class="op">;</span></span>
+<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> _mock_guard <span class="op">=</span> <span class="pp">Mock::</span>given(path(<span class="st">&quot;/email&quot;</span>))</span>
+<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>and(method(<span class="st">&quot;POST&quot;</span>))</span>
+<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>respond_with(<span class="pp">ResponseTemplate::</span>new(<span class="dv">200</span>))</span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>named(<span class="st">&quot;Create unconfirmed subscriber&quot;</span>)</span>
+<span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="dv">1</span>)</span>
+<span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>mount_as_scoped(<span class="op">&amp;</span>app<span class="op">.</span>email_server)</span>
+<span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a>    app<span class="op">.</span>post_subscriptions(body<span class="op">.</span>into())</span>
+<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb2-56"><a href="#cb2-56" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>error_for_status()</span>
+<span id="cb2-57"><a href="#cb2-57" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap()<span class="op">;</span></span>
+<span id="cb2-58"><a href="#cb2-58" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>It fails, as expected:</p>
+<pre class="text"><code>thread &#39;newsletter::newsletters_are_not_delivered_to_unconfirmed_subscribers&#39; 
+panicked at &#39;assertion failed: `(left == right)`
+  left: `404`,
+ right: `200`&#39;</code></pre>
+<p>There is no handler in our API for <code>POST /newsletters</code>: <code>actix-web</code> returns a <code>404 Not Found</code> instead of the <code>200 OK</code> the test is expecting.</p>
+<section id="set-up-state-using-the-public-api" class="level3" data-number="9.2.1">
+<h3 data-number="9.2.1"><span class="header-section-number">9.2.1</span> Set Up State Using The Public API</h3>
+<p>Let’s take a moment to look at the <code>Arrange</code> section for the test we just wrote.<br />
+Our test scenario makes some assumptions on the <strong>state</strong> of our application: we need to have one subscriber and they must be unconfirmed.</p>
+<p>Each test spins up a brand-new application running on top of an empty database.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> app <span class="op">=</span> spawn_app()<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span></code></pre></div>
+<p>How do we fill it up according to the test requirements?</p>
+<p>We stay true to the black-box approach we described in Chapter 3: when possible, we drive the application state by calling its public API.<br />
+That is what we are doing in <code>create_unconfirmed_subscriber</code>:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/newsletter.rs</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> create_unconfirmed_subscriber(app<span class="op">:</span> <span class="op">&amp;</span>TestApp) <span class="op">{</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> body <span class="op">=</span> <span class="st">&quot;name=le%20guin&amp;email=ursula_le_guin%40gmail.com&quot;</span><span class="op">;</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> _mock_guard <span class="op">=</span> <span class="pp">Mock::</span>given(path(<span class="st">&quot;/email&quot;</span>))</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>and(method(<span class="st">&quot;POST&quot;</span>))</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>respond_with(<span class="pp">ResponseTemplate::</span>new(<span class="dv">200</span>))</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>named(<span class="st">&quot;Create unconfirmed subscriber&quot;</span>)</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="dv">1</span>)</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>mount_as_scoped(<span class="op">&amp;</span>app<span class="op">.</span>email_server)</span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    app<span class="op">.</span>post_subscriptions(body<span class="op">.</span>into())</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>error_for_status()</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap()<span class="op">;</span></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We use the API client we built as part of <code>TestApp</code> to make a <code>POST</code> call to the <code>/subscriptions</code> endpoint.</p>
+</section>
+<section id="scoped-mocks" class="level3" data-number="9.2.2">
+<h3 data-number="9.2.2"><span class="header-section-number">9.2.2</span> Scoped Mocks</h3>
+<p>We know that <code>POST /subscriptions</code> will send a confirmation email out - we must make sure that our Postmark test server is ready to handle the incoming request by setting up the appropriate <code>Mock</code>.<br />
+The matching logic overlaps what we have in the test function body: how do we make sure the two mocks don’t end up stepping on each other’s toes?</p>
+<p>We use a <strong>scoped</strong> mock:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">let</span> _mock_guard <span class="op">=</span> <span class="pp">Mock::</span>given(path(<span class="st">&quot;/email&quot;</span>))</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>and(method(<span class="st">&quot;POST&quot;</span>))</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>respond_with(<span class="pp">ResponseTemplate::</span>new(<span class="dv">200</span>))</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>named(<span class="st">&quot;Create unconfirmed subscriber&quot;</span>)</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>expect(<span class="dv">1</span>)</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// We are not using `mount`!</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>mount_as_scoped(<span class="op">&amp;</span>app<span class="op">.</span>email_server)</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span><span class="kw">await</span><span class="op">;</span></span></code></pre></div>
+<p>With <code>mount</code>, the behaviour we specify remains active as long as the underlying <code>MockServer</code> is up and running.<br />
+With <code>mount_as_scoped</code>, instead, we get back a guard object - a <a href="https://docs.rs/wiremock/0.5.6/wiremock/struct.MockGuard.html"><code>MockGuard</code></a>.</p>
+<p><code>MockGuard</code> has a custom <code>Drop</code> implementation: when it goes out of scope, <code>wiremock</code> instructs the underlying <code>MockServer</code> to stop honouring the specified mock behaviour. In other words, we stop returning <code>200</code> to <code>POST /email</code> at the end of <code>create_unconfirmed_subscriber</code>.<br />
+The mock behaviour needed for our test helper <strong>stays local</strong> to the test helper itself.</p>
+<p>One more thing happens when a <code>MockGuard</code> is dropped - we <strong>eagerly</strong> check that expectations on the scoped mock are verified.<br />
+This creates a useful feedback loop to keep our test helpers clean and up-to-date.</p>
+<p>We have already witnessed how black-box testing pushes us to write an API client for our own application to keep our tests concise.<br />
+Over time, you build more and more helper functions to drive the application state - just like we just did with <code>create_unconfirmed_subscriber</code>. These helpers rely on mocks but, as the application evolves, some of those mocks end up no longer being necessary - a call gets removed, you stop using a certain provider, etc.<br />
+Eager evaluation of expectations for scoped mocks helps us to keep helper code in check and proactively clean up where possible.</p>
+</section>
+<section id="green-test-6" class="level3" data-number="9.2.3">
+<h3 data-number="9.2.3"><span class="header-section-number">9.2.3</span> Green Test</h3>
+<p>We can get the test to pass by providing a dummy implementation of <code>POST /newsletters</code>:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/mod.rs</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="co">// New module!</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="kw">mod</span> newsletters<span class="op">;</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">use</span> <span class="pp">newsletters::</span><span class="op">*;</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">actix_web::</span>HttpResponse<span class="op">;</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co">// Dummy implementation</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> publish_newsletter() <span class="op">-&gt;</span> HttpResponse <span class="op">{</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>    <span class="pp">HttpResponse::</span><span class="cn">Ok</span>()<span class="op">.</span>finish()</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/startup.rs</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="kw">crate</span><span class="pp">::routes::</span><span class="op">{</span>confirm<span class="op">,</span> health_check<span class="op">,</span> publish_newsletter<span class="op">,</span> subscribe<span class="op">};</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="kw">fn</span> run(<span class="co">/* */</span>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>Server<span class="op">,</span> <span class="pp">std::io::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> server <span class="op">=</span> <span class="pp">HttpServer::</span>new(<span class="kw">move</span> <span class="op">||</span> <span class="op">{</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>        <span class="pp">App::</span>new()</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>wrap(<span class="pp">TracingLogger::</span><span class="kw">default</span>())</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>            <span class="co">// Register the new handler!    </span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>route(<span class="st">&quot;/newsletters&quot;</span><span class="op">,</span> <span class="pp">web::</span>post()<span class="op">.</span>to(publish_newsletter))</span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>            <span class="co">// [...]</span></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span>)</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p><code>cargo test</code> is happy again.</p>
+</section>
+</section>
+<section id="all-confirmed-subscribers-receive-new-issues" class="level2" data-number="9.3">
+<h2 data-number="9.3"><span class="header-section-number">9.3</span> All Confirmed Subscribers Receive New Issues</h2>
+<p>Let’s write another integration test, this time for a subset of the happy case: if we have one confirmed subscriber, they receive an email with the new issue of the newsletter.</p>
+<section id="composing-test-helpers" class="level3" data-number="9.3.1">
+<h3 data-number="9.3.1"><span class="header-section-number">9.3.1</span> Composing Test Helpers</h3>
+<p>As in the previous test, we need to get the application state where we want it to be before executing the test logic - it calls for another helper function, this time to create a confirmed subscriber.<br />
+By slightly reworking <code>create_unconfirmed_subscriber</code> we can avoid duplication:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/newsletter.rs</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> create_unconfirmed_subscriber(app<span class="op">:</span> <span class="op">&amp;</span>TestApp) <span class="op">-&gt;</span> ConfirmationLinks <span class="op">{</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> body <span class="op">=</span> <span class="st">&quot;name=le%20guin&amp;email=ursula_le_guin%40gmail.com&quot;</span><span class="op">;</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> _mock_guard <span class="op">=</span> <span class="pp">Mock::</span>given(path(<span class="st">&quot;/email&quot;</span>))</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>and(method(<span class="st">&quot;POST&quot;</span>))</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>respond_with(<span class="pp">ResponseTemplate::</span>new(<span class="dv">200</span>))</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>named(<span class="st">&quot;Create unconfirmed subscriber&quot;</span>)</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="dv">1</span>)</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>mount_as_scoped(<span class="op">&amp;</span>app<span class="op">.</span>email_server)</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>    app<span class="op">.</span>post_subscriptions(body<span class="op">.</span>into())</span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>error_for_status()</span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap()<span class="op">;</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a>    <span class="co">// We now inspect the requests received by the mock Postmark server</span></span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a>    <span class="co">// to retrieve the confirmation link and return it </span></span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> email_request <span class="op">=</span> <span class="op">&amp;</span>app</span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>email_server</span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>received_requests()</span>
+<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb10-25"><a href="#cb10-25" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap()</span>
+<span id="cb10-26"><a href="#cb10-26" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>pop()</span>
+<span id="cb10-27"><a href="#cb10-27" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap()<span class="op">;</span></span>
+<span id="cb10-28"><a href="#cb10-28" aria-hidden="true" tabindex="-1"></a>    app<span class="op">.</span>get_confirmation_links(<span class="op">&amp;</span>email_request)</span>
+<span id="cb10-29"><a href="#cb10-29" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb10-30"><a href="#cb10-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-31"><a href="#cb10-31" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> create_confirmed_subscriber(app<span class="op">:</span> <span class="op">&amp;</span>TestApp) <span class="op">{</span></span>
+<span id="cb10-32"><a href="#cb10-32" aria-hidden="true" tabindex="-1"></a>    <span class="co">// We can then reuse the same helper and just add </span></span>
+<span id="cb10-33"><a href="#cb10-33" aria-hidden="true" tabindex="-1"></a>    <span class="co">// an extra step to actually call the confirmation link!</span></span>
+<span id="cb10-34"><a href="#cb10-34" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> confirmation_link <span class="op">=</span> create_unconfirmed_subscriber(app)<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb10-35"><a href="#cb10-35" aria-hidden="true" tabindex="-1"></a>    <span class="pp">reqwest::</span>get(confirmation_link<span class="op">.</span>html)</span>
+<span id="cb10-36"><a href="#cb10-36" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb10-37"><a href="#cb10-37" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap()</span>
+<span id="cb10-38"><a href="#cb10-38" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>error_for_status()</span>
+<span id="cb10-39"><a href="#cb10-39" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap()<span class="op">;</span></span>
+<span id="cb10-40"><a href="#cb10-40" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Nothing needs to change in our existing test and we can immediately leverage <code>create_confirmed_subscriber</code> in the new one:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/newsletter.rs</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>test<span class="at">]</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> newsletters_are_delivered_to_confirmed_subscribers() <span class="op">{</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Arrange</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> app <span class="op">=</span> spawn_app()<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>    create_confirmed_subscriber(<span class="op">&amp;</span>app)<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a>    <span class="pp">Mock::</span>given(path(<span class="st">&quot;/email&quot;</span>))</span>
+<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>and(method(<span class="st">&quot;POST&quot;</span>))</span>
+<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>respond_with(<span class="pp">ResponseTemplate::</span>new(<span class="dv">200</span>))</span>
+<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="dv">1</span>)</span>
+<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>mount(<span class="op">&amp;</span>app<span class="op">.</span>email_server)</span>
+<span id="cb11-15"><a href="#cb11-15" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb11-16"><a href="#cb11-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-17"><a href="#cb11-17" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Act</span></span>
+<span id="cb11-18"><a href="#cb11-18" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> newsletter_request_body <span class="op">=</span> <span class="pp">serde_json::json!</span>(<span class="op">{</span></span>
+<span id="cb11-19"><a href="#cb11-19" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;title&quot;</span><span class="op">:</span> <span class="st">&quot;Newsletter title&quot;</span><span class="op">,</span></span>
+<span id="cb11-20"><a href="#cb11-20" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;content&quot;</span><span class="op">:</span> <span class="op">{</span></span>
+<span id="cb11-21"><a href="#cb11-21" aria-hidden="true" tabindex="-1"></a>             <span class="st">&quot;text&quot;</span><span class="op">:</span> <span class="st">&quot;Newsletter body as plain text&quot;</span><span class="op">,</span></span>
+<span id="cb11-22"><a href="#cb11-22" aria-hidden="true" tabindex="-1"></a>             <span class="st">&quot;html&quot;</span><span class="op">:</span> <span class="st">&quot;&lt;p&gt;Newsletter body as HTML&lt;/p&gt;&quot;</span><span class="op">,</span></span>
+<span id="cb11-23"><a href="#cb11-23" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb11-24"><a href="#cb11-24" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span>)<span class="op">;</span></span>
+<span id="cb11-25"><a href="#cb11-25" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> response <span class="op">=</span> <span class="pp">reqwest::Client::</span>new()</span>
+<span id="cb11-26"><a href="#cb11-26" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>post(<span class="op">&amp;</span><span class="pp">format!</span>(<span class="st">&quot;{}/newsletters&quot;</span><span class="op">,</span> <span class="op">&amp;</span>app<span class="op">.</span>address))</span>
+<span id="cb11-27"><a href="#cb11-27" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>json(<span class="op">&amp;</span>newsletter_request_body)</span>
+<span id="cb11-28"><a href="#cb11-28" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>send()</span>
+<span id="cb11-29"><a href="#cb11-29" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb11-30"><a href="#cb11-30" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to execute request.&quot;</span>)<span class="op">;</span></span>
+<span id="cb11-31"><a href="#cb11-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-32"><a href="#cb11-32" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Assert</span></span>
+<span id="cb11-33"><a href="#cb11-33" aria-hidden="true" tabindex="-1"></a>    <span class="pp">assert_eq!</span>(response<span class="op">.</span>status()<span class="op">.</span>as_u16()<span class="op">,</span> <span class="dv">200</span>)<span class="op">;</span></span>
+<span id="cb11-34"><a href="#cb11-34" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Mock verifies on Drop that we have sent the newsletter email</span></span>
+<span id="cb11-35"><a href="#cb11-35" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>It fails, as it should:</p>
+<pre class="text"><code>thread &#39;newsletter::newsletters_are_delivered_to_confirmed_subscribers&#39; panicked at 
+Verifications failed:
+- Mock #1.
+        Expected range of matching incoming requests: == 1
+        Number of matched incoming requests: 0</code></pre>
+</section>
+</section>
+<section id="implementation-strategy" class="level2" data-number="9.4">
+<h2 data-number="9.4"><span class="header-section-number">9.4</span> Implementation Strategy</h2>
+<p>We have more than enough tests to give us feedback now - let’s kick off the implementation work!</p>
+<p>We will start with a naive approach:</p>
+<ul>
+<li>Retrieve the newsletter issue details from the body of the incoming API call;</li>
+<li>Fetch the list of all confirmed subscribers from the database;</li>
+<li>Iterate through the whole list:
+<ul>
+<li>Get the subscriber email;</li>
+<li>Send an email out via Postmark.</li>
+</ul></li>
+</ul>
+<p>Let’s do it!</p>
+</section>
+<section id="body-schema" class="level2" data-number="9.5">
+<h2 data-number="9.5"><span class="header-section-number">9.5</span> Body Schema</h2>
+<p>What do we need to know about a newsletter in order to deliver it?</p>
+<p>If we are striving to keep it as simple as possible:</p>
+<ul>
+<li>the title, to be used as email subject;</li>
+<li>the content, in HTML and pure text, to satisfy all email clients out there.</li>
+</ul>
+<p>We can encode our requirements using structs that derive <code>serde::Deserialize</code>, just like we did in <code>POST /subscriptions</code> with <code>FormData</code>.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> BodyData <span class="op">{</span></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    title<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    content<span class="op">:</span> Content</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> Content <span class="op">{</span></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>    html<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>    text<span class="op">:</span> <span class="dt">String</span></span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p><code>serde</code> does not have any issue with our nested layout given that all field types in <code>BodyData</code> implement <code>serde::Deserialize</code>. We can then use an <code>actix-web</code> extractor to parse <code>BodyData</code> out of the incoming request body. There is just one question to answer: what serialization format are we using?</p>
+<p>For <code>POST /subscriptions</code>, given that we were dealing with HTML forms, we used <code>application/x-www-form-urlencoded</code> as <code>Content-Type</code>.<br />
+For <code>POST /newsletters</code> we are not tied to a form embedded in a web page: we will use JSON, a common choice when building REST APIs.<br />
+The corresponding extractor is <code>actix_web::web::Json</code>:</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">actix_web::</span>web<span class="op">;</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a><span class="co">// We are prefixing `body` with a `_` to avoid </span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a><span class="co">// a compiler warning about unused arguments</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> publish_newsletter(_body<span class="op">:</span> <span class="pp">web::</span>Json<span class="op">&lt;</span>BodyData<span class="op">&gt;</span>) <span class="op">-&gt;</span> HttpResponse <span class="op">{</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>    <span class="pp">HttpResponse::</span><span class="cn">Ok</span>()<span class="op">.</span>finish()</span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<section id="test-invalid-inputs" class="level3" data-number="9.5.1">
+<h3 data-number="9.5.1"><span class="header-section-number">9.5.1</span> Test Invalid Inputs</h3>
+<p>Trust but verify: let’s add a new test case that throws invalid data at our <code>POST /newsletters</code> endpoint.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/newsletter.rs</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>test<span class="at">]</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> newsletters_returns_400_for_invalid_data() <span class="op">{</span></span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Arrange</span></span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> app <span class="op">=</span> spawn_app()<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> test_cases <span class="op">=</span> <span class="pp">vec!</span>[</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>        (</span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>            <span class="pp">serde_json::json!</span>(<span class="op">{</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>                <span class="st">&quot;content&quot;</span><span class="op">:</span> <span class="op">{</span></span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&quot;text&quot;</span><span class="op">:</span> <span class="st">&quot;Newsletter body as plain text&quot;</span><span class="op">,</span></span>
+<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&quot;html&quot;</span><span class="op">:</span> <span class="st">&quot;&lt;p&gt;Newsletter body as HTML&lt;/p&gt;&quot;</span><span class="op">,</span></span>
+<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a>                <span class="op">}</span></span>
+<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span>)<span class="op">,</span></span>
+<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;missing title&quot;</span><span class="op">,</span></span>
+<span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a>        )<span class="op">,</span></span>
+<span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a>        (</span>
+<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a>            <span class="pp">serde_json::json!</span>(<span class="op">{</span><span class="st">&quot;title&quot;</span><span class="op">:</span> <span class="st">&quot;Newsletter!&quot;</span><span class="op">}</span>)<span class="op">,</span></span>
+<span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;missing content&quot;</span><span class="op">,</span></span>
+<span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a>        )<span class="op">,</span></span>
+<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a>    ]<span class="op">;</span></span>
+<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> (invalid_body<span class="op">,</span> error_message) <span class="kw">in</span> test_cases <span class="op">{</span></span>
+<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>        <span class="kw">let</span> response <span class="op">=</span> <span class="pp">reqwest::Client::</span>new()</span>
+<span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>post(<span class="op">&amp;</span><span class="pp">format!</span>(<span class="st">&quot;{}/newsletters&quot;</span><span class="op">,</span> <span class="op">&amp;</span>app<span class="op">.</span>address))</span>
+<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>json(<span class="op">&amp;</span>invalid_body)</span>
+<span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>send()</span>
+<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb15-30"><a href="#cb15-30" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>expect(<span class="st">&quot;Failed to execute request.&quot;</span>)<span class="op">;</span></span>
+<span id="cb15-31"><a href="#cb15-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Assert</span></span>
+<span id="cb15-33"><a href="#cb15-33" aria-hidden="true" tabindex="-1"></a>        <span class="pp">assert_eq!</span>(</span>
+<span id="cb15-34"><a href="#cb15-34" aria-hidden="true" tabindex="-1"></a>            <span class="dv">400</span><span class="op">,</span></span>
+<span id="cb15-35"><a href="#cb15-35" aria-hidden="true" tabindex="-1"></a>            response<span class="op">.</span>status()<span class="op">.</span>as_u16()<span class="op">,</span></span>
+<span id="cb15-36"><a href="#cb15-36" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;The API did not fail with 400 Bad Request when the payload was {}.&quot;</span><span class="op">,</span></span>
+<span id="cb15-37"><a href="#cb15-37" aria-hidden="true" tabindex="-1"></a>            error_message</span>
+<span id="cb15-38"><a href="#cb15-38" aria-hidden="true" tabindex="-1"></a>        )<span class="op">;</span></span>
+<span id="cb15-39"><a href="#cb15-39" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb15-40"><a href="#cb15-40" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>The new test passes - you can add a few more cases if you want to.<br />
+Let’s seize the occasion to refactor a bit and remove some code duplication - we can extract the logic to fire a request to <code>POST /newsletters</code> into a shared helper method on <code>TestApp</code>, as we did for <code>POST /subscriptions</code>:</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/helpers.rs</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> TestApp <span class="op">{</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> post_newsletters(</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>        <span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> </span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>        body<span class="op">:</span> <span class="pp">serde_json::</span>Value</span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>    ) <span class="op">-&gt;</span> <span class="pp">reqwest::</span>Response <span class="op">{</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>        <span class="pp">reqwest::Client::</span>new()</span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>post(<span class="op">&amp;</span><span class="pp">format!</span>(<span class="st">&quot;{}/newsletters&quot;</span><span class="op">,</span> <span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>address))</span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>json(<span class="op">&amp;</span>body)</span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>send()</span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>expect(<span class="st">&quot;Failed to execute request.&quot;</span>)</span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/api/newsletter.rs</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>test<span class="at">]</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> newsletters_are_not_delivered_to_unconfirmed_subscribers() <span class="op">{</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> response <span class="op">=</span> app<span class="op">.</span>post_newsletters(newsletter_request_body)<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>test<span class="at">]</span></span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> newsletters_are_delivered_to_confirmed_subscribers() <span class="op">{</span></span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> response <span class="op">=</span> app<span class="op">.</span>post_newsletters(newsletter_request_body)<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb17-15"><a href="#cb17-15" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb17-16"><a href="#cb17-16" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb17-17"><a href="#cb17-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-18"><a href="#cb17-18" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>test<span class="at">]</span></span>
+<span id="cb17-19"><a href="#cb17-19" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> newsletters_returns_400_for_invalid_data() <span class="op">{</span></span>
+<span id="cb17-20"><a href="#cb17-20" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...] </span></span>
+<span id="cb17-21"><a href="#cb17-21" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> (invalid_body<span class="op">,</span> error_message) <span class="kw">in</span> test_cases <span class="op">{</span></span>
+<span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a>        <span class="kw">let</span> response <span class="op">=</span> app<span class="op">.</span>post_newsletters(invalid_body)<span class="op">.</span><span class="kw">await</span><span class="op">;</span></span>
+<span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a>        <span class="co">// [...]</span></span>
+<span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</section>
+</section>
+<section id="fetch-confirmed-subscribers-list" class="level2" data-number="9.6">
+<h2 data-number="9.6"><span class="header-section-number">9.6</span> Fetch Confirmed Subscribers List</h2>
+<p>We need to write a new query to retrieve the list of all confirmed subscribers.<br />
+A <code>WHERE</code> clause on the <code>status</code> column is enough to isolate the rows we care about:</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">sqlx::</span>PgPool<span class="op">;</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> ConfirmedSubscriber <span class="op">{</span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>    email<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tracing::</span>instrument<span class="at">(</span>name <span class="op">=</span> <span class="st">&quot;Get confirmed subscribers&quot;</span><span class="op">,</span> skip<span class="at">(</span>pool<span class="at">))]</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> get_confirmed_subscribers(</span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="op">&amp;</span>PgPool<span class="op">,</span></span>
+<span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Vec</span><span class="op">&lt;</span>ConfirmedSubscriber<span class="op">&gt;,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> rows <span class="op">=</span> <span class="pp">sqlx::query_as!</span>(</span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a>        ConfirmedSubscriber<span class="op">,</span></span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a>        <span class="st">r#&quot;</span></span>
+<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a><span class="st">        SELECT email</span></span>
+<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a><span class="st">        FROM subscriptions</span></span>
+<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="st">        WHERE status = &#39;confirmed&#39;</span></span>
+<span id="cb18-19"><a href="#cb18-19" aria-hidden="true" tabindex="-1"></a><span class="st">        &quot;#</span><span class="op">,</span></span>
+<span id="cb18-20"><a href="#cb18-20" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb18-21"><a href="#cb18-21" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>fetch_all(pool)</span>
+<span id="cb18-22"><a href="#cb18-22" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb18-23"><a href="#cb18-23" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(rows)</span>
+<span id="cb18-24"><a href="#cb18-24" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>There is something new in there: we are using <code>sqlx::query_as!</code> instead of <code>sqlx::query!</code>.<br />
+<code>sqlx::query_as!</code> maps the retrieved rows to the type specified as its first argument, <code>ConfirmedSubscriber</code>, saving us a bunch of boilerplate.</p>
+<p>Notice that <code>ConfirmedSubscriber</code> has a single field - <code>email</code>. We are minimising the amount of data we are fetching from the database, limiting our query to the columns we actually need to send a newsletter out. Less work for the database, less data to move over the network.<br />
+It won’t make a noticeable difference in this case, but it is a good practice to keep in mind when working on bigger applications with a heavier data footprint.</p>
+<p>To leverage <code>get_confirmed_subscribers</code> in our handler we need a <code>PgPool</code> - we can extract one from the application state, just like we did in <code>POST /subscriptions</code>.</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> publish_newsletter(</span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>    _body<span class="op">:</span> <span class="pp">web::</span>Json<span class="op">&lt;</span>BodyData<span class="op">&gt;,</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="pp">web::</span>Data<span class="op">&lt;</span>PgPool<span class="op">&gt;,</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> HttpResponse <span class="op">{</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> _subscribers <span class="op">=</span> get_confirmed_subscribers(<span class="op">&amp;</span>pool)<span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>    <span class="pp">HttpResponse::</span><span class="cn">Ok</span>()<span class="op">.</span>finish()</span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>The compiler is not happy:</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">21</span> <span class="kw">|</span>   <span class="er">)</span> <span class="ex">-</span><span class="op">&gt;</span> HttpResponse {</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span>  <span class="ex">___________________-</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="ex">22</span> <span class="kw">|</span> <span class="kw">|</span>     <span class="bu">let</span> <span class="va">_subscribers</span> <span class="op">=</span> <span class="va">get_confirmed_subscribers</span><span class="er">(</span><span class="kw">&amp;</span><span class="ex">pool</span><span class="kw">)</span><span class="ex">.await?</span><span class="kw">;</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span> <span class="kw">|</span>                        <span class="ex">^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span> </span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span> <span class="kw">|</span>                        <span class="ex">cannot</span> use the <span class="kw">`</span><span class="ex">?</span><span class="kw">`</span> operator in an async function </span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span> <span class="kw">|</span>                        <span class="ex">that</span> returns <span class="kw">`</span><span class="ex">actix_web::HttpResponse</span><span class="kw">`</span></span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span> <span class="kw">|</span></span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="ex">23</span> <span class="kw">|</span> <span class="kw">|</span>     <span class="fu">HttpResponse::Ok().finish()</span></span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a><span class="ex">24</span> <span class="kw">|</span> <span class="kw">|</span> <span class="er">}</span></span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span> <span class="kw">|</span><span class="ex">__</span> this function should return <span class="kw">`</span><span class="ex">Result</span><span class="kw">`</span> or <span class="kw">`</span><span class="ex">Option</span><span class="kw">`</span> to accept <span class="kw">`</span><span class="ex">?</span><span class="kw">`</span></span></code></pre></div>
+<p>SQL queries may fail and so does <code>get_confirmed_subscribers</code> - we need to change the return type of <code>publish_newsletter</code>.<br />
+We need to return a <code>Result</code> with an appropriate error type, just like we did in the last chapter:</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">actix_web::</span>ResponseError<span class="op">;</span></span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">sqlx::</span>PgPool<span class="op">;</span></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="kw">crate</span><span class="pp">::routes::</span>error_chain_fmt<span class="op">;</span></span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">actix_web::http::</span>StatusCode<span class="op">;</span></span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">thiserror::</span><span class="bu">Error</span><span class="at">)]</span></span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">enum</span> PublishError <span class="op">{</span></span>
+<span id="cb21-10"><a href="#cb21-10" aria-hidden="true" tabindex="-1"></a>    <span class="at">#[</span>error<span class="at">(</span>transparent<span class="at">)]</span></span>
+<span id="cb21-11"><a href="#cb21-11" aria-hidden="true" tabindex="-1"></a>    UnexpectedError(<span class="at">#[</span>from<span class="at">]</span> <span class="pp">anyhow::</span><span class="bu">Error</span>)<span class="op">,</span></span>
+<span id="cb21-12"><a href="#cb21-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb21-13"><a href="#cb21-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-14"><a href="#cb21-14" aria-hidden="true" tabindex="-1"></a><span class="co">// Same logic to get the full error chain on `Debug`</span></span>
+<span id="cb21-15"><a href="#cb21-15" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> <span class="pp">std::fmt::</span><span class="bu">Debug</span> <span class="cf">for</span> PublishError <span class="op">{</span></span>
+<span id="cb21-16"><a href="#cb21-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> fmt(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> f<span class="op">:</span> <span class="op">&amp;</span><span class="kw">mut</span> <span class="pp">std::fmt::</span>Formatter<span class="op">&lt;</span><span class="ot">&#39;_</span><span class="op">&gt;</span>) <span class="op">-&gt;</span> <span class="pp">std::fmt::</span><span class="dt">Result</span> <span class="op">{</span></span>
+<span id="cb21-17"><a href="#cb21-17" aria-hidden="true" tabindex="-1"></a>        error_chain_fmt(<span class="kw">self</span><span class="op">,</span> f)</span>
+<span id="cb21-18"><a href="#cb21-18" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb21-19"><a href="#cb21-19" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb21-20"><a href="#cb21-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-21"><a href="#cb21-21" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> ResponseError <span class="cf">for</span> PublishError <span class="op">{</span></span>
+<span id="cb21-22"><a href="#cb21-22" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> status_code(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> StatusCode <span class="op">{</span></span>
+<span id="cb21-23"><a href="#cb21-23" aria-hidden="true" tabindex="-1"></a>        <span class="cf">match</span> <span class="kw">self</span> <span class="op">{</span></span>
+<span id="cb21-24"><a href="#cb21-24" aria-hidden="true" tabindex="-1"></a>            <span class="pp">PublishError::</span>UnexpectedError(_) <span class="op">=&gt;</span> <span class="pp">StatusCode::</span>INTERNAL_SERVER_ERROR<span class="op">,</span></span>
+<span id="cb21-25"><a href="#cb21-25" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb21-26"><a href="#cb21-26" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb21-27"><a href="#cb21-27" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb21-28"><a href="#cb21-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-29"><a href="#cb21-29" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> publish_newsletter(</span>
+<span id="cb21-30"><a href="#cb21-30" aria-hidden="true" tabindex="-1"></a>    body<span class="op">:</span> <span class="pp">web::</span>Json<span class="op">&lt;</span>BodyData<span class="op">&gt;,</span></span>
+<span id="cb21-31"><a href="#cb21-31" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="pp">web::</span>Data<span class="op">&lt;</span>PgPool<span class="op">&gt;,</span></span>
+<span id="cb21-32"><a href="#cb21-32" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>HttpResponse<span class="op">,</span> PublishError<span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb21-33"><a href="#cb21-33" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> subscribers <span class="op">=</span> get_confirmed_subscribers(<span class="op">&amp;</span>pool)<span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb21-34"><a href="#cb21-34" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(<span class="pp">HttpResponse::</span><span class="cn">Ok</span>()<span class="op">.</span>finish())</span>
+<span id="cb21-35"><a href="#cb21-35" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Using what we learned in Chapter 8 it doesn’t take that much to roll out a new error type!<br />
+Let me remark that we are future-proofing our code a bit: we modelled <code>PublishError</code> as an enumeration, but we only have one variant at the moment. A struct (or <a href="https://docs.rs/actix-web/4.0.1/actix_web/error/struct.InternalError.html"><code>actix_web::error::InternalError</code></a>) would have been more than enough for the time being.</p>
+<p><code>cargo check</code> should succeed now.</p>
+</section>
+<section id="send-newsletter-emails" class="level2" data-number="9.7">
+<h2 data-number="9.7"><span class="header-section-number">9.7</span> Send Newsletter Emails</h2>
+<p>Time to send those emails out!<br />
+We can leverage the <code>EmailClient</code> we wrote a few chapters ago - just like <code>PgPool</code>, it is already part of the application state and we can extract it using <code>web::Data</code>.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="kw">crate</span><span class="pp">::email_client::</span>EmailClient<span class="op">;</span></span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> publish_newsletter(</span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a>    body<span class="op">:</span> <span class="pp">web::</span>Json<span class="op">&lt;</span>BodyData<span class="op">&gt;,</span></span>
+<span id="cb22-7"><a href="#cb22-7" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="pp">web::</span>Data<span class="op">&lt;</span>PgPool<span class="op">&gt;,</span></span>
+<span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a>    <span class="co">// New argument!</span></span>
+<span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a>    email_client<span class="op">:</span> <span class="pp">web::</span>Data<span class="op">&lt;</span>EmailClient<span class="op">&gt;,</span></span>
+<span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>HttpResponse<span class="op">,</span> PublishError<span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> subscribers <span class="op">=</span> get_confirmed_subscribers(<span class="op">&amp;</span>pool)<span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb22-12"><a href="#cb22-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> subscriber <span class="kw">in</span> subscribers <span class="op">{</span></span>
+<span id="cb22-13"><a href="#cb22-13" aria-hidden="true" tabindex="-1"></a>        email_client</span>
+<span id="cb22-14"><a href="#cb22-14" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>send_email(</span>
+<span id="cb22-15"><a href="#cb22-15" aria-hidden="true" tabindex="-1"></a>                subscriber<span class="op">.</span>email<span class="op">,</span></span>
+<span id="cb22-16"><a href="#cb22-16" aria-hidden="true" tabindex="-1"></a>                <span class="op">&amp;</span>body<span class="op">.</span>title<span class="op">,</span></span>
+<span id="cb22-17"><a href="#cb22-17" aria-hidden="true" tabindex="-1"></a>                <span class="op">&amp;</span>body<span class="op">.</span>content<span class="op">.</span>html<span class="op">,</span></span>
+<span id="cb22-18"><a href="#cb22-18" aria-hidden="true" tabindex="-1"></a>                <span class="op">&amp;</span>body<span class="op">.</span>content<span class="op">.</span>text<span class="op">,</span></span>
+<span id="cb22-19"><a href="#cb22-19" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb22-20"><a href="#cb22-20" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb22-21"><a href="#cb22-21" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb22-22"><a href="#cb22-22" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(<span class="pp">HttpResponse::</span><span class="cn">Ok</span>()<span class="op">.</span>finish())</span>
+<span id="cb22-23"><a href="#cb22-23" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>It <em>almost</em> works:</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="va">error</span><span class="op">[</span>E0308<span class="op">]</span><span class="ex">:</span> mismatched types</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--</span><span class="op">&gt;</span> src/routes/newsletters.rs</span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a><span class="ex">48</span> <span class="kw">|</span>                 <span class="ex">subscriber.email,</span></span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span>                 <span class="ex">^^^^^^^^^^^^^^^^</span> </span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span>   <span class="ex">expected</span> struct <span class="kw">`</span><span class="ex">SubscriberEmail</span><span class="kw">`</span>, </span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span>   <span class="ex">found</span> struct <span class="kw">`</span><span class="ex">std::string::String</span><span class="kw">`</span></span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a><span class="va">error</span><span class="op">[</span>E0277<span class="op">]</span><span class="ex">:</span> <span class="kw">`</span><span class="ex">?</span><span class="kw">`</span> couldn<span class="st">&#39;t convert the error to `PublishError`</span></span>
+<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a><span class="st">  --&gt; src/routes/newsletters.rs:53:19</span></span>
+<span id="cb23-11"><a href="#cb23-11" aria-hidden="true" tabindex="-1"></a><span class="st">   |</span></span>
+<span id="cb23-12"><a href="#cb23-12" aria-hidden="true" tabindex="-1"></a><span class="st">53 |             .await?;</span></span>
+<span id="cb23-13"><a href="#cb23-13" aria-hidden="true" tabindex="-1"></a><span class="st">   |                   ^ </span></span>
+<span id="cb23-14"><a href="#cb23-14" aria-hidden="true" tabindex="-1"></a><span class="st">   |   the trait `From&lt;reqwest::Error&gt;` </span></span>
+<span id="cb23-15"><a href="#cb23-15" aria-hidden="true" tabindex="-1"></a><span class="st">   |   is not implemented for `PublishError`</span></span></code></pre></div>
+<section id="context-vs-with_context" class="level3" data-number="9.7.1">
+<h3 data-number="9.7.1"><span class="header-section-number">9.7.1</span> <code>context</code> Vs <code>with_context</code></h3>
+<p>We can quickly fix the second one</p>
+<div class="sourceCode" id="cb24"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="co">// Bring anyhow&#39;s extension trait into scope!</span></span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">anyhow::</span>Context<span class="op">;</span></span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> publish_newsletter(<span class="co">/* */</span>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>HttpResponse<span class="op">,</span> PublishError<span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> subscriber <span class="kw">in</span> subscribers <span class="op">{</span></span>
+<span id="cb24-9"><a href="#cb24-9" aria-hidden="true" tabindex="-1"></a>        email_client</span>
+<span id="cb24-10"><a href="#cb24-10" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>send_email(<span class="co">/* */</span>)</span>
+<span id="cb24-11"><a href="#cb24-11" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb24-12"><a href="#cb24-12" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>with_context(<span class="op">||</span> <span class="op">{</span></span>
+<span id="cb24-13"><a href="#cb24-13" aria-hidden="true" tabindex="-1"></a>                <span class="pp">format!</span>(<span class="st">&quot;Failed to send newsletter issue to {}&quot;</span><span class="op">,</span> subscriber<span class="op">.</span>email)</span>
+<span id="cb24-14"><a href="#cb24-14" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span>)<span class="op">?;</span></span>
+<span id="cb24-15"><a href="#cb24-15" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb24-16"><a href="#cb24-16" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb24-17"><a href="#cb24-17" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We are using a new method, <code>with_context</code>.</p>
+<p>It is a close relative of <code>context</code>, the method we used extensively in Chapter 8 to convert the error variant of <code>Result</code> into <code>anyhow::Error</code> while enriching it with contextual information.</p>
+<p>There is one key difference between the two: <code>with_context</code> is <strong>lazy</strong>.<br />
+It takes a closure as argument and the closure is only called in case of an error.</p>
+<p>If the context you are adding is static - e.g. <code>context("Oh no!")</code> - they are equivalent.<br />
+If the context you are adding has a runtime cost, use <code>with_context</code> - you avoid paying for the error path when the fallible operation succeeds.</p>
+<p>Let’s look at our case, as an example: <code>format!</code> allocates memory on the heap to store its output string. Using <code>context</code>, we would be allocating that string every time we send an email out.<br />
+Using <code>with_context</code>, instead, we only invoke <code>format!</code> if email delivery fails.</p>
+</section>
+</section>
+<section id="validation-of-stored-data" class="level2" data-number="9.8">
+<h2 data-number="9.8"><span class="header-section-number">9.8</span> Validation Of Stored Data</h2>
+<p><code>cargo check</code> should return a single error now:</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="va">error</span><span class="op">[</span>E0308<span class="op">]</span><span class="ex">:</span> mismatched types</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--</span><span class="op">&gt;</span> src/routes/newsletters.rs</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span></span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a><span class="ex">48</span> <span class="kw">|</span>                 <span class="ex">subscriber.email,</span></span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span>                 <span class="ex">^^^^^^^^^^^^^^^^</span> </span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span>   <span class="ex">expected</span> struct <span class="kw">`</span><span class="ex">SubscriberEmail</span><span class="kw">`</span>, </span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span>   <span class="ex">found</span> struct <span class="kw">`</span><span class="ex">std::string::String</span><span class="kw">`</span></span></code></pre></div>
+<p>We are not performing any validation on the data we retrieve from the database - <code>ConfirmedSubscriber::email</code> is of type <code>String</code>.<br />
+<code>EmailClient::send_email</code>, instead, expects a validated email address - a <code>SubscriberEmail</code> instance.</p>
+<p>We can try the naive solution first - change <code>ConfirmedSubscriber::email</code> to be of type <code>SubscriberEmail</code>.</p>
+<div class="sourceCode" id="cb26"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="kw">crate</span><span class="pp">::domain::</span>SubscriberEmail<span class="op">;</span></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> ConfirmedSubscriber <span class="op">{</span></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a>    email<span class="op">:</span> SubscriberEmail<span class="op">,</span></span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tracing::</span>instrument<span class="at">(</span>name <span class="op">=</span> <span class="st">&quot;Get confirmed subscribers&quot;</span><span class="op">,</span> skip<span class="at">(</span>pool<span class="at">))]</span></span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> get_confirmed_subscribers(</span>
+<span id="cb26-11"><a href="#cb26-11" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="op">&amp;</span>PgPool<span class="op">,</span></span>
+<span id="cb26-12"><a href="#cb26-12" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Vec</span><span class="op">&lt;</span>ConfirmedSubscriber<span class="op">&gt;,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb26-13"><a href="#cb26-13" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> rows <span class="op">=</span> <span class="pp">sqlx::query_as!</span>(</span>
+<span id="cb26-14"><a href="#cb26-14" aria-hidden="true" tabindex="-1"></a>        ConfirmedSubscriber<span class="op">,</span></span>
+<span id="cb26-15"><a href="#cb26-15" aria-hidden="true" tabindex="-1"></a>        <span class="st">r#&quot;</span></span>
+<span id="cb26-16"><a href="#cb26-16" aria-hidden="true" tabindex="-1"></a><span class="st">        SELECT email</span></span>
+<span id="cb26-17"><a href="#cb26-17" aria-hidden="true" tabindex="-1"></a><span class="st">        FROM subscriptions</span></span>
+<span id="cb26-18"><a href="#cb26-18" aria-hidden="true" tabindex="-1"></a><span class="st">        WHERE status = &#39;confirmed&#39;</span></span>
+<span id="cb26-19"><a href="#cb26-19" aria-hidden="true" tabindex="-1"></a><span class="st">        &quot;#</span><span class="op">,</span></span>
+<span id="cb26-20"><a href="#cb26-20" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb26-21"><a href="#cb26-21" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>fetch_all(pool)</span>
+<span id="cb26-22"><a href="#cb26-22" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb26-23"><a href="#cb26-23" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(rows)</span>
+<span id="cb26-24"><a href="#cb26-24" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="va">error</span><span class="op">[</span>E0308<span class="op">]</span><span class="ex">:</span> mismatched types</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--</span><span class="op">&gt;</span> src/routes/newsletters.rs</span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span></span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a><span class="ex">69</span> <span class="kw">|</span>       <span class="bu">let</span> <span class="va">rows</span> <span class="op">=</span> <span class="va">sqlx</span><span class="op">::</span><span class="va">query_as</span><span class="pp">!(</span></span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a>   <span class="pp">|</span>  ________________^</span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>70 <span class="pp">|</span> <span class="pp">|</span>         ConfirmedSubscriber,</span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>71 <span class="pp">|</span> <span class="pp">|</span>         r#<span class="st">&quot;</span></span>
+<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a><span class="st">72 | |         SELECT email</span></span>
+<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a><span class="st">...  |</span></span>
+<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="st">75 | |         &quot;</span>#,</span>
+<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a>76 <span class="pp">|</span> <span class="pp">|</span>     <span class="pp">)</span></span>
+<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span> <span class="kw">|</span><span class="ex">_____^</span> expected struct <span class="kw">`</span><span class="ex">SubscriberEmail</span><span class="kw">`</span>, </span>
+<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a>             <span class="ex">found</span> struct <span class="kw">`</span><span class="ex">std::string::String</span><span class="kw">`</span></span></code></pre></div>
+<p><code>sqlx</code> doesn’t like it - it does not know how to convert a <code>TEXT</code> column into <code>SubscriberEmail</code>.<br />
+We could scan <code>sqlx</code>’s documentation for a way to implement support for custom type - a lot of trouble for a minor upside.</p>
+<p>We can follow a similar approach to the one we deployed for our <code>POST /subscriptions</code> endpoint - we use two structs:</p>
+<ul>
+<li>one encodes the data layout we expect on the wire (<code>FormData</code>);</li>
+<li>the other one is built by parsing the raw representation, using our domain types (<code>NewSubscriber</code>).</li>
+</ul>
+<p>For our query, it looks like this:</p>
+<div class="sourceCode" id="cb28"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> ConfirmedSubscriber <span class="op">{</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>    email<span class="op">:</span> SubscriberEmail<span class="op">,</span></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tracing::</span>instrument<span class="at">(</span>name <span class="op">=</span> <span class="st">&quot;Get confirmed subscribers&quot;</span><span class="op">,</span> skip<span class="at">(</span>pool<span class="at">))]</span></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> get_confirmed_subscribers(</span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="op">&amp;</span>PgPool<span class="op">,</span></span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Vec</span><span class="op">&lt;</span>ConfirmedSubscriber<span class="op">&gt;,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>    <span class="co">// We only need `Row` to map the data coming out of this query.</span></span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Nesting its definition inside the function itself is a simple way</span></span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a>    <span class="co">// to clearly communicate this coupling (and to ensure it doesn&#39;t </span></span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a>    <span class="co">// get used elsewhere by mistake).</span></span>
+<span id="cb28-16"><a href="#cb28-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">struct</span> Row <span class="op">{</span></span>
+<span id="cb28-17"><a href="#cb28-17" aria-hidden="true" tabindex="-1"></a>        email<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb28-18"><a href="#cb28-18" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb28-19"><a href="#cb28-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-20"><a href="#cb28-20" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> rows <span class="op">=</span> <span class="pp">sqlx::query_as!</span>(</span>
+<span id="cb28-21"><a href="#cb28-21" aria-hidden="true" tabindex="-1"></a>        Row<span class="op">,</span></span>
+<span id="cb28-22"><a href="#cb28-22" aria-hidden="true" tabindex="-1"></a>        <span class="st">r#&quot;</span></span>
+<span id="cb28-23"><a href="#cb28-23" aria-hidden="true" tabindex="-1"></a><span class="st">        SELECT email</span></span>
+<span id="cb28-24"><a href="#cb28-24" aria-hidden="true" tabindex="-1"></a><span class="st">        FROM subscriptions</span></span>
+<span id="cb28-25"><a href="#cb28-25" aria-hidden="true" tabindex="-1"></a><span class="st">        WHERE status = &#39;confirmed&#39;</span></span>
+<span id="cb28-26"><a href="#cb28-26" aria-hidden="true" tabindex="-1"></a><span class="st">        &quot;#</span><span class="op">,</span></span>
+<span id="cb28-27"><a href="#cb28-27" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb28-28"><a href="#cb28-28" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>fetch_all(pool)</span>
+<span id="cb28-29"><a href="#cb28-29" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb28-30"><a href="#cb28-30" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Map into the domain type</span></span>
+<span id="cb28-31"><a href="#cb28-31" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> confirmed_subscribers <span class="op">=</span> rows</span>
+<span id="cb28-32"><a href="#cb28-32" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>into_iter()</span>
+<span id="cb28-33"><a href="#cb28-33" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>map(<span class="op">|</span>r<span class="op">|</span> ConfirmedSubscriber <span class="op">{</span></span>
+<span id="cb28-34"><a href="#cb28-34" aria-hidden="true" tabindex="-1"></a>            <span class="co">// Just panic if validation fails</span></span>
+<span id="cb28-35"><a href="#cb28-35" aria-hidden="true" tabindex="-1"></a>            email<span class="op">:</span> <span class="pp">SubscriberEmail::</span>parse(r<span class="op">.</span>email)<span class="op">.</span>unwrap()<span class="op">,</span></span>
+<span id="cb28-36"><a href="#cb28-36" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span>)</span>
+<span id="cb28-37"><a href="#cb28-37" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>collect()<span class="op">;</span></span>
+<span id="cb28-38"><a href="#cb28-38" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(confirmed_subscribers)</span>
+<span id="cb28-39"><a href="#cb28-39" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Is that <code>SubscriberEmail::parse(r.email).unwrap()</code> a good idea?</p>
+<p>The emails of all new subscribers go through the validation logic in <code>SubscriberEmail::parse</code> - it was a big focus topic for us in Chapter 6.<br />
+You might argue, then, that all the emails stored in our database are necessarily valid - there is no need to account validation failures here. It is safe to just <code>unwrap</code> them all, knowing it will never panic.</p>
+<p>This reasoning is sound assuming our software never changes. But we are optimising for high deployment frequency!</p>
+<p>Data stored in our Postgres instance creates a <strong>temporal coupling between old and new versions of our application</strong>.<br />
+The emails we are retrieving from our database were marked as valid by a previous version of our application. The current version might disagree.</p>
+<p>We might discover, for example, that our email validation logic is too lenient - some invalid emails are slipping through the cracks, leading to issues when attempting to deliver newsletters. We implement a stricter validation routine, deploy the patched version and, suddenly, email delivery does not work at all!<br />
+<code>get_confirmed_subscribers</code> panics when processing stored emails that were previously considered valid, but no longer are.</p>
+<p>What should we do, then?<br />
+Should we skip validation entirely when retrieving data from the database?</p>
+<p>There is no one-size-fits-all answer.<br />
+You need to evaluate the issue on a case by case basis given the requirements of your domain.</p>
+<p>Sometimes it is unacceptable to process invalid records - the routine should fail and an operator must intervene to rectify the corrupt records.<br />
+Sometimes we need to process all historical records (e.g. analytics) and we should make minimal assumptions about the data - <code>String</code> is our safest bet.</p>
+<p>In our case, we can meet half-way: we can skip invalid emails when fetching the list of recipients for our next newsletter issue. We will emit a warning for every invalid address we find, allowing an operator to identify the issue and correct the stored records at a certain point in the future.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> get_confirmed_subscribers(</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="op">&amp;</span>PgPool<span class="op">,</span></span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Vec</span><span class="op">&lt;</span>ConfirmedSubscriber<span class="op">&gt;,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Map into the domain type</span></span>
+<span id="cb29-10"><a href="#cb29-10" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> confirmed_subscribers <span class="op">=</span> rows</span>
+<span id="cb29-11"><a href="#cb29-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>into_iter()</span>
+<span id="cb29-12"><a href="#cb29-12" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>filter_map(<span class="op">|</span>r<span class="op">|</span> <span class="cf">match</span> <span class="pp">SubscriberEmail::</span>parse(r<span class="op">.</span>email) <span class="op">{</span></span>
+<span id="cb29-13"><a href="#cb29-13" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Ok</span>(email) <span class="op">=&gt;</span> <span class="cn">Some</span>(ConfirmedSubscriber <span class="op">{</span> email <span class="op">}</span>)<span class="op">,</span></span>
+<span id="cb29-14"><a href="#cb29-14" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Err</span>(error) <span class="op">=&gt;</span> <span class="op">{</span></span>
+<span id="cb29-15"><a href="#cb29-15" aria-hidden="true" tabindex="-1"></a>                <span class="pp">tracing::warn!</span>(</span>
+<span id="cb29-16"><a href="#cb29-16" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&quot;A confirmed subscriber is using an invalid email address.</span><span class="sc">\n</span><span class="st">{}.&quot;</span><span class="op">,</span></span>
+<span id="cb29-17"><a href="#cb29-17" aria-hidden="true" tabindex="-1"></a>                    error</span>
+<span id="cb29-18"><a href="#cb29-18" aria-hidden="true" tabindex="-1"></a>                )<span class="op">;</span></span>
+<span id="cb29-19"><a href="#cb29-19" aria-hidden="true" tabindex="-1"></a>                <span class="cn">None</span></span>
+<span id="cb29-20"><a href="#cb29-20" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span></span>
+<span id="cb29-21"><a href="#cb29-21" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span>)</span>
+<span id="cb29-22"><a href="#cb29-22" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>collect()<span class="op">;</span></span>
+<span id="cb29-23"><a href="#cb29-23" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(confirmed_subscribers)</span>
+<span id="cb29-24"><a href="#cb29-24" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p><code>filter_map</code> is a handy combinator - it returns a new iterator containing only the items for which our closure returned a <code>Some</code> variant.</p>
+<section id="responsibility-boundaries" class="level3" data-number="9.8.1">
+<h3 data-number="9.8.1"><span class="header-section-number">9.8.1</span> Responsibility Boundaries</h3>
+<p>We could get away with this, but it is worth taking a moment to reflect on who is doing what here.<br />
+Is <code>get_confirmed_subscriber</code> the most appropriate location to choose if we should skip or abort when encountering an invalid email address?<br />
+It feels like a business-level decision that would be better placed in <code>publish_newsletter</code>, the driving routine of our delivery workflow.</p>
+<p><code>get_confirmed_subscriber</code> should simply act as an adapter between our storage layer and our domain layer. It deals with the database-specific bits (i.e. the query) and the mapping logic, but it delegates to the caller the decision on what to do if the mapping or the query fail.</p>
+<p>Let’s refactor:</p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> get_confirmed_subscribers(</span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="op">&amp;</span>PgPool<span class="op">,</span></span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// We are returning a `Vec` of `Result`s in the happy case.</span></span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">// This allows the caller to bubble up errors due to network issues or other</span></span>
+<span id="cb30-8"><a href="#cb30-8" aria-hidden="true" tabindex="-1"></a>    <span class="co">// transient failures using the `?` operator, while the compiler </span></span>
+<span id="cb30-9"><a href="#cb30-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">// forces them to handle the subtler mapping error.</span></span>
+<span id="cb30-10"><a href="#cb30-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// See http://sled.rs/errors.html for a deep-dive about this technique.</span></span>
+<span id="cb30-11"><a href="#cb30-11" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Vec</span><span class="op">&lt;</span><span class="dt">Result</span><span class="op">&lt;</span>ConfirmedSubscriber<span class="op">,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;&gt;,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb30-12"><a href="#cb30-12" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb30-13"><a href="#cb30-13" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb30-14"><a href="#cb30-14" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> confirmed_subscribers <span class="op">=</span> rows</span>
+<span id="cb30-15"><a href="#cb30-15" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>into_iter()</span>
+<span id="cb30-16"><a href="#cb30-16" aria-hidden="true" tabindex="-1"></a>        <span class="co">// No longer using `filter_map`!   </span></span>
+<span id="cb30-17"><a href="#cb30-17" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>map(<span class="op">|</span>r<span class="op">|</span> <span class="cf">match</span> <span class="pp">SubscriberEmail::</span>parse(r<span class="op">.</span>email) <span class="op">{</span></span>
+<span id="cb30-18"><a href="#cb30-18" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Ok</span>(email) <span class="op">=&gt;</span> <span class="cn">Ok</span>(ConfirmedSubscriber <span class="op">{</span> email <span class="op">}</span>)<span class="op">,</span></span>
+<span id="cb30-19"><a href="#cb30-19" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Err</span>(error) <span class="op">=&gt;</span> <span class="cn">Err</span>(<span class="pp">anyhow::anyhow!</span>(error))<span class="op">,</span></span>
+<span id="cb30-20"><a href="#cb30-20" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span>)</span>
+<span id="cb30-21"><a href="#cb30-21" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>collect()<span class="op">;</span></span>
+<span id="cb30-22"><a href="#cb30-22" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(confirmed_subscribers)</span>
+<span id="cb30-23"><a href="#cb30-23" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We now get a compiler error at the calling site</p>
+<div class="sourceCode" id="cb31"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="va">error</span><span class="op">[</span>E0609<span class="op">]</span><span class="ex">:</span> no field <span class="kw">`</span><span class="ex">email</span><span class="kw">`</span> on type <span class="kw">`</span><span class="ex">Result</span><span class="op">&lt;</span>ConfirmedSubscriber, anyhow::Error<span class="op">&gt;</span><span class="kw">`</span></span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>  <span class="ex">--</span><span class="op">&gt;</span> src/routes/newsletters.rs</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a><span class="ex">50</span> <span class="kw">|</span>                 <span class="ex">subscriber.email,</span></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>   <span class="kw">|</span></span></code></pre></div>
+<p>which we can immediately fix:</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> publish_newsletter(<span class="co">/* */</span>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>HttpResponse<span class="op">,</span> PublishError<span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> subscribers <span class="op">=</span> get_confirmed_subscribers(<span class="op">&amp;</span>pool)<span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb32-6"><a href="#cb32-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> subscriber <span class="kw">in</span> subscribers <span class="op">{</span></span>
+<span id="cb32-7"><a href="#cb32-7" aria-hidden="true" tabindex="-1"></a>        <span class="co">// The compiler forces us to handle both the happy and unhappy case!</span></span>
+<span id="cb32-8"><a href="#cb32-8" aria-hidden="true" tabindex="-1"></a>        <span class="cf">match</span> subscriber <span class="op">{</span></span>
+<span id="cb32-9"><a href="#cb32-9" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Ok</span>(subscriber) <span class="op">=&gt;</span> <span class="op">{</span></span>
+<span id="cb32-10"><a href="#cb32-10" aria-hidden="true" tabindex="-1"></a>                email_client</span>
+<span id="cb32-11"><a href="#cb32-11" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span>send_email(</span>
+<span id="cb32-12"><a href="#cb32-12" aria-hidden="true" tabindex="-1"></a>                        subscriber<span class="op">.</span>email<span class="op">,</span></span>
+<span id="cb32-13"><a href="#cb32-13" aria-hidden="true" tabindex="-1"></a>                        <span class="op">&amp;</span>body<span class="op">.</span>title<span class="op">,</span></span>
+<span id="cb32-14"><a href="#cb32-14" aria-hidden="true" tabindex="-1"></a>                        <span class="op">&amp;</span>body<span class="op">.</span>content<span class="op">.</span>html<span class="op">,</span></span>
+<span id="cb32-15"><a href="#cb32-15" aria-hidden="true" tabindex="-1"></a>                        <span class="op">&amp;</span>body<span class="op">.</span>content<span class="op">.</span>text<span class="op">,</span></span>
+<span id="cb32-16"><a href="#cb32-16" aria-hidden="true" tabindex="-1"></a>                    )</span>
+<span id="cb32-17"><a href="#cb32-17" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb32-18"><a href="#cb32-18" aria-hidden="true" tabindex="-1"></a>                    <span class="op">.</span>with_context(<span class="op">||</span> <span class="op">{</span></span>
+<span id="cb32-19"><a href="#cb32-19" aria-hidden="true" tabindex="-1"></a>                        <span class="pp">format!</span>(</span>
+<span id="cb32-20"><a href="#cb32-20" aria-hidden="true" tabindex="-1"></a>                            <span class="st">&quot;Failed to send newsletter issue to {}&quot;</span><span class="op">,</span> </span>
+<span id="cb32-21"><a href="#cb32-21" aria-hidden="true" tabindex="-1"></a>                            subscriber<span class="op">.</span>email</span>
+<span id="cb32-22"><a href="#cb32-22" aria-hidden="true" tabindex="-1"></a>                        )</span>
+<span id="cb32-23"><a href="#cb32-23" aria-hidden="true" tabindex="-1"></a>                    <span class="op">}</span>)<span class="op">?;</span></span>
+<span id="cb32-24"><a href="#cb32-24" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span></span>
+<span id="cb32-25"><a href="#cb32-25" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Err</span>(error) <span class="op">=&gt;</span> <span class="op">{</span></span>
+<span id="cb32-26"><a href="#cb32-26" aria-hidden="true" tabindex="-1"></a>                <span class="pp">tracing::warn!</span>(</span>
+<span id="cb32-27"><a href="#cb32-27" aria-hidden="true" tabindex="-1"></a>                    <span class="co">// We record the error chain as a structured field </span></span>
+<span id="cb32-28"><a href="#cb32-28" aria-hidden="true" tabindex="-1"></a>                    <span class="co">// on the log record.</span></span>
+<span id="cb32-29"><a href="#cb32-29" aria-hidden="true" tabindex="-1"></a>                    error<span class="op">.</span>cause_chain <span class="op">=</span> <span class="op">?</span>error<span class="op">,</span></span>
+<span id="cb32-30"><a href="#cb32-30" aria-hidden="true" tabindex="-1"></a>                    <span class="co">// Using `\` to split a long string literal over</span></span>
+<span id="cb32-31"><a href="#cb32-31" aria-hidden="true" tabindex="-1"></a>                    <span class="co">// two lines, without creating a `\n` character.</span></span>
+<span id="cb32-32"><a href="#cb32-32" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&quot;Skipping a confirmed subscriber. </span><span class="sc">\</span></span>
+<span id="cb32-33"><a href="#cb32-33" aria-hidden="true" tabindex="-1"></a><span class="st">                    Their stored contact details are invalid&quot;</span><span class="op">,</span></span>
+<span id="cb32-34"><a href="#cb32-34" aria-hidden="true" tabindex="-1"></a>                )<span class="op">;</span></span>
+<span id="cb32-35"><a href="#cb32-35" aria-hidden="true" tabindex="-1"></a>            <span class="op">}</span></span>
+<span id="cb32-36"><a href="#cb32-36" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb32-37"><a href="#cb32-37" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb32-38"><a href="#cb32-38" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(<span class="pp">HttpResponse::</span><span class="cn">Ok</span>()<span class="op">.</span>finish())</span>
+<span id="cb32-39"><a href="#cb32-39" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</section>
+<section id="follow-the-compiler" class="level3" data-number="9.8.2">
+<h3 data-number="9.8.2"><span class="header-section-number">9.8.2</span> Follow The Compiler</h3>
+<p>The compiler is almost happy:</p>
+<div class="sourceCode" id="cb33"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>error[E0277]<span class="op">:</span> `SubscriberEmail` doesn<span class="ot">&#39;t</span> implement `<span class="pp">std::fmt::</span>Display`</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">--&gt;</span> src<span class="op">/</span>routes<span class="op">/</span>newsletters<span class="op">.</span>rs<span class="op">:</span><span class="dv">59</span><span class="op">:</span><span class="dv">74</span></span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>   <span class="op">|</span></span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a><span class="dv">59</span> <span class="op">|</span>  <span class="pp">format!</span>(<span class="st">&quot;Failed to send newsletter issue to {}&quot;</span><span class="op">,</span> subscriber<span class="op">.</span>email)</span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a>   <span class="op">|</span>                                                   <span class="op">^^^^^^^^^^^^^^^^</span> </span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a>   <span class="op">|</span>   `SubscriberEmail` cannot be formatted with the <span class="kw">default</span> formatter</span></code></pre></div>
+<p>This is caused by our type change for <code>email</code> in <code>ConfirmedSubscriber</code>, from <code>String</code> to <code>SubscriberEmail</code>.<br />
+Let’s implement <code>Display</code> for our new type:</p>
+<div class="sourceCode" id="cb34"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/domain/subscriber_email.rs</span></span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> <span class="pp">std::fmt::</span><span class="bu">Display</span> <span class="cf">for</span> SubscriberEmail <span class="op">{</span></span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> fmt(<span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span> f<span class="op">:</span> <span class="op">&amp;</span><span class="kw">mut</span> <span class="pp">std::fmt::</span>Formatter<span class="op">&lt;</span><span class="ot">&#39;_</span><span class="op">&gt;</span>) <span class="op">-&gt;</span> <span class="pp">std::fmt::</span><span class="dt">Result</span> <span class="op">{</span></span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>        <span class="co">// We just forward to the Display implementation of </span></span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>        <span class="co">// the wrapped String.</span></span>
+<span id="cb34-9"><a href="#cb34-9" aria-hidden="true" tabindex="-1"></a>        <span class="kw">self</span><span class="op">.</span><span class="dv">0</span><span class="op">.</span>fmt(f)</span>
+<span id="cb34-10"><a href="#cb34-10" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb34-11"><a href="#cb34-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Progress! Different compiler error, this time from the borrow checker!</p>
+<div class="sourceCode" id="cb35"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>error[E0382]<span class="op">:</span> borrow of partially moved value<span class="op">:</span> `subscriber`</span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">--&gt;</span> src<span class="op">/</span>routes<span class="op">/</span>newsletters<span class="op">.</span>rs</span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>   <span class="op">|</span></span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="dv">52</span> <span class="op">|</span>      subscriber<span class="op">.</span>email<span class="op">,</span></span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a>   <span class="op">|</span>      <span class="op">----------------</span> value partially moved here</span>
+<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a><span class="op">...</span></span>
+<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a><span class="dv">58</span> <span class="op">|</span>  <span class="op">.</span>with_context(<span class="op">||</span> <span class="op">{</span></span>
+<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a>   <span class="op">|</span>                <span class="op">^^</span> value borrowed here after partial <span class="kw">move</span></span>
+<span id="cb35-9"><a href="#cb35-9" aria-hidden="true" tabindex="-1"></a><span class="dv">59</span> <span class="op">|</span>      <span class="pp">format!</span>(<span class="st">&quot;Failed to send newsletter issue to {}&quot;</span><span class="op">,</span> subscriber<span class="op">.</span>email)</span>
+<span id="cb35-10"><a href="#cb35-10" aria-hidden="true" tabindex="-1"></a>   <span class="op">|</span>                                                       <span class="op">----------</span> </span>
+<span id="cb35-11"><a href="#cb35-11" aria-hidden="true" tabindex="-1"></a>                                  borrow occurs due to <span class="kw">use</span> <span class="kw">in</span> closure</span></code></pre></div>
+<p>We could just slap a <code>.clone()</code> on the first usage and call it a day.<br />
+But let’s try to be sophisticated: do we really need to take ownership of <code>SubscriberEmail</code> in <code>EmailClient::send_email</code>?</p>
+<div class="sourceCode" id="cb36"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/email_client.rs</span></span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> send_email(</span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span></span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a>    recipient<span class="op">:</span> SubscriberEmail<span class="op">,</span></span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">/* */</span></span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">,</span> <span class="pp">reqwest::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb36-9"><a href="#cb36-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb36-10"><a href="#cb36-10" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> request_body <span class="op">=</span> SendEmailRequest <span class="op">{</span></span>
+<span id="cb36-11"><a href="#cb36-11" aria-hidden="true" tabindex="-1"></a>        to<span class="op">:</span> recipient<span class="op">.</span>as_ref()<span class="op">,</span></span>
+<span id="cb36-12"><a href="#cb36-12" aria-hidden="true" tabindex="-1"></a>        <span class="co">// [...]</span></span>
+<span id="cb36-13"><a href="#cb36-13" aria-hidden="true" tabindex="-1"></a>    <span class="op">};</span></span>
+<span id="cb36-14"><a href="#cb36-14" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb36-15"><a href="#cb36-15" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We just need to be able to call <code>as_ref</code> on it - a <code>&amp;SubscriberEmail</code> would work just fine.<br />
+Let’s change the signature accordingly:</p>
+<div class="sourceCode" id="cb37"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/email_client.rs</span></span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> send_email(</span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">&amp;</span><span class="kw">self</span><span class="op">,</span></span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a>    recipient<span class="op">:</span> <span class="op">&amp;</span>SubscriberEmail<span class="op">,</span></span>
+<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">/* */</span></span>
+<span id="cb37-8"><a href="#cb37-8" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">,</span> <span class="pp">reqwest::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb37-9"><a href="#cb37-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb37-10"><a href="#cb37-10" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>There are a few calling sites that need to be updated - the compiler is gentle enough to point them out. I’ll leave the fixes to you, the reader, as an exercise.<br />
+The test suite should pass when you are done.</p>
+</section>
+<section id="remove-some-boilerplate" class="level3" data-number="9.8.3">
+<h3 data-number="9.8.3"><span class="header-section-number">9.8.3</span> Remove Some Boilerplate</h3>
+<p>Before moving forward, let’s take one last look at <code>get_confirmed_subscribers</code>:</p>
+<div class="sourceCode" id="cb38"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tracing::</span>instrument<span class="at">(</span>name <span class="op">=</span> <span class="st">&quot;Get confirmed subscribers&quot;</span><span class="op">,</span> skip<span class="at">(</span>pool<span class="at">))]</span></span>
+<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> get_confirmed_subscribers(</span>
+<span id="cb38-6"><a href="#cb38-6" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="op">&amp;</span>PgPool<span class="op">,</span></span>
+<span id="cb38-7"><a href="#cb38-7" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Vec</span><span class="op">&lt;</span><span class="dt">Result</span><span class="op">&lt;</span>ConfirmedSubscriber<span class="op">,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;&gt;,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb38-8"><a href="#cb38-8" aria-hidden="true" tabindex="-1"></a>    <span class="kw">struct</span> Row <span class="op">{</span></span>
+<span id="cb38-9"><a href="#cb38-9" aria-hidden="true" tabindex="-1"></a>        email<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb38-10"><a href="#cb38-10" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb38-11"><a href="#cb38-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb38-12"><a href="#cb38-12" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> rows <span class="op">=</span> <span class="pp">sqlx::query_as!</span>(</span>
+<span id="cb38-13"><a href="#cb38-13" aria-hidden="true" tabindex="-1"></a>        Row<span class="op">,</span></span>
+<span id="cb38-14"><a href="#cb38-14" aria-hidden="true" tabindex="-1"></a>        <span class="st">r#&quot;</span></span>
+<span id="cb38-15"><a href="#cb38-15" aria-hidden="true" tabindex="-1"></a><span class="st">        SELECT email</span></span>
+<span id="cb38-16"><a href="#cb38-16" aria-hidden="true" tabindex="-1"></a><span class="st">        FROM subscriptions</span></span>
+<span id="cb38-17"><a href="#cb38-17" aria-hidden="true" tabindex="-1"></a><span class="st">        WHERE status = &#39;confirmed&#39;</span></span>
+<span id="cb38-18"><a href="#cb38-18" aria-hidden="true" tabindex="-1"></a><span class="st">        &quot;#</span><span class="op">,</span></span>
+<span id="cb38-19"><a href="#cb38-19" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb38-20"><a href="#cb38-20" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>fetch_all(pool)</span>
+<span id="cb38-21"><a href="#cb38-21" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb38-22"><a href="#cb38-22" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> confirmed_subscribers <span class="op">=</span> rows</span>
+<span id="cb38-23"><a href="#cb38-23" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>into_iter()</span>
+<span id="cb38-24"><a href="#cb38-24" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>map(<span class="op">|</span>r<span class="op">|</span> <span class="cf">match</span> <span class="pp">SubscriberEmail::</span>parse(r<span class="op">.</span>email) <span class="op">{</span></span>
+<span id="cb38-25"><a href="#cb38-25" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Ok</span>(email) <span class="op">=&gt;</span> <span class="cn">Ok</span>(ConfirmedSubscriber <span class="op">{</span> email <span class="op">}</span>)<span class="op">,</span></span>
+<span id="cb38-26"><a href="#cb38-26" aria-hidden="true" tabindex="-1"></a>            <span class="cn">Err</span>(error) <span class="op">=&gt;</span> <span class="cn">Err</span>(<span class="pp">anyhow::anyhow!</span>(error))<span class="op">,</span></span>
+<span id="cb38-27"><a href="#cb38-27" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span>)</span>
+<span id="cb38-28"><a href="#cb38-28" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>collect()<span class="op">;</span></span>
+<span id="cb38-29"><a href="#cb38-29" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(confirmed_subscribers)</span>
+<span id="cb38-30"><a href="#cb38-30" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Is <code>Row</code> adding any value?<br />
+Not really - the query is simple enough that we do not benefit significantly from having a dedicated type to represent the returned data.<br />
+We can switch back to <code>query!</code> and remove <code>Row</code> entirely:</p>
+<div class="sourceCode" id="cb39"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/routes/newsletters.rs</span></span>
+<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb39-5"><a href="#cb39-5" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tracing::</span>instrument<span class="at">(</span>name <span class="op">=</span> <span class="st">&quot;Get confirmed subscribers&quot;</span><span class="op">,</span> skip<span class="at">(</span>pool<span class="at">))]</span></span>
+<span id="cb39-6"><a href="#cb39-6" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> get_confirmed_subscribers(</span>
+<span id="cb39-7"><a href="#cb39-7" aria-hidden="true" tabindex="-1"></a>    pool<span class="op">:</span> <span class="op">&amp;</span>PgPool<span class="op">,</span></span>
+<span id="cb39-8"><a href="#cb39-8" aria-hidden="true" tabindex="-1"></a>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Vec</span><span class="op">&lt;</span><span class="dt">Result</span><span class="op">&lt;</span>ConfirmedSubscriber<span class="op">,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;&gt;,</span> <span class="pp">anyhow::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb39-9"><a href="#cb39-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> confirmed_subscribers <span class="op">=</span> <span class="pp">sqlx::query!</span>(</span>
+<span id="cb39-10"><a href="#cb39-10" aria-hidden="true" tabindex="-1"></a>        <span class="st">r#&quot;</span></span>
+<span id="cb39-11"><a href="#cb39-11" aria-hidden="true" tabindex="-1"></a><span class="st">        SELECT email</span></span>
+<span id="cb39-12"><a href="#cb39-12" aria-hidden="true" tabindex="-1"></a><span class="st">        FROM subscriptions</span></span>
+<span id="cb39-13"><a href="#cb39-13" aria-hidden="true" tabindex="-1"></a><span class="st">        WHERE status = &#39;confirmed&#39;</span></span>
+<span id="cb39-14"><a href="#cb39-14" aria-hidden="true" tabindex="-1"></a><span class="st">        &quot;#</span><span class="op">,</span></span>
+<span id="cb39-15"><a href="#cb39-15" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb39-16"><a href="#cb39-16" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>fetch_all(pool)</span>
+<span id="cb39-17"><a href="#cb39-17" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span><span class="kw">await</span><span class="op">?</span></span>
+<span id="cb39-18"><a href="#cb39-18" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>into_iter()</span>
+<span id="cb39-19"><a href="#cb39-19" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>map(<span class="op">|</span>r<span class="op">|</span> <span class="cf">match</span> <span class="pp">SubscriberEmail::</span>parse(r<span class="op">.</span>email) <span class="op">{</span></span>
+<span id="cb39-20"><a href="#cb39-20" aria-hidden="true" tabindex="-1"></a>        <span class="cn">Ok</span>(email) <span class="op">=&gt;</span> <span class="cn">Ok</span>(ConfirmedSubscriber <span class="op">{</span> email <span class="op">}</span>)<span class="op">,</span></span>
+<span id="cb39-21"><a href="#cb39-21" aria-hidden="true" tabindex="-1"></a>        <span class="cn">Err</span>(error) <span class="op">=&gt;</span> <span class="cn">Err</span>(<span class="pp">anyhow::anyhow!</span>(error))<span class="op">,</span></span>
+<span id="cb39-22"><a href="#cb39-22" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span>)</span>
+<span id="cb39-23"><a href="#cb39-23" aria-hidden="true" tabindex="-1"></a>    <span class="op">.</span>collect()<span class="op">;</span></span>
+<span id="cb39-24"><a href="#cb39-24" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(confirmed_subscribers)</span>
+<span id="cb39-25"><a href="#cb39-25" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We didn’t even need to touch the remaining code - it compiled straight-away.</p>
+</section>
+</section>
+<section id="limitations-of-the-naive-approach" class="level2" data-number="9.9">
+<h2 data-number="9.9"><span class="header-section-number">9.9</span> Limitations Of The Naive Approach</h2>
+<p>We did it - we have an implementation that passes our two integration tests!<br />
+What now? Do we pat ourselves on the back and ship it to production?</p>
+<p>Not so fast.<br />
+We said it at the very beginning - the approach we took is the simplest possible to get something up and running.<br />
+Is it good enough, though?</p>
+<p>Let’s have a hard look at its shortcomings!</p>
+<ol type="1">
+<li><strong>Security</strong><br />
+Our <code>POST /newsletters</code> endpoint is unprotected - anyone can fire a request to it and broadcast to our entire audience, unchecked.</li>
+<li><strong>You Only Get One Shot</strong><br />
+As soon you hit <code>POST /newsletters</code>, your content goes out to your entire mailing list. No chance to edit or review it in draft mode before giving the green light for publishing.</li>
+<li><strong>Performance</strong><br />
+We are sending emails out one at a time.<br />
+We wait for the current one to be dispatched successfully before moving on to the next in line.<br />
+This is not a massive issue if you have 10 or 20 subscribers, but it becomes noticeable shortly afterwards: latency is going to be horrible for newsletters with a sizeable audience.</li>
+<li><strong>Fault Tolerance</strong><br />
+If we fail to dispatch one email we bubble up the error using <code>?</code> and return a <code>500 Internal Server Error</code> to the caller.<br />
+The remaining emails are never sent, nor we retry to dispatch the failed one.</li>
+<li><strong>Retry Safety</strong><br />
+Many things can go wrong when communicating over the network. What should a consumer of our API do if they experience a timeout or a <code>500 Internal Server Error</code> when calling our service?<br />
+They cannot retry - they risk sending the newsletter issue twice to the entire mailing list.</li>
+</ol>
+<p>Number 2. and 3. are annoying, but we could live with them for a while.<br />
+Number 4. and 5. are fairly serious limitations, with a visible impact on our audience.<br />
+Number 1. is simply non-negotiable: we <strong>must</strong> protect the endpoint before releasing our API.</p>
+</section>
+<section id="summary-8" class="level2" data-number="9.10">
+<h2 data-number="9.10"><span class="header-section-number">9.10</span> Summary</h2>
+<p>We built a prototype of our newsletter delivery logic: it satisfies our functional requirements, but it is not yet ready for prime time.<br />
+The shortcomings of our MVP will become the focus of the next chapters, in priority order: we will tackle authentication/authorization first before moving on to fault tolerance.</p>
+</section>
+</section>
+</body>
+</html>

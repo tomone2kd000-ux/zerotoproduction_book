@@ -1,0 +1,340 @@
+---
+title: "Xử Lý Result & Viết Unit Test Với Claims"
+description: "Biểu diễn lỗi như giá trị với enum Result, viết assertion rõ ràng với crate claims, xây dựng unit test cho domain logic và ánh xạ lỗi sang HTTP 400 Bad Request."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Ở bài trước, chúng ta đã chứng kiến việc dùng `panic!` để xử lý lỗi validation làm sập worker thread của `actix-web`. Trong thế giới lập trình phần mềm thực chiến, các lỗi xuất phát từ dữ liệu đầu vào của người dùng (input validation failure) thuộc nhóm **lỗi có thể phục hồi (recoverable errors)**. Trong Rust, cơ chế số một để xử lý nhóm lỗi này là mô hình **"Lỗi như một giá trị" (Errors as Values)** với kiểu dữ liệu `Result`.
+
+---
+
+## I. Lỗi Như Một Giá Trị — Kiểu `Result`
+
+Cốt lõi của cơ chế xử lý lỗi trong Rust được xây dựng dựa trên enum `Result`:
+
+```rust
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+```
+
+Kiểu `Result` được sử dụng làm kiểu trả về cho bất kỳ thao tác nào có khả năng thất bại (fallible operations):
+- Nếu thao tác diễn ra trơn tru, hàm trả về biến thể `Ok(T)` chứa giá trị thành công.
+- Nếu gặp sự cố, hàm trả về biến thể `Err(E)` chứa thông tin chi tiết về lỗi phát sinh.
+
+Trên thực tế, chúng ta đã sử dụng `Result` ở các chương trước mà chưa đi sâu vào bản chất. Hãy nhìn lại chữ ký của hàm `insert_subscriber`:
+
+```rust
+//! src/routes/subscriptions.rs
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    // [...]
+}
+```
+
+Chữ ký trên thông báo dứt khoát rằng: việc thêm một độc giả vào database là một thao tác có thể thất bại. Nếu mọi chuyện suôn sẻ, ta nhận về kiểu đơn vị `()` (unit type - không có dữ liệu trả về); nếu trục trặc (như đứt kết nối mạng hay vi phạm ràng buộc khóa), ta nhận về một đối tượng lỗi cụ thể `sqlx::Error`.
+
+<Callout type="info" title="Sự Khác Biệt Giữa Result Và Exception">
+Nếu bạn chuyển sang Rust từ các ngôn ngữ dùng ngoại lệ (Exception-based) như Java, C# hay Python, đây sẽ là một bước ngoặt thay đổi tư duy lập trình:
+- Bạn **không cần phải đào xới tài liệu** của một thư viện bên thứ ba để đoán xem một hàm có thể ném ra (throw) những ngoại lệ bí ẩn nào.
+- Bạn **không bao giờ bị giật mình tại runtime** bởi một Exception chưa từng được bắt.
+- Bạn **không phải nhét các khối `try/catch` bừa bãi** theo kiểu cầu may "bắt hết cho chắc".
+
+Mọi kịch bản thất bại đều được phơi bày minh bạch và bắt buộc ngay trên chữ ký hàm! Trình biên dịch Rust sẽ cưỡng chế bạn phải đối mặt và xử lý nhánh lỗi trước khi cho phép mã nguồn được biên dịch.
+</Callout>
+
+---
+
+### 1. Chuyển Đổi `SubscriberName::parse` Sang Trả Về `Result`
+
+Bây giờ, chúng ta tái cấu trúc phương thức `SubscriberName::parse` để nó trả về `Result` thay vì kích hoạt `panic!`. Chúng ta bắt đầu bằng việc thay đổi kiểu trả về:
+
+```rust
+//! src/domain.rs
+// [...]
+
+impl SubscriberName {
+    pub fn parse(s: String) -> Result<SubscriberName, String> {
+        let is_empty_or_whitespace = s.trim().is_empty();
+        let is_too_long = s.graphemes(true).count() > 256;
+        let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
+        let contains_forbidden_characters = s
+            .chars()
+            .any(|g| forbidden_characters.contains(&g));
+
+        if is_empty_or_whitespace || is_too_long || contains_forbidden_characters {
+            Err(format!("{} is not a valid subscriber name.", s))
+        } else {
+            Ok(Self(s))
+        }
+    }
+}
+```
+
+Trong lần tái cấu trúc này, để giữ mọi thứ đơn giản nhất, chúng ta chọn `String` làm kiểu dữ liệu đại diện cho lỗi ở biến thể `Err`.
+
+Nếu chạy `cargo check` ngay lúc này, trình biên dịch sẽ chỉ ra một điểm nghẽn duy nhất trong request handler `subscribe`:
+
+```text
+error[E0308]: mismatched types
+  --> src/routes/subscriptions.rs:27:15
+   |
+27 |         name: SubscriberName::parse(form.0.name),
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+   |               expected struct `SubscriberName`, 
+   |               found enum `Result`
+```
+
+Khi `parse` trả về một `SubscriberName` trực tiếp, ta có thể gán thẳng kết quả vào trường `NewSubscriber.name`. Nhưng giờ đây hàm trả về `Result`, hệ thống kiểu của Rust **buộc chúng ta phải xử lý trường hợp thất bại**. Để dự án tạm thời biên dịch được nhằm tập trung viết unit test cho tầng domain trước, chúng ta dùng tạm phương thức `.expect(...)`:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let new_subscriber = NewSubscriber {
+        email: form.0.email,
+        name: SubscriberName::parse(form.0.name).expect("Name validation failed."),
+    };
+    // [...]
+}
+```
+
+Dự án đã biên dịch ổn định. Giờ là lúc viết bộ unit test để bảo vệ domain logic!
+
+---
+
+## II. Viết Assertion Rõ Ràng & Trực Quan Với Crate `claims`
+
+Hầu hết các câu lệnh kiểm tra (assertions) trong unit test của chúng ta sẽ xoay quanh việc xác minh kết quả có phải là `Ok` hay `Err`:
+```rust
+assert!(result.is_ok());
+assert!(result.is_err());
+```
+
+Tuy nhiên, các thông báo lỗi mặc định mà `cargo test` in ra khi các macro `assert!` này thất bại lại cực kỳ sơ sài và nghèo nàn thông tin. Hãy xem thử một ví dụ:
+
+```rust
+#[test]
+fn dummy_fail() {
+    let result: Result<&str, &str> = Err("The app crashed due to an IO error");
+    assert!(result.is_ok());
+}
+```
+
+Khi chạy test, output nhận được chỉ vỏn vẹn:
+```text
+---- dummy_fail stdout ----
+thread 'dummy_fail' panicked at 'assertion failed: result.is_ok()'
+```
+
+Thông báo này không hề cho chúng ta biết bên trong `Err` chứa thông điệp lỗi gì, khiến trải nghiệm gỡ lỗi (debugging) trở nên rất ức chế và tốn thời gian.
+
+Để giải quyết vấn đề này, chúng ta sử dụng crate [`claims`](https://crates.io/crates/claims) trong mục `dev-dependencies`:
+
+```toml
+# Cargo.toml
+# [...]
+[dev-dependencies]
+claims = "0.7"
+# [...]
+```
+
+Crate `claims` cung cấp một tập hợp các macro assertion giàu thông tin dành riêng cho các kiểu dữ liệu phổ biến trong Rust, đặc biệt là `Option` và `Result`. Nếu viết lại bài test trên bằng `claims::assert_ok!`:
+
+```rust
+#[test]
+fn dummy_fail() {
+    let result: Result<&str, &str> = Err("The app crashed due to an IO error");
+    claims::assert_ok!(result);
+}
+```
+
+Thông điệp in ra terminal sẽ rõ ràng và chi tiết hơn gấp nhiều lần:
+
+```text
+---- dummy_fail stdout ----
+thread 'dummy_fail' panicked at 'assertion failed, expected Ok(..), 
+  got Err("The app crashed due to an IO error")'
+```
+
+---
+
+## III. Xây Dựng Bộ Unit Tests Cho Domain
+
+Được trang bị đầy đủ công cụ, chúng ta thêm bộ unit test toàn diện cho `SubscriberName` ngay trong module `domain`:
+
+```rust
+//! src/domain.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::SubscriberName;
+    use claims::{assert_err, assert_ok};
+
+    #[test]
+    fn a_256_grapheme_long_name_is_valid() {
+        let name = "ё".repeat(256);
+        assert_ok!(SubscriberName::parse(name));
+    }
+
+    #[test]
+    fn a_name_longer_than_256_graphemes_is_rejected() {
+        let name = "a".repeat(257);
+        assert_err!(SubscriberName::parse(name));
+    }
+
+    #[test]
+    fn whitespace_only_names_are_rejected() {
+        let name = " ".to_string();
+        assert_err!(SubscriberName::parse(name));
+    }
+
+    #[test]
+    fn empty_string_is_rejected() {
+        let name = "".to_string();
+        assert_err!(SubscriberName::parse(name));
+    }
+
+    #[test]
+    fn names_containing_an_invalid_character_are_rejected() {
+        for name in &['/', '(', ')', '"', '<', '>', '\\', '{', '}'] {
+            let name = name.to_string();
+            assert_err!(SubscriberName::parse(name));
+        }
+    }
+
+    #[test]
+    fn a_valid_name_is_parsed_successfully() {
+        let name = "Ursula Le Guin".to_string();
+        assert_ok!(SubscriberName::parse(name));
+    }
+}
+```
+
+<Callout type="info" title="Lưu Ý Về Trait Debug Khi Dùng Claims">
+Để các macro `assert_ok!` và `assert_err!` có thể định dạng và in giá trị ra màn hình khi có sự cố, kiểu dữ liệu bên trong bắt buộc phải hiện thực trait `std::fmt::Debug`. Do đó, bạn cần gắn thêm thuộc tính `#[derive(Debug)]` lên struct `SubscriberName`:
+```rust
+#[derive(Debug)]
+pub struct SubscriberName(String);
+```
+</Callout>
+
+Chạy `cargo test domain`, toàn bộ 6 unit test cho `SubscriberName` đều **vượt qua thành công (pass)**!
+
+---
+
+## IV. Xử Lý Result Trong Request Handler
+
+Phương thức `SubscriberName::parse` giờ đây đã trả về một `Result`. Nhưng ở phía request handler `subscribe`, chúng ta vẫn đang gọi `.expect(...)`, nghĩa là nếu gặp dữ liệu lỗi thì ứng dụng vẫn phát nổ `panic!`. Hành vi bên ngoài của API vẫn chưa hề được cải thiện.
+
+Làm thế nào để `subscribe` trả về mã trạng thái HTTP **`400 Bad Request`** thay vì phát nổ?
+
+### 1. Khớp Mẫu Với Biểu Thức `match`
+
+Hãy nhớ lại cách chúng ta đang xử lý kết quả trả về của hàm `insert_subscriber`:
+
+```rust
+match insert_subscriber(&pool, &new_subscriber).await {
+    Ok(_) => HttpResponse::Ok().finish(),
+    Err(_) => HttpResponse::InternalServerError().finish(),
+}
+```
+
+Hàm `insert_subscriber` trả về `Result<(), sqlx::Error>`, trong khi `subscribe` nói ngôn ngữ của giao thức HTTP REST API — kết quả đầu ra của nó bắt buộc phải là một `HttpResponse`. Để trả về mã lỗi thích hợp cho người dùng, chúng ta cần ánh xạ `sqlx::Error` sang một phản hồi HTTP phù hợp — cụ thể ở đây là `500 Internal Server Error`.
+
+Biểu thức `match` là công cụ lý tưởng nhất để thực hiện việc này: chúng ta chỉ dẫn rõ cho trình biên dịch biết phải hành xử như thế nào trong cả hai kịch bản `Ok` và `Err`.
+
+---
+
+### 2. Toán Tử Dấu Chấm Hỏi (`?`)
+
+Nhắc đến việc xử lý lỗi trong Rust, hãy quan sát dấu chấm hỏi `?` xuất hiện trong hàm `insert_subscriber`:
+
+```rust
+pub async fn insert_subscriber(/* */) -> Result<(), sqlx::Error> {
+    sqlx::query!(/* */)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to execute query: {:?}", e);
+            e
+        })?; // <--- Dấu chấm hỏi ở đây!
+    Ok(())
+}
+```
+
+Toán tử `?` (Question Mark Operator) là cú pháp đường (syntactic sugar) cực kỳ tiện lợi được Rust giới thiệu từ phiên bản `1.13`. Nó giúp loại bỏ hoàn toàn các đoạn code kiểm tra lỗi rườm rà khi bạn muốn chuyển tiếp lỗi (bubble up error) lên hàm gọi phía trên.
+
+Khối mã sau:
+```rust
+insert_subscriber(&pool, &new_subscriber)
+    .await
+    .map_err(|_| HttpResponse::InternalServerError().finish())?;
+```
+
+Hoàn toàn tương đương về mặt logic với khối rẽ nhánh dài dòng:
+```rust
+if let Err(error) = insert_subscriber(&pool, &new_subscriber)
+    .await
+    .map_err(|_| HttpResponse::InternalServerError().finish())
+{
+    return Err(error); // Thoát hàm sớm nếu gặp Err
+}
+```
+
+Tuy nhiên, vì toán tử `?` thực hiện việc thoát hàm sớm bằng cách trả về biến thể `Err(...)`, nên nó **chỉ có thể được sử dụng bên trong các hàm có kiểu trả về là `Result`**. Bản thân hàm `subscribe` của chúng ta hiện đang trả về kiểu `HttpResponse` trực tiếp, nên tạm thời chưa thể áp dụng toán tử `?` ngay được.
+
+---
+
+### 3. Trả Về Mã HTTP 400 Bad Request
+
+Chúng ta cập nhật lại request handler `subscribe` bằng cách dùng biểu thức `match` để kiểm tra kết quả trả về từ `SubscriberName::parse`:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let name = match SubscriberName::parse(form.0.name) {
+        Ok(name) => name,
+        // Nếu tên không hợp lệ, lập tức thoát hàm và trả về HTTP 400 Bad Request!
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let new_subscriber = NewSubscriber {
+        email: form.0.email,
+        name,
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+```
+
+Bây giờ, hãy chạy lại toàn bộ bộ integration test của dự án:
+
+```text
+---- subscribe_returns_a_400_when_fields_are_present_but_invalid stdout ----
+thread 'subscribe_returns_a_400_when_fields_are_present_but_invalid' 
+panicked at 'assertion failed: `(left == right)`
+  left: `400`,
+ right: `200`: 
+ The API did not return a 400 Bad Request when the payload was empty email.', 
+tests/health_check.rs:167:9
+```
+
+Quan sát kết quả: Trường hợp kiểm thử với `name` rỗng giờ đây **đã vượt qua thành công** (API đã trả về đúng mã `400 Bad Request`). Nhưng bài test vẫn báo đỏ ở trường hợp tiếp theo: **khi địa chỉ `email` bị để trống hoặc sai định dạng**.
+
+Điều này hoàn toàn đúng như dự kiến — vì chúng ta vẫn chưa xây dựng bất kỳ logic kiểm tra tính hợp lệ nào cho địa chỉ email! Đó chính là nội dung trọng tâm của bài học tiếp theo.

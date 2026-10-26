@@ -1,0 +1,437 @@
+---
+title: "3.8 Lưu Trữ Dữ Liệu Với PostgreSQL & SQLx"
+description: "Lựa chọn CSDL quan hệ PostgreSQL, so sánh các crate Rust (SQLx vs Diesel vs Tokio-Postgres), cấu hình Docker, migrations và kiểm thử truy vấn compile-time."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info">
+  **Ý tưởng chủ đạo:** Ứng dụng Cloud-native hiện đại bắt buộc phải ở trạng thái không lưu trạng thái (Stateless) để có thể mở rộng quy mô linh hoạt và chịu lỗi tốt. Toàn bộ nhu cầu lưu trữ phải được bàn giao cho một hệ quản trị cơ sở dữ liệu chuyên biệt. Bài học này sẽ dẫn dắt bạn qua quá trình lựa chọn công nghệ, thiết lập PostgreSQL cục bộ bằng Docker, quản lý database migrations với `sqlx-cli` và trải nghiệm khả năng kiểm tra an toàn câu truy vấn SQL ngay tại thời điểm biên dịch của `sqlx`.
+</Callout>
+
+## I. Bài Toán Lưu Trữ Trong Ứng Dụng Cloud-Native
+
+Khi định nghĩa khái niệm Cloud-native ở các chương trước, chúng ta đã nhấn mạnh mục tiêu đạt được độ sẵn sàng cao (High-Availability) trong một môi trường luôn tiềm ẩn sự cố hỏng hóc phần cứng.
+
+Để làm được điều đó, ứng dụng backend bắt buộc phải là một **hệ thống phân tán (distributed system)**: luôn có nhiều bản sao (replicas) của ứng dụng chạy đồng thời trên nhiều máy chủ vật lý hoặc container khác nhau đằng sau một bộ cân bằng tải (Load Balancer).
+
+```text
+                                [Load Balancer]
+                                 /     |     \
+                                v      v      v
+                           [Replica] [Replica] [Replica]  <--- Không lưu dữ liệu trên ổ cứng cục bộ!
+                                \      |      /
+                                 v     v     v
+                         +-------------------------------+
+                         |   PostgreSQL Database Cluster |
+                         |       (Stateful Layer)        |
+                         +-------------------------------+
+```
+
+Đặc tính kiến trúc này dẫn đến một hệ quả tất yếu về tính bền vững của dữ liệu:
+- **Tuyệt đối không thể lưu trữ dữ liệu vào hệ thống file cục bộ (local filesystem) của máy chủ.** Một file ghi vào ổ cứng của Replica A sẽ hoàn toàn vô hình đối với Replica B và Replica C.
+- Khi một máy chủ bị sập hoặc một container bị Kubernetes tiêu hủy để cấp phát lại, toàn bộ ổ đĩa cục bộ tạm thời sẽ bốc hơi.
+
+Đó là lý do tại sao ứng dụng backend phải là **Stateless**: toàn bộ trách nhiệm lưu trữ bền vững được ủy thác cho một hệ thống chuyên biệt bên ngoài — **Cơ sở dữ liệu (Database)**.
+
+---
+
+## II. Lựa Chọn Cơ Sở Dữ Liệu (Choosing A Database)
+
+Chúng ta nên chọn cơ sở dữ liệu nào cho dự án Email Newsletter?
+
+Tác giả Luca Palmieri đưa ra một nguyên tắc thực dụng sâu sắc:
+
+> "Nếu bạn không chắc chắn về các yêu cầu lưu trữ và truy vấn của mình trong tương lai, hãy chọn một **cơ sở dữ liệu quan hệ (Relational Database)**.  
+> Và nếu bạn không có lý do cụ thể để kỳ vọng quy mô dữ liệu khổng lồ cấp độ Big Data ngay lập tức, hãy chọn **PostgreSQL**."
+
+Trong hai thập kỷ qua, thị trường cơ sở dữ liệu đã bùng nổ với vô số công nghệ mới:
+- Cơ sở dữ liệu tài liệu (Document-stores như MongoDB).
+- Cơ sở dữ liệu khóa-giá trị (Key-value như Redis, DynamoDB).
+- Cơ sở dữ liệu đồ thị (Graph như Neo4j).
+- Cơ sở dữ liệu phân tích dạng cột (Columnar như ClickHouse, AWS Redshift).
+- Các hệ quản trị quan hệ phân tán thế hệ mới (Spanner, CockroachDB, TiDB).
+
+Sự phong phú này rất tuyệt vời, nhưng một sai lầm phổ biến của các kỹ sư là **tự dồn mình vào chân tường khi sớm lựa chọn một cơ sở dữ liệu chuyên biệt** trong khi các mẫu truy cập dữ liệu (data access patterns) của sản phẩm vẫn còn đang biến động liên tục.
+
+Cơ sở dữ liệu quan hệ là một "kẻ đa năng" (jack-of-all-trades) xuất sắc. Nó hỗ trợ mô hình hóa dữ liệu linh hoạt, cung cấp cơ chế Transaction (ACID) vững chắc để bảo vệ tính nhất quán, và cho phép bạn tùy biến truy vấn mà không cần đập đi xây lại cấu trúc lưu trữ.
+
+Và trong thế giới quan hệ, **PostgreSQL** là một tượng đài: mã nguồn mở, độ tin cậy tuyệt đối đã được chứng minh qua nhiều thập kỷ, hệ sinh thái mở rộng cực mạnh và được hỗ trợ bởi 100% các nhà cung cấp đám mây lớn (AWS RDS, Google Cloud SQL, Azure Database).
+
+---
+
+## III. Lựa Chọn Thư Viện Tương Tác Database Trong Rust (Choosing A Database Crate)
+
+Trong hệ sinh thái Rust, có 3 ứng viên hàng đầu để tương tác với PostgreSQL:
+1. `tokio-postgres`: Driver thuần túy, hiệu năng cao, tối giản.
+2. `sqlx`: Crate hiện đại, hỗ trợ async native và kiểm tra câu truy vấn tại thời điểm biên dịch.
+3. `diesel`: Framework ORM/Query Builder kỳ cựu với hệ thống kiểu tĩnh cực kỳ chặt chẽ.
+
+Để đưa ra lựa chọn sáng suốt, chúng ta cần cân nhắc 3 khía cạnh kỹ thuật cốt lõi:
+
+```text
++-------------------+---------------------+-----------------+------------+
+| Crate             | Compile-time safety | Query Interface | Async I/O  |
++-------------------+---------------------+-----------------+------------+
+| tokio-postgres    | Không               | SQL thuần       | Có         |
+| sqlx              | Có (qua Macro)      | SQL thuần       | Có         |
+| diesel (v1/v2)    | Có (qua Rust DSL)   | DSL Builder     | Không/Hạn chế|
++-------------------+---------------------+-----------------+------------+
+```
+
+### 1. An Toàn Lúc Biên Dịch (Compile-Time Safety)
+Khi viết mã tương tác với database, bạn rất dễ mắc phải các sai sót ngớ ngẩn: gõ sai chính tả tên cột, ép sai kiểu dữ liệu giữa SQL và Rust, hoặc join nhầm bảng.
+- Với `tokio-postgres`, bạn chỉ phát hiện ra lỗi **khi chạy ứng dụng (at runtime)**.
+- `diesel` sử dụng CLI để soi schema database và sinh ra mã nguồn Rust tương ứng, dùng hệ thống kiểu của Rust để kiểm tra query lúc compile.
+- `sqlx` áp dụng một hướng tiếp cận độc đáo: sử dụng procedural macros (`query!`) để kết nối trực tiếp vào database tại thời điểm biên dịch (`cargo check`), phân tích câu lệnh SQL và đối chiếu kiểu dữ liệu với schema thực tế.
+
+### 2. Giao Diện Viết Truy Vấn: SQL Thuần vs DSL
+- `tokio-postgres` và `sqlx` yêu cầu bạn viết **SQL thuần túy**. SQL có tính di động tuyệt đối: kiến thức bạn dùng cho Postgres trong dự án này hoàn toàn có thể áp dụng cho bất kỳ ngôn ngữ nào khác.
+- `diesel` cung cấp một ngôn ngữ đặc thù miền (**DSL**) biểu diễn câu truy vấn thành các struct và method chaining trong Rust. DSL cho phép bạn chia nhỏ và tái sử dụng các đoạn truy vấn, nhưng đòi hỏi chi phí học tập lớn và rất khó diễn đạt các câu truy vấn phức tạp nếu không phải escape ra raw SQL.
+
+### 3. Hỗ Trợ Bất Đồng Bộ (Async Support)
+Có một câu châm ngôn kinh điển trong giới lập trình hệ thống:
+
+> *"Threads are for working in parallel, async is for waiting in parallel."  
+> (Luồng đa nhiệm dùng để tính toán song song, còn bất đồng bộ dùng để chờ đợi song song).*
+
+Database của bạn nằm trên một máy chủ riêng biệt qua mạng. Mỗi truy vấn SQL thực chất là một chuỗi tác vụ mạng (Network I/O). Trong khi chờ database trả về kết quả, một driver bất đồng bộ sẽ giải phóng CPU core để ứng dụng phục vụ hàng nghìn request HTTP khác.
+
+`sqlx` hỗ trợ async native trên nền `tokio`. Trong khi đó, kiến trúc ban đầu của `diesel` được thiết kế đồng bộ (blocking), nếu muốn dùng trong async runtime bạn phải bọc các lời gọi trong `tokio::task::spawn_blocking` để tránh làm tê liệt event loop.
+
+<Callout type="tip">
+  **Chốt lựa chọn:** Dự án của chúng ta chọn **`sqlx`**. Sự kết hợp giữa async native, cú pháp SQL trực quan và cơ chế kiểm tra lỗi compile-time thông qua macro mang lại trải nghiệm phát triển an toàn và thoải mái nhất.
+</Callout>
+
+---
+
+## IV. Thiết Lập Môi Trường Database Với Docker
+
+Để chạy kiểm thử và xác thực truy vấn lúc biên dịch, chúng ta cần một cơ sở dữ liệu PostgreSQL đang chạy. Chúng ta sẽ sử dụng Docker để cô lập môi trường này.
+
+Tạo một script bash mang tên `scripts/init_db.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -x
+set -eo pipefail
+
+# Kiểm tra các công cụ phụ thuộc đã được cài đặt chưa
+if ! [ -x "$(command -v psql)" ]; then
+  echo >&2 "Error: psql chưa được cài đặt."
+  exit 1
+fi
+
+if ! [ -x "$(command -v sqlx)" ]; then
+  echo >&2 "Error: sqlx chưa được cài đặt."
+  echo >&2 "Dùng lệnh sau để cài đặt:"
+  echo >&2 "    cargo install --version='~0.7' sqlx-cli --no-default-features --features rustls,postgres"
+  exit 1
+fi
+
+# Thiết lập các biến môi trường cấu hình mặc định
+DB_USER="${POSTGRES_USER:=postgres}"
+DB_PASSWORD="${POSTGRES_PASSWORD:=password}"
+DB_NAME="${POSTGRES_DB:=newsletter}"
+DB_PORT="${POSTGRES_PORT:=5432}"
+DB_HOST="${POSTGRES_HOST:=localhost}"
+
+# Cho phép bỏ qua bước khởi động Docker nếu Postgres đã chạy sẵn
+if [[ -z "${SKIP_DOCKER}" ]]
+then
+  docker run \
+      -e POSTGRES_USER=${DB_USER} \
+      -e POSTGRES_PASSWORD=${DB_PASSWORD} \
+      -e POSTGRES_DB=${DB_NAME} \
+      -p "${DB_PORT}":5432 \
+      -d postgres \
+      postgres -N 1000
+      # ^ Tăng số lượng kết nối đồng thời lên 1000 phục vụ testing
+fi
+
+# Liên tục ping kiểm tra cho đến khi Postgres sẵn sàng chấp nhận lệnh
+export PGPASSWORD="${DB_PASSWORD}"
+until psql -h "${DB_HOST}" -U "${DB_USER}" -p "${DB_PORT}" -d "postgres" -c '\q'; do
+  >&2 echo "Postgres chưa sẵn sàng - đang đợi 1 giây..."
+  sleep 1
+done
+
+>&2 echo "Postgres đã sẵn sàng trên cổng ${DB_PORT}!"
+
+DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+export DATABASE_URL
+sqlx database create
+sqlx migrate run
+
+>&2 echo "Postgres đã được khởi tạo và chạy migration thành công!"
+```
+
+Cấp quyền thực thi và cài đặt công cụ CLI của `sqlx`:
+
+```bash
+cargo install --version="~0.7" sqlx-cli --no-default-features --features rustls,postgres
+chmod +x scripts/init_db.sh
+./scripts/init_db.sh
+```
+
+---
+
+## V. Quản Lý Database Migrations Với `sqlx-cli`
+
+Để lưu thông tin người đăng ký, chúng ta cần tạo bảng dữ liệu đầu tiên. Việc thay đổi schema theo thời gian được quản lý thông qua **Migrations**.
+
+Tạo một file migration mới bằng lệnh:
+
+```bash
+export DATABASE_URL=postgres://postgres:password@127.0.0.1:5432/newsletter
+sqlx migrate add create_subscriptions_table
+```
+
+Lệnh này sẽ tạo ra một thư mục `migrations/` nằm ở thư mục gốc của dự án, bên trong chứa một file có dạng `{timestamp}_create_subscriptions_table.sql`. Hãy mở file này và định nghĩa bảng `subscriptions`:
+
+```sql
+-- migrations/{timestamp}_create_subscriptions_table.sql
+-- Create Subscriptions Table
+CREATE TABLE subscriptions(
+   id uuid NOT NULL,
+   PRIMARY KEY (id),
+   email TEXT NOT NULL UNIQUE,
+   name TEXT NOT NULL,
+   subscribed_at timestamptz NOT NULL
+);
+```
+
+### Phân Tích Thiết Kế Schema Cơ Sở Dữ Liệu
+
+1. **Khóa chính nhân tạo (Surrogate Key) `id uuid`:** Thay vì dùng chính email làm khóa chính (*natural key*), chúng ta sử dụng một định danh UUID ngẫu nhiên. Điều này giúp hệ thống linh hoạt hơn nếu người dùng sau này muốn đổi địa chỉ email mà không làm gãy các liên kết khóa ngoại.
+2. **Ràng buộc `UNIQUE` trên cột `email`:** Ngăn chặn việc một địa chỉ email bị đăng ký trùng lặp nhiều lần. Cần lưu ý rằng ràng buộc `UNIQUE` sẽ sinh ra một chỉ mục B-tree dưới nền. B-tree này sẽ tiêu tốn thêm tài nguyên đĩa và làm giảm nhẹ tốc độ ghi (`INSERT`/`UPDATE`), nhưng đổi lại tính toàn vẹn dữ liệu được bảo vệ an toàn ngay tại tầng database.
+3. **Ràng buộc `NOT NULL` trên tất cả các cột:** Đảm bảo không có dòng dữ liệu "rác" nào thiếu thông tin lọt vào bảng.
+4. **Kiểu dữ liệu thời gian `timestamptz`:** Lưu trữ mốc thời gian đăng ký có nhận thức về múi giờ (time-zone aware).
+
+Áp dụng migration vào database bằng lệnh:
+
+```bash
+sqlx migrate run
+```
+
+`sqlx` sẽ tự động tạo một bảng nội bộ mang tên `_sqlx_migrations` để lưu vết các migration đã chạy, tránh việc thực thi lại các migration cũ.
+
+---
+
+## VI. Viết Câu Truy Vấn Đầu Tiên Với `sqlx`
+
+### 1. Khai Báo Dependencies & Feature Flags
+
+Cập nhật file `Cargo.toml`:
+
+```toml
+[dependencies]
+actix-web = "4"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+config = "0.13"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4.22", default-features = false, features = ["clock"] }
+
+[dependencies.sqlx]
+version = "0.7"
+default-features = false
+features = [
+    "runtime-tokio-rustls", 
+    "macros", 
+    "postgres", 
+    "uuid", 
+    "chrono", 
+    "migrate"
+]
+```
+
+Mỗi feature flag đều có một sứ mệnh cụ thể:
+- `runtime-tokio-rustls`: Dùng Tokio cho async runtime và Rustls cho TLS.
+- `macros`: Cung cấp macro compile-time `query!` và `query_as!`.
+- `postgres`: Bật các tính năng và kiểu dữ liệu riêng của PostgreSQL.
+- `uuid`: Map kiểu SQL UUID sang struct `Uuid` của crate `uuid`.
+- `chrono`: Map kiểu `timestamptz` sang `DateTime<Utc>` của crate `chrono`.
+- `migrate`: Cung cấp macro `sqlx::migrate!` để chạy migration ngay trong mã test.
+
+### 2. Tổ Chức Lại Mã Nguồn Ứng Dụng (Sub-modules)
+
+Để chuẩn bị cho việc mở rộng, chúng ta chia tách `src/lib.rs` thành các module nhỏ:
+
+```text
+src/
+├── configuration.rs    # Đọc cấu hình từ file YAML
+├── lib.rs              # Khai báo các module con
+├── main.rs             # Điểm vào thực thi nhị phân
+├── routes/             # Chứa các handler theo chức năng
+│   ├── health_check.rs
+│   ├── mod.rs
+│   └── subscriptions.rs
+└── startup.rs          # Khởi tạo HttpServer
+```
+
+File `src/lib.rs` trở thành:
+
+```rust
+//! src/lib.rs
+pub mod configuration;
+pub mod routes;
+pub mod startup;
+```
+
+Trong `src/routes/mod.rs`:
+
+```rust
+//! src/routes/mod.rs
+mod health_check;
+mod subscriptions;
+
+pub use health_check::*;
+pub use subscriptions::*;
+```
+
+### 3. Đọc Cấu Hình Ứng Dụng Với Crate `config`
+
+Tạo file `src/configuration.rs`:
+
+```rust
+//! src/configuration.rs
+
+#[derive(serde::Deserialize)]
+pub struct Settings {
+    pub database: DatabaseSettings,
+    pub application_port: u16,
+}
+
+#[derive(serde::Deserialize)]
+pub struct DatabaseSettings {
+    pub username: String,
+    pub password: String,
+    pub port: u16,
+    pub host: String,
+    pub database_name: String,
+}
+
+impl DatabaseSettings {
+    pub fn connection_string(&self) -> String {
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            self.username, self.password, self.host, self.port, self.database_name
+        )
+    }
+}
+
+pub fn get_configuration() -> Result<Settings, config::ConfigError> {
+    let settings = config::Config::builder()
+        .add_source(config::File::new("configuration.yaml", config::FileFormat::Yaml))
+        .build()?;
+    
+    settings.try_deserialize::<Settings>()
+}
+```
+
+Tạo file `configuration.yaml` ở thư mục gốc:
+
+```yaml
+application_port: 8000
+database:
+  host: "127.0.0.1"
+  port: 5432
+  username: "postgres"
+  password: "password"
+  database_name: "newsletter"
+```
+
+Cập nhật `src/main.rs`:
+
+```rust
+//! src/main.rs
+
+use std::net::TcpListener;
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::run;
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    let configuration = get_configuration().expect("Đọc file cấu hình thất bại.");
+    let address = format!("127.0.0.1:{}", configuration.application_port);
+    let listener = TcpListener::bind(address)?;
+    run(listener)?.await
+}
+```
+
+---
+
+## VII. Kiểm Thử Với Side-Effect Bằng Macro `sqlx::query!`
+
+Giờ đây chúng ta đã có thể kết nối vào PostgreSQL từ bên trong bài kiểm thử để kiểm tra xem thông tin người dùng đã thực sự được lưu vào bảng hay chưa.
+
+Mở `tests/health_check.rs` và cập nhật test:
+
+```rust
+//! tests/health_check.rs
+
+use sqlx::{Connection, PgConnection};
+use zero2prod::configuration::get_configuration;
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // Arrange
+    let app_address = spawn_app();
+    let configuration = get_configuration().expect("Đọc file cấu hình thất bại.");
+    let connection_string = configuration.database.connection_string();
+    let mut connection = PgConnection::connect(&connection_string)
+        .await
+        .expect("Không thể kết nối đến Postgres.");
+    let client = reqwest::Client::new();
+
+    // Act
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    let response = client
+        .post(&format!("{}/subscriptions", &app_address))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    // Assert
+    assert_eq!(200, response.status().as_u16());
+
+    let saved = sqlx::query!("SELECT email, name FROM subscriptions")
+        .fetch_one(&mut connection)
+        .await
+        .expect("Không tìm thấy dòng dữ liệu đã lưu trong bảng.");
+
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
+    assert_eq!(saved.name, "le guin");
+}
+```
+
+### Bí Quyết File `.env` Cho `sqlx` Macro
+
+Nếu bạn chạy `cargo test` ngay lúc này, trình biên dịch có thể ném ra lỗi:
+
+```text
+error: `DATABASE_URL` must be set to use query macros
+```
+
+Để macro `query!` có thể kết nối vào database và xác thực câu lệnh SQL tại thời điểm biên dịch, `sqlx` cần biết vị trí của database. Hãy tạo một file `.env` ở thư mục gốc của dự án:
+
+```bash
+# .env
+DATABASE_URL="postgres://postgres:password@localhost:5432/newsletter"
+```
+
+Chạy lại `cargo test`:
+
+```text
+failures:
+---- subscribe_returns_a_200_for_valid_form_data stdout ----
+thread 'subscribe_returns_a_200_for_valid_form_data' panicked at 
+'Không tìm thấy dòng dữ liệu đã lưu trong bảng.: RowNotFound'
+```
+
+Bài test bị fail với lỗi **`RowNotFound`**! Đây chính xác là điều chúng ta mong đợi: handler của chúng ta mới chỉ trả về 200 mà chưa hề thực hiện câu lệnh `INSERT` nào vào database.
+
+Mọi thứ đã sẵn sàng để chúng ta kết nối application state và thực thi câu lệnh lưu trữ thực thụ ở bài học tiếp theo!

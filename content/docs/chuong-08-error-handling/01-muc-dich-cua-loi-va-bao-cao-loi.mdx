@@ -1,0 +1,481 @@
+---
+title: "8.1 - 8.2 Mục Đích Của Lỗi & Error Trait Cho Operators"
+description: "Phân biệt mục đích của lỗi trong điều khiển luồng và báo cáo sự cố, giải quyết bài toán orphan rule với Newtype pattern, và xây dựng chuỗi nguyên nhân gốc rễ (Root Cause Chain) bằng Error trait trong Rust."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 8.1 - 8.2 Mục Đích Của Lỗi & Error Trait Cho Operators
+
+Trong các chương trước, khi xây dựng quy trình đăng ký nhận bản tin (subscription flow), chúng ta đã kết hợp nhiều thao tác với nhau: kiểm tra tính hợp lệ của dữ liệu người dùng nhập, gửi email xác thực qua mạng và thực thi các câu lệnh SQL trên PostgreSQL. Điểm chung của tất cả các thao tác này là **chúng đều có thể thất bại**.
+
+Trong Chương 6, chúng ta đã tiếp cận các thành phần nền tảng của xử lý lỗi trong Rust: kiểu `Result` và toán tử `?`. Tuy nhiên, những câu hỏi mang tính kiến trúc hệ thống vẫn còn bỏ ngỏ: Lỗi đóng vai trò gì trong kiến trúc tổng thể? Thế nào là một thông báo lỗi chất lượng? Và làm thế nào để người vận hành (operator) có thể tìm ra nguyên nhân sự cố trong môi trường production chỉ bằng nhật ký log?
+
+---
+
+## I. Mục Đích Của Lỗi Là Gì? (What Is The Purpose Of Errors?)
+
+Hãy bắt đầu phân tích từ một đoạn mã quen thuộc trong `src/routes/subscriptions.rs`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub async fn store_token(
+    transaction: &mut Transaction<'_, Postgres>,
+    subscriber_id: Uuid,
+    subscription_token: &str,
+) -> Result<(), sqlx::Error> {
+    let query = sqlx::query!(
+        r#"
+    INSERT INTO subscription_tokens (subscription_token, subscriber_id)
+    VALUES ($1, $2)
+        "#,
+        subscription_token,
+        subscriber_id
+    );
+    transaction.execute(query)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to execute query: {:?}", e);
+            e
+        })?;
+    Ok(())
+}
+```
+
+Ở đây, hàm thực hiện chèn một bản ghi vào bảng `subscription_tokens` để liên kết token vừa sinh với `subscriber_id`. Thao tác `execute` này tiềm ẩn nguy cơ thất bại: đường truyền mạng tới cơ sở dữ liệu bị ngắt quãng, dữ liệu vi phạm ràng buộc toàn vẹn (primary key đã tồn tại), hoặc cơ sở dữ liệu bị khóa tạm thời.
+
+### 1. Lỗi nội bộ (Internal Errors)
+
+#### Cho phép bên gọi phản ứng lại (Enable The Caller To React)
+Bên gọi hàm `execute` cần biết liệu thao tác có thành công hay không để **đưa ra hành động phản ứng phù hợp**: ví dụ thử lại truy vấn (retry), rollback giao dịch, hoặc tiếp tục chuyển tiếp lỗi lên tầng trên bằng toán tử `?`.
+
+Rust sử dụng hệ thống kiểu dữ liệu tĩnh để thể hiện một tác vụ có khả năng thất bại: giá trị trả về của `execute` là enum `Result`:
+
+```rust
+pub enum Result<Success, Error> {
+    Ok(Success),
+    Err(Error),
+}
+```
+
+Trình biên dịch buộc bên gọi phải tường minh xử lý cả hai kịch bản: thành công (`Ok`) và thất bại (`Err`). Nếu mục tiêu duy nhất chỉ là thông báo có lỗi xảy ra, chúng ta hoàn toàn có thể dùng một kiểu đơn giản hơn:
+
+```rust
+pub enum ResultSignal<Success> {
+    Ok(Success),
+    Err,
+}
+```
+
+Tuy nhiên, trong thực tế một thao tác có thể thất bại vì **nhiều nguyên nhân khác nhau**, và hệ thống cần phản ứng khác nhau tùy theo nguyên nhân đó. Hãy nhìn vào định nghĩa của `sqlx::Error`:
+
+```rust
+//! sqlx-core/src/error.rs
+
+pub enum Error {
+    Configuration(/* */),
+    Database(/* */),
+    Io(/* */),
+    Tls(/* */),
+    Protocol(/* */),
+    RowNotFound,
+    TypeNotFound {/* */},
+    ColumnIndexOutOfBounds {/* */},
+    ColumnNotFound(/* */),
+    ColumnDecode {/* */},
+    Decode(/* */),
+    PoolTimedOut,
+    PoolClosed,
+    WorkerCrashed,
+    Migrate(/* */),
+}
+```
+
+Việc `sqlx::Error` là một enum cho phép lập trình viên dùng `match` để phân nhánh xử lý: nếu gặp `PoolTimedOut`, ta có thể thử kết nối lại; nhưng nếu gặp `ColumnNotFound`, thử lại là vô nghĩa và cần dừng chương trình ngay.
+
+#### Hỗ trợ Operator điều tra sự cố (Help An Operator To Troubleshoot)
+Nếu một thao tác chỉ có đúng một kiểu lỗi duy nhất, liệu ta có nên trả về kiểu đơn giản `Result<T, ()>` không?
+
+`Err(())` có thể đủ để mã nguồn quyết định trả về mã `500 Internal Server Error` cho client. Nhưng **điều khiển luồng không phải là mục đích duy nhất của lỗi**. Lỗi còn phải mang theo đầy đủ **ngữ cảnh (context)** để sinh ra một bản **báo cáo (report)** phục vụ người vận hành (operator hoặc developer) điều tra sau khi sự cố diễn ra.
+
+Đối với backend API, bản báo cáo này chính là các dòng log có cấu trúc. Đối với ứng dụng CLI, đó là thông điệp hiển thị ra terminal khi người dùng kích hoạt cờ `--verbose`. Mục đích tối hậu là: **giúp con người hiểu chuyện gì đã xảy ra**.
+
+Đó chính là lý do đoạn code ban đầu sử dụng `map_err`:
+
+```rust
+transaction.execute(query)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+```
+
+Khi câu truy vấn thất bại, chúng ta bắt lấy lỗi và ghi log lại. Sau này khi gặp sự cố, operator có thể dựa vào đó để rà soát nguyên nhân.
+
+---
+
+### 2. Lỗi tại biên hệ thống (Errors At The Edge)
+
+Khi rời khỏi phạm vi nội bộ các hàm trong mã nguồn để bước ra ranh giới API tiếp xúc với thế giới bên ngoài, người dùng (users/clients) cũng cần được thông báo khi có lỗi.
+
+Trong hàm xử lý request `subscribe`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    // [...]
+    if store_token(&mut transaction, subscriber_id, &subscription_token)
+        .await
+        .is_err() 
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // [...]
+}
+```
+
+Khi `store_token` thất bại, client nhận được một phản hồi HTTP với status code `500 Internal Server Error` và phần thân rỗng (empty body). 
+
+Status code ở đây đóng vai trò giống như kiểu lỗi đối với máy tính: trình duyệt hoặc HTTP client có thể đọc mã 500 để quyết định xem có nên thử lại (retry) hay không. Nhưng đối với người dùng ngồi trước màn hình, họ không nhận được thông tin gì thêm. 
+
+**Và đó lại là một thiết kế đúng đắn**: Người dùng không cần và không nên biết cấu trúc cơ sở dữ liệu nội bộ hay câu lệnh SQL nào bị lỗi. Việc cố tình **giấu đi (omitting)** các chi tiết kỹ thuật nội bộ là yêu cầu bảo mật bắt buộc.
+
+Ngược lại, ở bước xác thực dữ liệu đầu vào (Input Validation):
+
+```rust
+//! src/domain/subscriber_email.rs
+
+impl SubscriberEmail {
+    pub fn parse(s: String) -> Result<SubscriberEmail, String> {
+        if validate_email(&s) {
+            Ok(Self(s))
+        } else {
+            Err(format!("{} is not a valid subscriber email.", s))
+        }
+    }
+}
+```
+
+Nếu request handler chỉ trả về `400 Bad Request` với thân rỗng:
+
+```rust
+pub async fn subscribe(/* */) -> HttpResponse {
+    let new_subscriber = match form.0.try_into() {
+        Ok(form) => form,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    // [...]
+```
+
+Thì đây lại là **một thiết kế tồi**: Người dùng không hề biết trường nào bị sai (tên hay email) và sai vì lý do gì để có thể sửa lại.
+
+---
+
+### 3. Tóm tắt mô hình 2x2
+
+Tổng kết lại, lỗi phục vụ hai mục đích chính:
+1. **Control flow (Điều khiển luồng)**: Quyết định máy tính cần làm gì tiếp theo.
+2. **Reporting (Báo cáo sự cố)**: Phục vụ con người điều tra nguyên nhân.
+
+Đồng thời, lỗi xuất hiện ở hai vị trí:
+1. **Internal (Nội bộ)**: Giữa các module, hàm trong codebase.
+2. **At the edge (Tại biên)**: Phản hồi giữa API và client bên ngoài.
+
+```text
+┌──────────────────┬─────────────────────────────┬────────────────────────────┐
+│                  │ Internal                    │ At the edge                │
+├──────────────────┼─────────────────────────────┼────────────────────────────┤
+│ Control Flow     │ Types, methods, enum fields │ HTTP Status codes          │
+├──────────────────┼─────────────────────────────┼────────────────────────────┤
+│ Reporting        │ Structured Logs / Traces    │ HTTP Response body         │
+└──────────────────┴─────────────────────────────┴────────────────────────────┘
+```
+
+---
+
+## II. Báo Cáo Lỗi Cho Người Vận Hành (Error Reporting For Operators)
+
+Hãy kiểm tra xem cơ chế ghi log hiện tại của ứng dụng có thực sự giúp ích cho operator khi xảy ra lỗi hệ thống nghiêm trọng hay không. Chúng ta viết một integration test mô phỏng sự cố database:
+
+```rust
+//! tests/api/subscriptions.rs
+
+#[tokio::test]
+async fn subscribe_fails_if_there_is_a_fatal_database_error() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    
+    // Cố tình phá hoại cấu trúc database bằng cách xóa một cột bắt buộc
+    sqlx::query!("ALTER TABLE subscription_tokens DROP COLUMN subscription_token;",)
+        .execute(&app.db_pool)
+        .await
+        .unwrap();
+
+    // Act
+    let response = app.post_subscriptions(body.into()).await;
+
+    // Assert
+    assert_eq!(response.status().as_u16(), 500);
+}
+```
+
+Chạy test với cờ xuất log:
+
+```bash
+export RUST_LOG="sqlx=error,info"
+export TEST_LOG=true
+cargo test subscribe_fails_if_there_is_a_fatal_database_error | bunyan
+```
+
+Dòng log xuất ra khi request kết thúc như sau:
+
+```text
+ INFO: [HTTP REQUEST - END] 
+    exception.details="",
+    exception.message="",
+    target=tracing_actix_web::root_span_builder, 
+    http.status_code=500
+```
+
+Một sự cố nghiêm trọng xảy ra, trả về mã 500, nhưng cả hai trường `exception.details` và `exception.message` đều **hoàn toàn trống rỗng**!
+
+Nếu nhìn lên dòng log phía trước của `tracing_actix_web`:
+
+```text
+ERROR: [HTTP REQUEST - EVENT] Error encountered while 
+        processing the incoming HTTP request: "" 
+    exception.details="",
+    exception.message="",
+    target=tracing_actix_web::middleware
+```
+
+Nó cũng vô dụng không kém gì một thông báo *"Oops! Đã có lỗi xảy ra!"*. 
+
+Mặc dù sâu trong các tầng log có một dòng lỗi từ `store_token`:
+```text
+ERROR: [STORE SUBSCRIPTION TOKEN IN THE DATABASE - EVENT] Failed to execute query: 
+        Database(PgDatabaseError { 
+          severity: Error, 
+          code: "42703", 
+          message: "column 'subscription_token' of relation 'subscription_tokens' does not exist"
+        })
+```
+Nhưng khi ở quy mô hàng ngàn request mỗi giây, việc một dòng log báo lỗi nằm rải rác mà không được liên kết trực tiếp vào bản ghi `[HTTP REQUEST - END]` của request đó sẽ khiến việc chẩn đoán trở thành một cơn ác mộng.
+
+---
+
+## III. Truy Vết Nguyên Nhân Gốc Rễ (Error Root Cause)
+
+Lý do `tracing_actix_web` không thể ghi lại chi tiết lỗi là vì trong hàm `subscribe`, chúng ta đã **nuốt mất lỗi** bằng cách vứt bỏ `sqlx::Error` từ `store_token` và trả về một response `500` cụt ngủn:
+
+```rust
+if store_token(&mut transaction, subscriber_id, &subscription_token)
+    .await
+    .is_err()
+{
+    return HttpResponse::InternalServerError().finish();
+}
+```
+
+Để khắc phục, ta cần chuyển sang dùng cơ chế xử lý lỗi của `actix-web`: thay vì trả về `HttpResponse`, hàm handler sẽ trả về `Result<HttpResponse, actix_web::Error>`.
+
+### 1. Trait `ResponseError` và Rào cản Orphan Rule
+
+Theo tài liệu của `actix-web`, bất kỳ kiểu dữ liệu nào triển khai trait `ResponseError` đều có thể tự động chuyển thành `actix_web::Error` thông qua `Into`:
+
+```rust
+pub trait ResponseError: fmt::Debug + fmt::Display {
+    fn status_code(&self) -> StatusCode;
+    fn error_response(&self) -> Response;
+}
+```
+
+Nếu ta thử triển khai trực tiếp `ResponseError` cho `sqlx::Error`:
+
+```rust
+use actix_web::ResponseError;
+
+impl ResponseError for sqlx::Error {}
+```
+
+Trình biên dịch sẽ lập tức báo lỗi **E0117 (Orphan Rule)**:
+
+```text
+error[E0117]: only traits defined in the current crate can be implemented for arbitrary types
+   --> src/routes/subscriptions.rs:162:1
+    |
+162 | impl ResponseError for sqlx::Error {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^-----------
+    | |                      |
+    | |                      `sqlx::Error` is not defined in the current crate
+    | impl doesn't use only types from inside the current crate
+```
+
+<Callout type="info" title="Quy tắc Orphan Rule trong Rust">
+Rust cấm triển khai một trait từ crate bên ngoài (`actix_web::ResponseError`) cho một kiểu dữ liệu cũng thuộc crate bên ngoài (`sqlx::Error`). Quy tắc này bảo đảm tính nhất quán (coherence): nếu hai crate độc lập cùng cài đặt cùng một trait cho cùng một kiểu, trình biên dịch sẽ không thể biết nên chọn cài đặt nào khi được gọi.
+</Callout>
+
+Hơn nữa, về mặt nghiệp vụ, `sqlx::Error` không nên mặc định biến thành lỗi 500 ở mọi nơi. Khi kiểm tra một subscriber có tồn tại hay không, lỗi "Row not found" của `sqlx` có thể chỉ là một trường hợp hợp lệ cần xử lý chứ không phải lỗi server.
+
+### 2. Giải pháp Newtype Pattern
+
+Để tuân thủ Orphan Rule và gắn ngữ cảnh nghiệp vụ cụ thể, ta dùng **Newtype Pattern**: tạo một kiểu struct mới bọc lấy `sqlx::Error`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub struct StoreTokenError(sqlx::Error);
+
+impl ResponseError for StoreTokenError {}
+```
+
+Tuy nhiên, `ResponseError` yêu cầu kiểu phải cài đặt cả `Debug` lẫn `Display`. 
+- `Debug`: Dành cho lập trình viên/operator, phản ánh trung thực cấu trúc bên trong của kiểu dữ liệu.
+- `Display`: Mô tả ngắn gọn, súc tích về lỗi dành cho con người đọc.
+
+```rust
+//! src/routes/subscriptions.rs
+
+#[derive(Debug)]
+pub struct StoreTokenError(sqlx::Error);
+
+impl std::fmt::Display for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "A database error was encountered while trying to store a subscription token."
+        )
+    }
+}
+
+impl ResponseError for StoreTokenError {}
+```
+
+Bây giờ ta có thể cập nhật hàm `subscribe` để trả về `Result<HttpResponse, actix_web::Error>`:
+
+```rust
+pub async fn subscribe(/* */) -> Result<HttpResponse, actix_web::Error> {
+    // [...]
+    // Toán tử ? tự động gọi Into<actix_web::Error> thông qua ResponseError!
+    store_token(&mut transaction, subscriber_id, &subscription_token).await?;
+    // [...]
+    Ok(HttpResponse::Ok().finish())
+}
+```
+
+Kết quả log khi chạy lại test đã hoàn toàn thay đổi:
+
+```text
+ INFO: [HTTP REQUEST - END] 
+    exception.details= StoreTokenError(
+        Database(
+            PgDatabaseError { 
+                severity: Error, 
+                code: "42703", 
+                message: "column 'subscription_token' of relation 'subscription_tokens' does not exist",
+                ...
+            }
+        )
+    )
+    exception.message="A database failure was encountered while trying to store a subscription token.",
+    target=tracing_actix_web::root_span_builder, 
+    http.status_code=500
+```
+
+Bản ghi telemetry ở cuối request giờ đây chứa đầy đủ cả thông điệp tổng quát (`exception.message`) lẫn chi tiết kỹ thuật (`exception.details`).
+
+---
+
+## IV. Trait `std::error::Error` Chuẩn Mực Trong Rust
+
+Rời khỏi các ràng buộc của `actix-web`, câu hỏi đặt ra là: **Trong chuẩn mực ngôn ngữ Rust, một kiểu lỗi lý tưởng phải trông như thế nào?**
+
+Thư viện chuẩn của Rust cung cấp trait `std::error::Error`:
+
+```rust
+pub trait Error: Debug + Display {
+    /// Nguồn gốc mức thấp hơn (nguyên nhân sâu xa) của lỗi này, nếu có.
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+```
+
+Trait này đóng vai trò quan trọng:
+1. **Đánh dấu ngữ nghĩa (Semantic Marker)**: Khẳng định rõ ràng kiểu dữ liệu này đại diện cho một lỗi, giúp đồng nghiệp đọc code dễ dàng nhận biết.
+2. **Quy chuẩn hóa cấu trúc lỗi**: Buộc kiểu lỗi phải có cả biểu diễn `Debug` và `Display`.
+3. **Mở ra chuỗi nguyên nhân (Error Chain)**: Cho phép truy vết ngược về nguyên nhân gốc rễ thông qua phương thức `source()`.
+
+### 1. Trait Object `dyn Error + 'static`
+
+Phương thức `source` trả về kiểu `Option<&(dyn Error + 'static)>`. 
+
+Ở đây, `dyn Error` là một **Trait Object**. Chúng ta không cần biết kiểu cụ thể bên dưới là gì (có thể là `sqlx::Error`, `io::Error` hay `reqwest::Error`), ta chỉ cần biết nó thỏa mãn trait `Error`. Trait object cho phép lập trình viên truy cập vào các phương thức `Debug`, `Display` và `source` tiếp theo của lỗi tầng dưới mà vẫn giữ cho kiểu gốc có tính **mờ đục (opaque)**, không làm rò rỉ phụ thuộc kiểu cụ thể ra ngoài.
+
+### 2. Cài đặt `source()` và hàm định dạng chuỗi lỗi `error_chain_fmt`
+
+Hãy cài đặt `std::error::Error` cho `StoreTokenError`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+impl std::error::Error for StoreTokenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // Trình biên dịch tự động ép kiểu từ &sqlx::Error thành &dyn Error
+        Some(&self.0)
+    }
+}
+```
+
+Để hiển thị chuỗi lỗi rõ ràng theo dạng phân cấp "Gặp lỗi A, gây ra bởi lỗi B, gây ra bởi lỗi C", chúng ta viết một hàm tiện ích đệ quy duyệt qua phương thức `source`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub fn error_chain_fmt(
+    e: &impl std::error::Error,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    writeln!(f, "{}\n", e)?;
+    let mut current = e.source();
+    while let Some(cause) = current {
+        writeln!(f, "Caused by:\n\t{}", cause)?;
+        current = cause.source();
+    }
+    Ok(())
+}
+```
+
+Sau đó, thay vì dùng `#[derive(Debug)]` mặc định (vốn in ra cấu trúc struct thô), ta tự triển khai `Debug` bằng cách gọi `error_chain_fmt`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub struct StoreTokenError(sqlx::Error);
+
+impl std::fmt::Debug for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+```
+
+Nhật ký log giờ đây hiển thị rõ ràng và mạch lạc:
+
+```text
+ INFO: [HTTP REQUEST - END] 
+    exception.details=
+        "A database failure was encountered while trying to store a subscription token.
+    
+        Caused by:
+            error returned from database: column 'subscription_token' of relation 'subscription_tokens' does not exist"
+    exception.message="A database failure was encountered while trying to store a subscription token.",
+    target=tracing_actix_web::root_span_builder, 
+    http.status_code=500
+```
+
+Toàn bộ nguyên nhân gốc rễ và chuỗi sự kiện dẫn đến thất bại được bảo toàn trọn vẹn, không một chi tiết nào bị thất thoát.

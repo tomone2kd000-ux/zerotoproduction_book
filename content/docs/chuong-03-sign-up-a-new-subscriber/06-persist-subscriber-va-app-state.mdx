@@ -1,0 +1,530 @@
+---
+title: "3.9 - 3.11 Lưu Trữ Subscriber, Application State & Đảm Bảo Test Isolation"
+description: "Quản lý Application State với web::Data<PgPool>, thực thi câu lệnh INSERT an toàn và giải quyết triệt để vấn đề xung đột dữ liệu giữa các bài test với Database per Test."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info">
+  **Chặng về đích của Chương 3:** Chúng ta sẽ kết nối tất cả các mắt xích lại với nhau: đưa kết nối cơ sở dữ liệu vào `actix-web` thông qua cơ chế Application State, giải quyết triệt để bài toán tranh chấp luồng bằng Connection Pool (`PgPool`), thực thi câu lệnh `INSERT` an toàn và xử lý lỗi hồi quy do vi phạm tính cô lập giữa các bài test (Test Isolation) bằng kỹ thuật cấp phát cơ sở dữ liệu động cho từng bài test.
+</Callout>
+
+## I. Quản Lý Trạng Thái Ứng Dụng Trong Actix-web (Application State)
+
+Ở các phần trước, handler `subscribe` của chúng ta chỉ tiếp nhận dữ liệu từ HTTP request rồi trả về ngay phản hồi `200 OK`. Để có thể thực thi câu lệnh lưu trữ vào PostgreSQL, handler bắt buộc phải cầm được trong tay một kết nối cơ sở dữ liệu.
+
+Nhưng làm thế nào để chuyển một kết nối database vào bên trong một hàm handler?
+
+Cho đến thời điểm hiện tại, ứng dụng của chúng ta hoàn toàn không lưu trạng thái (stateless). `actix-web` cung cấp một cơ chế mạnh mẽ cho phép bạn đính kèm các đối tượng dữ liệu dùng chung có vòng đời xuyên suốt ứng dụng (không bị ràng buộc vào từng request riêng lẻ) — được gọi là **Application State** — thông qua phương thức `.app_data()`.
+
+```text
+                                HttpServer
+                                    |
+            +-----------------------+-----------------------+
+            |                                               |
+         Worker 1                                        Worker 2
+            |                                               |
+     +--------------+                                +--------------+
+     |   App Copy   |                                |   App Copy   |
+     |  .app_data() |                                |  .app_data() |
+     |      |       |                                |      |       |
+     +------|-------+                                +------|-------+
+            |                                               |
+            \_______________________ _______________________/
+                                    v
+                         web::Data<PgPool> (Arc)
+                                    |
+                                    v
+                     +-----------------------------+
+                     |   PostgreSQL Connection     |
+                     |         Pool (5-10 conns)   |
+                     +-----------------------------+
+```
+
+### 1. Thử Nghiệm Truyền `PgConnection` & Vấn Đề Về Worker Threads
+
+Hãy thử truyền một instance `PgConnection` vào hàm `run` trong `src/startup.rs`:
+
+```rust
+//! src/startup.rs
+
+use crate::routes::{health_check, subscribe};
+use actix_web::dev::Server;
+use actix_web::{web, App, HttpServer};
+use sqlx::PgConnection;
+use std::net::TcpListener;
+
+pub fn run(
+    listener: TcpListener,
+    connection: PgConnection, // Tham số mới
+) -> Result<Server, std::io::Error> {
+    let server = HttpServer::new(|| {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(connection) // Đính kèm connection vào app state
+    })
+    .listen(listener)?
+    .run();
+    
+    Ok(server)
+}
+```
+
+Chạy `cargo check`, trình biên dịch sẽ quăng ra lỗi:
+
+```text
+error[E0277]: the trait bound `PgConnection: std::clone::Clone` is not satisfied
+  --> src/startup.rs:8:18
+   |
+8  |       let server = HttpServer::new(|| {
+   |  __________________^^^^^^^^^^^^^^^
+   | |                  the trait `std::clone::Clone` is not implemented for `PgConnection`
+```
+
+Tại sao `connection` lại bắt buộc phải cài đặt trait `Clone`?
+
+### 2. Mô Hình Multi-Worker Của Actix-web
+
+Hãy quan sát kỹ chữ ký của `HttpServer::new`: nó không nhận vào một struct `App`, mà nhận vào **một closure sinh ra struct `App`** (`F: Fn() -> App`).
+
+Mô hình thực thi của `actix-web` hoạt động như sau:
+- Khi khởi động, `HttpServer` sẽ tự động tạo ra một số lượng worker thread tương ứng với số nhân CPU khả dụng trên máy chủ.
+- Mỗi worker thread sẽ sở hữu một bản sao độc lập của `App`, được tạo ra bằng cách thực thi chính closure mà bạn truyền vào.
+- Do closure được gọi nhiều lần trên nhiều luồng khác nhau, mọi biến từ môi trường bên ngoài muốn đưa vào bên trong `App` bắt buộc phải sao chép được (`Clone`).
+
+Nhưng struct `PgConnection` đại diện cho một socket TCP độc quyền giữa ứng dụng và máy chủ Postgres. Bạn không thể "clone" một kết nối TCP vật lý trên hệ điều hành!
+
+### 3. Con Trỏ Đếm Tham Chiếu Nguyên Tử: `web::Data`
+
+Giải pháp trong Rust là bọc đối tượng trong một con trỏ thông minh đếm tham chiếu đa luồng: **`Arc` (Atomic Reference Counted pointer)**.
+
+`actix-web` cung cấp sẵn struct **`web::Data<T>`**, bản chất là một wrapper mỏng quanh `Arc<T>`:
+- Thay vì sao chép toàn bộ đối tượng nặng, việc clone một `web::Data` chỉ đơn giản là tăng biến đếm tham chiếu nguyên tử và trả về một con trỏ mới trỏ tới cùng một vùng nhớ trên Heap.
+- Nhờ đó, tất cả các worker thread đều có thể chia sẻ chung một tài nguyên một cách an toàn.
+
+---
+
+## II. Bí Ẩn Về Trait `Executor` & Sự Xuất Hiện Của `PgPool`
+
+Bây giờ hãy viết câu lệnh `INSERT` bên trong handler `src/routes/subscriptions.rs`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+use actix_web::{web, HttpResponse};
+use chrono::Utc;
+use sqlx::PgConnection;
+use uuid::Uuid;
+
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    pub email: String,
+    pub name: String,
+}
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    connection: web::Data<PgConnection>,
+) -> HttpResponse {
+    sqlx::query!(
+        r#"
+        INSERT INTO subscriptions (id, email, name, subscribed_at)
+        VALUES ($1, $2, $3, $4)
+        "#,
+        Uuid::new_v4(),
+        form.email,
+        form.name,
+        Utc::now()
+    )
+    .execute(connection.get_ref())
+    .await;
+
+    HttpResponse::Ok().finish()
+}
+```
+
+Hãy thử biên dịch và quan sát lỗi:
+
+```text
+error[E0277]: the trait bound `&PgConnection: sqlx_core::executor::Executor<'_>` is not satisfied
+  --> src/routes/subscriptions.rs:29:14
+   |
+29 |     .execute(connection.get_ref())
+   |              ^^^^^^^^^^^^^^^^^^^^ 
+   |   the trait `sqlx_core::executor::Executor<'_>` is not implemented for `&PgConnection`
+   |
+   = note: `sqlx_core::executor::Executor<'_>` is implemented for `&mut PgConnection`, but not for `&PgConnection`
+```
+
+### Tại Sao Chỉ `&mut PgConnection` Mới Có Thể Thực Thi Truy Vấn?
+
+Giao thức tầng mạng của PostgreSQL không cho phép thực thi đồng thời nhiều câu truy vấn trên cùng một kết nối TCP. Nếu bạn gửi một câu truy vấn mới khi câu truy vấn trước chưa nhận đủ kết quả, dữ liệu sẽ bị xáo trộn.
+
+Hệ thống sở hữu (Ownership & Borrowing) của Rust giải quyết triệt để vấn đề này ở compile-time: **Để thực thi một truy vấn, `sqlx` yêu cầu một tham chiếu khả biến (`&mut PgConnection`)**. Một tham chiếu khả biến trong Rust đồng nghĩa với **quyền truy cập độc quyền (exclusive reference)** — tại một thời điểm trên toàn chương trình, chỉ có duy nhất một luồng được phép giữ tham chiếu này.
+
+Tuy nhiên, `web::Data` chỉ cho phép chúng ta lấy ra một tham chiếu bất biến chia sẻ (`&PgConnection`).
+
+Nếu chúng ta dùng `Mutex<PgConnection>` để lấy quyền truy cập khả biến thông qua Interior Mutability, chúng ta sẽ tự tạo ra một thảm họa hiệu năng: **toàn bộ ứng dụng của bạn sẽ bị giới hạn chỉ xử lý tuần tự được duy nhất 1 câu truy vấn tại một thời điểm!**
+
+### Cứu Tinh: Connection Pool (`PgPool`)
+
+Hãy mở tài liệu của `sqlx`: kiểu dữ liệu nào vừa hỗ trợ chia sẻ bất biến (`&`), vừa implement trait `Executor`?
+
+Đó chính là **`PgPool`** (Postgres Connection Pool).
+
+```text
+[Request A] ----\
+[Request B] ------> [&PgPool] ---> Mượn [Conn 1] ---> Thực thi Query A
+[Request C] ----/             ---> Mượn [Conn 2] ---> Thực thi Query B
+                              ---> Chờ nếu hết connection rảnh
+```
+
+Khi bạn thực hiện truy vấn trên một tham chiếu bất biến `&PgPool`:
+1. `sqlx` sẽ tự động mượn một kết nối `PgConnection` còn rỗi từ pool.
+2. Thực thi câu lệnh SQL trên kết nối đó.
+3. Tự động hoàn trả kết nối về lại pool khi hoàn tất để các request khác sử dụng.
+
+### Cập Nhật Mã Nguồn Chuyển Sang `PgPool`
+
+Cập nhật `src/startup.rs`:
+
+```rust
+//! src/startup.rs
+
+use crate::routes::{health_check, subscribe};
+use actix_web::dev::Server;
+use actix_web::{web, App, HttpServer};
+use sqlx::PgPool;
+use std::net::TcpListener;
+
+pub fn run(
+    listener: TcpListener,
+    db_pool: PgPool,
+) -> Result<Server, std::io::Error> {
+    let db_pool = web::Data::new(db_pool);
+    let server = HttpServer::new(move || {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(db_pool.clone())
+    })
+    .listen(listener)?
+    .run();
+    
+    Ok(server)
+}
+```
+
+Cập nhật `src/main.rs`:
+
+```rust
+//! src/main.rs
+
+use std::net::TcpListener;
+use sqlx::PgPool;
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::run;
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    let configuration = get_configuration().expect("Đọc file cấu hình thất bại.");
+    let connection_pool = PgPool::connect(&configuration.database.connection_string())
+        .await
+        .expect("Kết nối PostgreSQL thất bại.");
+
+    let address = format!("127.0.0.1:{}", configuration.application_port);
+    let listener = TcpListener::bind(address)?;
+    run(listener, connection_pool)?.await
+}
+```
+
+Cập nhật `src/routes/subscriptions.rs` và xử lý cẩn thận kiểu `Result`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+use actix_web::{web, HttpResponse};
+use chrono::Utc;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    pub email: String,
+    pub name: String,
+}
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    match sqlx::query!(
+        r#"
+        INSERT INTO subscriptions (id, email, name, subscribed_at)
+        VALUES ($1, $2, $3, $4)
+        "#,
+        Uuid::new_v4(),
+        form.email,
+        form.name,
+        Utc::now()
+    )
+    .execute(pool.get_ref())
+    .await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            println!("Thực thi truy vấn thất bại: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+```
+
+---
+
+## III. Cập Nhật Bài Test & Cú Sốc Vi Phạm Ràng Buộc Dữ Liệu
+
+Trong file `tests/health_check.rs`, chúng ta đóng gói thông tin server test thành struct `TestApp`:
+
+```rust
+//! tests/health_check.rs
+
+use sqlx::PgPool;
+use std::net::TcpListener;
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::run;
+
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+async fn spawn_app() -> TestApp {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .expect("Không thể bind cổng ngẫu nhiên");
+    let port = listener.local_addr().unwrap().port();
+    let address = format!("http://127.0.0.1:{}", port);
+
+    let configuration = get_configuration().expect("Đọc file cấu hình thất bại.");
+    let connection_pool = PgPool::connect(&configuration.database.connection_string())
+        .await
+        .expect("Kết nối database thất bại.");
+
+    let server = run(listener, connection_pool.clone()).expect("Khởi động server thất bại");
+    let _ = tokio::spawn(server);
+
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
+}
+```
+
+Sử dụng `TestApp` trong bài test kiểm tra lưu dữ liệu:
+
+```rust
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // Arrange
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+
+    // Act
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    let response = client
+        .post(&format!("{}/subscriptions", &app.address))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    // Assert
+    assert_eq!(200, response.status().as_u16());
+
+    let saved = sqlx::query!("SELECT email, name FROM subscriptions")
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("Không tìm thấy dòng dữ liệu đã lưu trong bảng.");
+
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
+    assert_eq!(saved.name, "le guin");
+}
+```
+
+Hãy chạy `cargo test` lần đầu tiên:
+
+```text
+running 3 tests
+test health_check_works ... ok
+test subscribe_returns_a_400_when_data_is_missing ... ok
+test subscribe_returns_a_200_for_valid_form_data ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Chiến thắng vang dội! Cả 3 bài test đều đã chuyển sang màu xanh ngọc bích!
+
+Nhưng khoan đã... Hãy thử bấm mũi tên lên và **chạy lại `cargo test` một lần nữa**:
+
+```text
+running 3 tests
+test health_check_works ... ok
+test subscribe_returns_a_400_when_data_is_missing ... ok
+Thực thi truy vấn thất bại: error returned from database: duplicate key value violates unique constraint "subscriptions_email_key"
+test subscribe_returns_a_200_for_valid_form_data ... FAILED
+
+failures:
+    subscribe_returns_a_200_for_valid_form_data
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Tại sao lại sập? Chuyện gì vừa mới xảy ra?
+
+---
+
+## IV. Đảm Bảo Tính Cô Lập Kiểm Thử (Test Isolation)
+
+**Cơ sở dữ liệu thực chất là một biến toàn cục khổng lồ.**
+
+Mọi bài kiểm thử trong test suite của bạn đều tương tác trực tiếp với nó. Bất kỳ dữ liệu nào một bài test để lại trong database sẽ tồn tại vĩnh viễn ở đó và ảnh hưởng trực tiếp đến các bài test chạy sau nó hoặc các lần chạy test kế tiếp.
+
+Trong lần chạy test đầu tiên, chúng ta đã lưu thành công email `ursula_le_guin@gmail.com`.  
+Trong lần chạy test thứ hai, hàm test tiếp tục gửi một request `POST` với cùng email đó. Cơ sở dữ liệu lập tức kích hoạt ràng buộc `UNIQUE` trên cột `email`, từ chối câu lệnh `INSERT` và ném ra lỗi `unique key violation`. Máy chủ xử lý lỗi bằng cách trả về mã `500 Internal Server Error`, khiến assertion kỳ vọng mã 200 bị thất bại thảm hại!
+
+Các bài kiểm thử không độc lập là nguồn gốc sinh ra các lỗi kỳ dị, chập chờn (flaky tests) vô cùng tốn thời gian khắc phục.
+
+### Hai Kỹ Thuật Đảm Bảo Cách Ly Dữ Liệu Khi Test
+
+1. **Bọc bài test trong SQL Transaction và Rollback khi xong:** Kỹ thuật này rất nhanh vì rollback một transaction tốn rất ít tài nguyên. Tuy nhiên, nó chỉ phù hợp cho unit test các hàm DAO/Repository. Với Integration Test hộp đen như của chúng ta, máy chủ API chạy trên một tiến trình nền riêng, tự mượn kết nối từ `PgPool` nên test runner không có cách nào "bắt" và ép kết nối đó phải chạy trong cùng một transaction của test.
+2. **Cấp phát Cơ sở dữ liệu Độc lập cho từng bài test (Logical Database Per Test):** Trước mỗi bài test, chúng ta tạo ra một database logic hoàn toàn mới với tên ngẫu nhiên, chạy toàn bộ migrations lên đó, và cho bài test chạy trên database riêng này.
+
+```text
+                                Postgres Server
+                                       |
+          +----------------------------+----------------------------+
+          |                                                         |
+  [Database 4a2b...]                                        [Database 8f1c...]
+  (Dành riêng cho Test A)                                   (Dành riêng cho Test B)
+  - Chạy migration tự động                                  - Chạy migration tự động
+  - Chứa dữ liệu của Test A                                 - Chứa dữ liệu của Test B
+  => Hoàn toàn độc lập, không sợ đụng độ email trùng lặp!
+```
+
+### Triển Khai Kỹ Thuật Database Per Test
+
+Thêm phương thức kết nối không kèm tên database vào `DatabaseSettings` trong `src/configuration.rs`:
+
+```rust
+//! src/configuration.rs
+
+impl DatabaseSettings {
+    pub fn connection_string(&self) -> String {
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            self.username, self.password, self.host, self.port, self.database_name
+        )
+    }
+
+    // Kết nối tới Postgres instance mà không chỉ định database cụ thể
+    pub fn connection_string_without_db(&self) -> String {
+        format!(
+            "postgres://{}:{}@{}:{}",
+            self.username, self.password, self.host, self.port
+        )
+    }
+}
+```
+
+Bây giờ, viết hàm trợ giúp `configure_database` trong `tests/health_check.rs`:
+
+```rust
+//! tests/health_check.rs
+
+use sqlx::{Connection, Executor, PgConnection, PgPool};
+use uuid::Uuid;
+use zero2prod::configuration::{get_configuration, DatabaseSettings};
+use zero2prod::startup::run;
+use std::net::TcpListener;
+
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+async fn spawn_app() -> TestApp {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .expect("Không thể bind cổng ngẫu nhiên");
+    let port = listener.local_addr().unwrap().port();
+    let address = format!("http://127.0.0.1:{}", port);
+
+    let mut configuration = get_configuration().expect("Đọc file cấu hình thất bại.");
+    // Sinh tên database ngẫu nhiên bằng UUID để tránh đụng độ
+    configuration.database.database_name = Uuid::new_v4().to_string();
+    
+    // Khởi tạo và migrate database độc lập cho ca test này
+    let connection_pool = configure_database(&configuration.database).await;
+
+    let server = run(listener, connection_pool.clone()).expect("Khởi động server thất bại");
+    let _ = tokio::spawn(server);
+
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
+}
+
+pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
+    // 1. Kết nối đến Postgres để tạo database logic mới
+    let mut connection = PgConnection::connect(&config.connection_string_without_db())
+        .await
+        .expect("Kết nối Postgres thất bại");
+        
+    connection
+        .execute(format!(r#"CREATE DATABASE "{}";"#, config.database_name).as_str())
+        .await
+        .expect("Tạo database ngẫu nhiên thất bại.");
+
+    // 2. Kết nối trực tiếp vào database mới tạo qua Pool
+    let connection_pool = PgPool::connect(&config.connection_string())
+        .await
+        .expect("Kết nối database mới thất bại.");
+        
+    // 3. Thực thi toàn bộ migrations lên database mới
+    sqlx::migrate!("./migrations")
+        .run(&connection_pool)
+        .await
+        .expect("Chạy migration thất bại.");
+
+    connection_pool
+}
+```
+
+Hãy chạy lại `cargo test` nhiều lần liên tiếp:
+
+```text
+running 3 tests
+test health_check_works ... ok
+test subscribe_returns_a_400_when_data_is_missing ... ok
+test subscribe_returns_a_200_for_valid_form_data ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Tất cả các bài test giờ đây đều vượt qua 100% một cách ổn định tuyệt đối và có tính tiền định (deterministic). Dù bạn có chạy `cargo test` 100 lần liên tiếp hay chạy hàng chục bài test đồng thời song song trên nhiều thread, sẽ không bao giờ có hiện tượng đụng độ dữ liệu xảy ra!
+
+---
+
+## V. Tổng Kết Chương 3 (Summary)
+
+Chúng ta vừa hoàn thành một trong những chương quan trọng và nặng đô nhất của cuốn sách! Hãy điểm lại những kiến thức và kỹ năng đỉnh cao bạn đã lĩnh hội được:
+
+1. **Kiến Trúc Actix-web:** Nắm vững vai trò của `HttpServer` (tầng transport, multi-worker), `App` (routing, middlewares), `Route`, chữ ký hàm linh hoạt của handler và cơ chế bóc trần runtime macro `#[tokio::main]`.
+2. **Chiến Lược Kiểm Thử Tích Hợp Hộp Đen:** Tách dự án thành Library và Binary, kiểm thử toàn bộ hành vi của API thông qua HTTP client `reqwest`, chạy ứng dụng ngầm bằng `tokio::spawn` và loại bỏ hoàn toàn đụng độ cổng với Port 0 (`TcpListener`).
+3. **Xử Lý HTML Form & Sức Mạnh Serde:** Đọc dữ liệu `application/x-www-form-urlencoded` bằng extractor `web::Form`, hiểu rõ trait `FromRequest`, nắm bắt Data Model của `serde` và cơ chế trừu tượng không tốn chi phí (Zero-Cost Abstractions) nhờ Monomorphization.
+4. **Cơ Sở Dữ Liệu PostgreSQL & SQLx:** Vận hành Postgres qua Docker, quản lý schema migrations bài bản với `sqlx-cli`, tận dụng macro `sqlx::query!` để bắt toàn bộ lỗi cú pháp và lệch kiểu dữ liệu SQL ngay tại thời điểm biên dịch.
+5. **Quản Lý Application State & Test Isolation:** Chia sẻ connection pool an toàn giữa các worker threads bằng `web::Data<PgPool>`, hiểu rõ lý do trait `Executor` đòi hỏi quyền truy cập độc quyền, và giải quyết triệt để vấn đề xung đột dữ liệu giữa các bài test với kỹ thuật Logical Database Per Test.
+
+Mọi thứ đã sẵn sàng cho chặng đường tiếp theo. Trong **Chương 4**, chúng ta sẽ tìm hiểu về **Telemetry & Khả năng quan sát hệ thống (Observability)**: biến ứng dụng của chúng ta thành một cỗ máy có khả năng tự chẩn đoán lỗi chuyên nghiệp trong môi trường production thực tế!

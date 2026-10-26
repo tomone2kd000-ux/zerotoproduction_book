@@ -1,0 +1,290 @@
+---
+title: "9.1 - 9.3 Quy Trình Gửi Bản Tin & Lọc Subscriber Đã Xác Thực"
+description: "Tiến hóa User Stories theo miền nghiệp vụ, kỹ thuật kiểm thử Black-box với Scoped Mocks trong WireMock, và thiết lập test helpers chuẩn mực cho luồng phát hành bản tin."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 9.1 - 9.3 Quy Trình Gửi Bản Tin & Lọc Subscriber Đã Xác Thực
+
+Chúng ta chuẩn bị xây dựng tính năng quan trọng nhất của dịch vụ: phát hành một số bản tin mới cho người đăng ký. Nhưng trước khi gõ những dòng mã đầu tiên, ta cần trả lời một câu hỏi căn bản: **Mục tiêu chính xác mà chúng ta đang hướng tới là gì?**
+
+---
+
+## I. User Stories Không Bao Giờ Là Bất Biến (User Stories Are Not Set In Stone)
+
+Hãy nhìn lại User Story mà chúng ta đã phác thảo ở Chương 2:
+
+> **Là một** tác giả blog,  
+> **Tôi muốn** gửi email tới tất cả người đăng ký của mình,  
+> **Để** thông báo cho họ mỗi khi có bài viết mới được xuất bản.
+
+Thoạt nhìn, yêu cầu này có vẻ rất rõ ràng. Nhưng trong kỹ nghệ phần mềm, *"quỷ dữ luôn ẩn nấp trong từng chi tiết nhỏ"*. 
+
+Trong Chương 7, mô hình miền nghiệp vụ (domain model) của chúng ta đã có bước chuyển biến lớn: một subscriber giờ đây có thể ở một trong hai trạng thái: **chờ xác nhận (unconfirmed)** hoặc **đã xác nhận (confirmed)**. Vậy bản tin mới cần được gửi cho ai?
+
+User story ban đầu hoàn toàn bất lực trong việc giải đáp câu hỏi này, bởi nó được viết từ trước khi khái niệm "xác nhận email" xuất hiện trong hệ thống!
+
+<Callout type="info" title="Bài học kiến trúc về User Stories">
+Hãy duy trì thói quen thường xuyên xem xét lại các User Stories trong suốt vòng đời của dự án. Càng dành nhiều thời gian nghiên cứu và giải quyết bài toán, bạn càng hiểu sâu hơn về **Miền nghiệp vụ (Domain)**. Bạn sẽ thu nạp được một **Ngôn ngữ chung (Ubiquitous Language)** chuẩn xác hơn để tinh chỉnh những mô tả ban đầu về hành vi mong muốn của hệ thống.
+</Callout>
+
+Trong trường hợp này, quy tắc nghiệp vụ rất rõ ràng: chúng ta **chỉ** gửi bản tin cho những người **đã xác nhận email**. Vì vậy, ta cập nhật lại User Story:
+
+> **Là một** tác giả blog,  
+> **Tôi muốn** gửi email tới tất cả **người đăng ký đã xác nhận**,  
+> **Để** thông báo cho họ mỗi khi có bài viết mới được xuất bản.
+
+---
+
+## II. Không Gửi Thư Cho Người Chưa Xác Thực (Do Not Spam Unconfirmed Subscribers)
+
+Theo đúng triết lý Test-Driven Development (TDD), chúng ta bắt đầu bằng một integration test chỉ định điều **không được phép xảy ra**: Người chưa xác thực tuyệt đối không được nhận email bản tin.
+
+Trong Chương 7, chúng ta đã chọn Postmark làm nhà cung cấp dịch vụ gửi email. Nếu ứng dụng không gọi tới API của Postmark, đồng nghĩa với việc không có email nào được gửi ra ngoài thế giới thực. Ta tận dụng điểm này để thiết lập bài test:
+
+Tạo module kiểm thử mới `tests/api/newsletter.rs`:
+
+```rust
+//! tests/api/main.rs
+// [...]
+mod newsletter;
+```
+
+```rust
+//! tests/api/newsletter.rs
+use crate::helpers::{spawn_app, TestApp};
+use wiremock::matchers::{any, method, path};
+use wiremock::{Mock, ResponseTemplate};
+
+#[tokio::test]
+async fn newsletters_are_not_delivered_to_unconfirmed_subscribers() {
+    // Arrange
+    let app = spawn_app().await;
+    create_unconfirmed_subscriber(&app).await;
+
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200))
+        // Khẳng định chắc chắn rằng Postmark KHÔNG nhận bất kỳ request nào!
+        .expect(0)
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    let newsletter_request_body = serde_json::json!({
+        "title": "Bản tin công nghệ số 1",
+        "content": {
+            "text": "Nội dung bản tin dạng thuần văn bản plain text",
+            "html": "<p>Nội dung bản tin dạng định dạng HTML</p>",
+        }
+    });
+    
+    let response = reqwest::Client::new()
+        .post(&format!("{}/newsletters", &app.address))
+        .json(&newsletter_request_body)
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    // Assert
+    assert_eq!(response.status().as_u16(), 200);
+    // Khi ra khỏi phạm vi, Mock server sẽ tự động kiểm tra xem có request nào gửi tới hay không
+}
+
+/// Thiết lập trạng thái subscriber chưa xác nhận bằng Public API
+async fn create_unconfirmed_subscriber(app: &TestApp) {
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    let _mock_guard = Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .named("Tạo unconfirmed subscriber")
+        .expect(1)
+        .mount_as_scoped(&app.email_server)
+        .await;
+
+    app.post_subscriptions(body.into())
+        .await
+        .error_for_status()
+        .unwrap();
+}
+```
+
+Khi chạy `cargo test`, test sẽ thất bại với mã lỗi `404 Not Found` vì endpoint `POST /newsletters` chưa hề tồn tại trong router.
+
+---
+
+### 1. Thiết lập trạng thái thông qua Public API (Black-Box Testing)
+
+Trong phần `Arrange` của bài test trên, kịch bản đòi hỏi trong database phải có sẵn một người đăng ký ở trạng thái `unconfirmed`.
+
+Mỗi bài test của chúng ta khởi tạo một ứng dụng hoàn toàn độc lập với một database trống rỗng (`let app = spawn_app().await;`). Để đưa database về trạng thái mong muốn, chúng ta kiên định áp dụng **Tiếp cận kiểm thử hộp đen (Black-box approach)**: *Điều khiển trạng thái ứng dụng bằng cách gọi chính các API công khai của nó thay vì chèn trực tiếp câu lệnh SQL vào database*.
+
+Hàm trợ giúp `create_unconfirmed_subscriber` gọi thẳng endpoint `POST /subscriptions` của ứng dụng để tạo ra người dùng mới một cách tự nhiên nhất.
+
+---
+
+### 2. Quản lý vòng đời Mock với Scoped Mocks
+
+Khi gọi `POST /subscriptions`, ứng dụng sẽ gửi một email xác thực tới máy chủ Postmark giả lập. Chúng ta phải chuẩn bị sẵn một Mock để tiếp nhận request này.
+
+Tuy nhiên, cấu hình match của mock tạo subscriber (`POST /email`) lại trùng khớp với cấu hình mock kiểm tra việc gửi bản tin. Làm sao để hai mock này không xung đột lẫn nhau?
+
+Giải pháp chính là **Scoped Mock** (`mount_as_scoped`):
+
+```rust
+let _mock_guard = Mock::given(path("/email"))
+    .and(method("POST"))
+    .respond_with(ResponseTemplate::new(200))
+    .named("Tạo unconfirmed subscriber")
+    .expect(1)
+    // Dùng mount_as_scoped thay vì mount thông thường!
+    .mount_as_scoped(&app.email_server)
+    .await;
+```
+
+- Với phương thức `mount`, hành vi của mock sẽ tồn tại suốt vòng đời của `MockServer`.
+- Với `mount_as_scoped`, WireMock trả về một đối tượng bảo vệ có tên là `MockGuard`.
+
+`MockGuard` cài đặt trait `Drop`. Ngay khi biến `_mock_guard` ra khỏi phạm vi thực thi của hàm trợ giúp `create_unconfirmed_subscriber`, WireMock sẽ tự động hủy kích hoạt mock này. Hành vi trả về mã 200 cho endpoint `/email` **chỉ tồn tại cục bộ** bên trong hàm trợ giúp đó!
+
+Hơn nữa, khi `MockGuard` bị drop, nó sẽ **ngay lập tức kiểm tra (eagerly check)** xem kỳ vọng (`expect(1)`) đã được thỏa mãn hay chưa. Cơ chế này giúp giữ cho các hàm helper luôn sạch sẽ và cập nhật kịp thời khi ứng dụng thay đổi.
+
+---
+
+### 3. Green Test Đầu Tiên
+
+Để bài test chuyển sang màu xanh, ta chỉ cần tạo một handler giả (dummy implementation) cho `POST /newsletters`:
+
+Tạo file `src/routes/newsletters.rs`:
+
+```rust
+//! src/routes/newsletters.rs
+use actix_web::HttpResponse;
+
+pub async fn publish_newsletter() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+```
+
+Đăng ký route mới vào `src/routes/mod.rs` và `src/startup.rs`:
+
+```rust
+//! src/routes/mod.rs
+mod newsletters;
+pub use newsletters::*;
+```
+
+```rust
+//! src/startup.rs
+use crate::routes::{confirm, health_check, publish_newsletter, subscribe};
+
+// [...]
+App::new()
+    .wrap(TracingLogger::default())
+    .route("/newsletters", web::post().to(publish_newsletter))
+    .route("/subscriptions", web::post().to(subscribe))
+    // [...]
+```
+
+Chạy `cargo test`, test đầu tiên đã chuyển sang màu xanh (`passed`).
+
+---
+
+## III. Gửi Bản Tin Cho Subscriber Đã Xác Thực
+
+Bây giờ ta viết tiếp một integration test cho trường hợp thành công (Happy Case): Nếu trong hệ thống có một subscriber đã xác thực, họ phải nhận được đúng 1 email chứa nội dung bản tin.
+
+### Kết hợp các Test Helpers (Composing Test Helpers)
+
+Chúng ta cần tạo ra một subscriber ở trạng thái `confirmed`. Thay vì viết lại từ đầu, ta cải tiến nhẹ hàm `create_unconfirmed_subscriber` để nó trả về các link xác thực nhận được từ Postmark mock:
+
+```rust
+//! tests/api/newsletter.rs
+
+async fn create_unconfirmed_subscriber(app: &TestApp) -> ConfirmationLinks {
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    let _mock_guard = Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .named("Tạo unconfirmed subscriber")
+        .expect(1)
+        .mount_as_scoped(&app.email_server)
+        .await;
+
+    app.post_subscriptions(body.into())
+        .await
+        .error_for_status()
+        .unwrap();
+
+    // Lấy request mà WireMock vừa ghi nhận để trích xuất link xác nhận
+    let email_request = &app
+        .email_server
+        .received_requests()
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    app.get_confirmation_links(&email_request)
+}
+
+async fn create_confirmed_subscriber(app: &TestApp) {
+    // Tái sử dụng helper trên và gọi tiếp link xác thực!
+    let confirmation_link = create_unconfirmed_subscriber(app).await;
+    reqwest::get(confirmation_link.html)
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+}
+```
+
+Bây giờ, ta viết bài test hoàn chỉnh:
+
+```rust
+//! tests/api/newsletter.rs
+
+#[tokio::test]
+async fn newsletters_are_delivered_to_confirmed_subscribers() {
+    // Arrange
+    let app = spawn_app().await;
+    create_confirmed_subscriber(&app).await;
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1) // Phải có đúng 1 email gửi ra!
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    let newsletter_request_body = serde_json::json!({
+        "title": "Newsletter title",
+        "content": {
+            "text": "Newsletter body as plain text",
+            "html": "<p>Newsletter body as HTML</p>",
+        }
+    });
+
+    let response = reqwest::Client::new()
+        .post(&format!("{}/newsletters", &app.address))
+        .json(&newsletter_request_body)
+        .send()
+        .await
+        .expect("Thực thi request thất bại.");
+
+    // Assert
+    assert_eq!(response.status().as_u16(), 200);
+}
+```
+
+Chạy `cargo test`, bài test thất bại chính xác như kỳ vọng:
+```text
+Verifications failed:
+- Mock #1.
+        Expected range of matching incoming requests: == 1
+        Number of matched incoming requests: 0
+```
+
+Hệ thống kiểm thử đã hoàn tất và sẵn sàng dẫn đường cho quá trình lập trình thực tế ở bài học tiếp theo!

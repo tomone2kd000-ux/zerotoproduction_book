@@ -1,0 +1,447 @@
+---
+title: "Xây Dựng Dockerfile Tối Ưu, SQLx Offline & Cargo-Chef"
+description: "Kỹ thuật đóng gói Docker cho ứng dụng Rust: SQLx Offline Mode, Hierarchical Configuration, Multi-stage builds và tăng tốc build với cargo-chef"
+---
+
+# Xây Dựng Dockerfile Tối Ưu, SQLx Offline & Cargo-Chef
+
+Nền tảng DigitalOcean App Platform hỗ trợ triển khai nguyên bản các ứng dụng được đóng gói dưới dạng Docker container. Nhiệm vụ của chúng ta là viết một `Dockerfile` chuẩn mực để biên dịch và thực thi dịch vụ `zero2prod`.
+
+Một Dockerfile thực chất là một "công thức nấu ăn" (recipe) cho môi trường của ứng dụng. Dockerfile được tổ chức theo từng tầng (layers): bạn bắt đầu từ một image cơ sở (base image) và thực thi tuần tự các câu lệnh (`COPY`, `RUN`, `ENV`,...) để tạo ra môi trường mong muốn.
+
+---
+
+## 5.3.1. Phiên Bản Dockerfile Ban Đầu
+
+Hãy xem xét phiên bản Dockerfile đơn giản nhất cho một dự án Rust:
+
+```dockerfile
+# Sử dụng Rust bản stable chính thức làm base image
+FROM rust:1.72.0
+
+# Chuyển thư mục làm việc sang /app (tương đương cd /app)
+WORKDIR /app
+
+# Cài đặt các công cụ liên kết (linker) tối ưu
+RUN apt update && apt install lld clang -y
+
+# Sao chép toàn bộ file từ máy host vào Docker image
+COPY . .
+
+# Biên dịch binary với profile release để tối ưu hóa hiệu năng
+RUN cargo build --release
+
+# Lệnh khởi chạy binary khi container khởi động
+ENTRYPOINT ["./target/release/zero2prod"]
+```
+
+Lưu nội dung trên vào file `Dockerfile` tại thư mục gốc của dự án. Để tiến hành biên dịch (build) image, ta chạy lệnh:
+
+```bash
+docker build --tag zero2prod --file Dockerfile .
+```
+
+Ký tự dấu chấm `.` ở cuối câu lệnh đại diện cho **Build Context**.
+
+---
+
+## 5.3.2. Build Context Là Gì?
+
+Khi chạy `docker build`, Docker daemon xem image đang build như một môi trường cô lập hoàn toàn. Điểm tiếp xúc duy nhất giữa môi trường của bạn và image là các lệnh như `COPY` hoặc `ADD`.
+
+**Build Context** xác định những file nào trên máy chủ của bạn được phép "nhìn thấy" bởi các lệnh `COPY`. Dấu chấm `.` chỉ định thư mục hiện tại làm build context. Do đó, `COPY . .` sẽ sao chép toàn bộ mã nguồn từ thư mục hiện tại vào thư mục `/app` bên trong container.
+
+---
+
+## 5.3.3. Xử Lý SQLx Trong Môi Trường Offline (SQLx Offline Mode)
+
+Nếu bạn thử chạy lệnh `docker build` lúc này, quá trình biên dịch sẽ thất bại ngay lập tức với lỗi:
+
+```text
+error: error communicating with the database: 
+Cannot assign requested address (os error 99)
+  --> src/routes/subscriptions.rs:35:5
+   |
+35 |     sqlx::query!(
+   |     ^^^^^^^^^^^^
+```
+
+### Tại Sao Lại Bị Lỗi Này?
+Ở Chương 3, chúng ta biết rằng macro `sqlx::query!` kiểm tra tính hợp lệ của câu lệnh SQL và đối chiếu kiểu dữ liệu trực tiếp với cơ sở dữ liệu thật **tại thời điểm biên dịch (compile-time)**. 
+
+Tuy nhiên, khi chạy `cargo build` bên trong Docker, tiến trình này không thể kết nối tới cơ sở dữ liệu PostgreSQL đang chạy ở máy host bên ngoài!
+
+### Giải Pháp: Chế Độ Biên Dịch Ngoại Tuyến (Offline Mode)
+Chúng ta không nên mở mạng (`--network`) nối container build tới database local vì điều này làm mất tính tái lập (reproducibility) của bản build và gây lỗi trên các OS khác nhau (như macOS).
+
+Thay vào đó, ta sử dụng **Offline Mode** của `sqlx-cli`. Chạy lệnh sau tại thư mục gốc dự án:
+
+```bash
+cargo sqlx prepare --workspace
+```
+
+Lệnh này sẽ rà soát toàn bộ các macro `query!` trong workspace và lưu trữ metadata kết quả truy vấn vào một thư mục có tên là `.sqlx/`:
+
+```text
+query data written to `.sqlx` in the workspace root; 
+please check this into version control
+```
+
+<Callout type="warn">
+  **Quy tắc bắt buộc**: Bạn **phải commit thư mục `.sqlx` vào Git**! Trong quy trình CI/CD, ta sử dụng cờ `cargo sqlx prepare --check` để đảm bảo file metadata luôn đồng bộ với các câu truy vấn mới nhất.
+</Callout>
+
+Sau đó, trong `Dockerfile`, ta đặt biến môi trường `ENV SQLX_OFFLINE true` để yêu cầu `sqlx` đọc metadata từ thư mục `.sqlx` thay vì cố gắng kết nối tới CSDL thật:
+
+```dockerfile
+FROM rust:1.72.0
+
+WORKDIR /app
+RUN apt update && apt install lld clang -y
+COPY . .
+ENV SQLX_OFFLINE true
+RUN cargo build --release
+ENTRYPOINT ["./target/release/zero2prod"]
+```
+
+Bây giờ lệnh `docker build --tag zero2prod --file Dockerfile .` sẽ biên dịch thành công 100%!
+
+---
+
+## 5.3.4. Khởi Chạy Container & Lazy Connection
+
+Hãy thử chạy image vừa build bằng lệnh:
+
+```bash
+docker run zero2prod
+```
+
+Ứng dụng lập tức bị sập (panic):
+
+```text
+thread 'main' panicked at 'Failed to connect to Postgres: Io(Os { code: 99, kind: AddrNotAvailable, message: "Cannot assign requested address" })'
+```
+
+Lỗi này phát sinh do trong hàm `main`, chúng ta gọi `PgPool::connect(&...).await` ngay khi ứng dụng vừa khởi động. 
+
+Để ứng dụng không bị sập ngay khi container boot (đặc biệt khi database cloud cần vài chục giây để sẵn sàng), ta chuyển sang phương thức **khởi tạo lười biếng (lazy initialization)** với `PgPool::connect_lazy`:
+
+```rust
+//! src/main.rs
+// [...]
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    // [...]
+    // `connect_lazy` không còn là hàm async vì nó chưa thực sự tạo kết nối socket
+    let connection_pool = PgPool::connect_lazy(
+        &configuration.database.connection_string().expose_secret()
+    )
+    .expect("Không thể tạo PostgreSQL connection pool.");
+
+    // [...]
+}
+```
+
+Bây giờ container có thể khởi động thành công mà không đòi hỏi database phải sẵn sàng ngay tức khắc!
+
+---
+
+## 5.3.5. Networking & Địa Chỉ Bind `0.0.0.0`
+
+Tiếp tục khởi chạy container và ánh xạ cổng (port mapping):
+
+```bash
+docker run -p 8000:8000 zero2prod
+```
+
+Từ một terminal khác trên máy host, ta gửi request:
+
+```bash
+curl http://127.0.0.1:8000/health_check
+```
+
+Kết quả: `curl: (7) Failed to connect to 127.0.0.1 port 8000: Connection refused`.
+
+### Tại Sao Lại Bị Từ Chối Kết Nối?
+Trong `src/main.rs`, chúng ta đang bind máy chủ vào địa chỉ `127.0.0.1`:
+
+```rust
+let address = format!("127.0.0.1:{}", configuration.application_port);
+```
+
+`127.0.0.1` là địa chỉ loopback cục bộ. Khi chạy bên trong Docker container, nó ra lệnh cho `actix-web` **chỉ chấp nhận kết nối xuất phát từ chính bên trong container đó**! Lệnh `curl` từ máy host gửi vào sẽ bị từ chối thẳng thừng.
+
+Để chấp nhận kết nối từ mọi giao diện mạng (network interfaces), ứng dụng phải bind vào địa chỉ `0.0.0.0`.
+
+Tuy nhiên, việc bind `0.0.0.0` trên máy dev cá nhân tiềm ẩn rủi ro bảo mật (mở cổng dịch vụ ra toàn bộ mạng Wi-Fi nội bộ). Giải pháp chuẩn mực của một Senior Backend là: **Tách biệt cấu hình theo môi trường (Hierarchical Configuration)**.
+
+---
+
+## 5.3.6. Cấu Hình Phân Cấp (Hierarchical Configuration)
+
+Chúng ta tổ chức cấu hình thành 3 tầng:
+1. `configuration/base.yaml`: Chứa các cấu hình chung (tên database, cổng mặc định);
+2. `configuration/local.yaml`: Dành cho môi trường phát triển cục bộ (`host: 127.0.0.1`);
+3. `configuration/production.yaml`: Dành cho môi trường chạy thực tế (`host: 0.0.0.0`).
+
+Biến môi trường `APP_ENVIRONMENT` (`local` hoặc `production`) sẽ quyết định nạp file cấu hình nào.
+
+### Cập Nhật Struct Cấu Hình (`src/configuration.rs`)
+
+```rust
+//! src/configuration.rs
+use secrecy::{ExposeSecret, Secret};
+
+#[derive(serde::Deserialize)]
+pub struct Settings {
+    pub database: DatabaseSettings,
+    pub application: ApplicationSettings,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApplicationSettings {
+    pub port: u16,
+    pub host: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct DatabaseSettings {
+    pub username: String,
+    pub password: Secret<String>,
+    pub port: u16,
+    pub host: String,
+    pub database_name: String,
+}
+
+pub enum Environment {
+    Local,
+    Production,
+}
+
+impl Environment {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Environment::Local => "local",
+            Environment::Production => "production",
+        }
+    }
+}
+
+impl TryFrom<String> for Environment {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.to_lowercase().as_str() {
+            "local" => Ok(Self::Local),
+            "production" => Ok(Self::Production),
+            other => Err(format!("Môi trường không hợp lệ: {}. Hãy dùng `local` hoặc `production`.", other)),
+        }
+    }
+}
+
+pub fn get_configuration() -> Result<Settings, config::ConfigError> {
+    let base_path = std::env::current_dir().expect("Không thể xác định thư mục hiện tại.");
+    let configuration_directory = base_path.join("configuration");
+
+    let environment: Environment = std::env::var("APP_ENVIRONMENT")
+        .unwrap_or_else(|_| "local".into())
+        .try_into()
+        .expect("Không thể phân tích APP_ENVIRONMENT.");
+    let environment_filename = format!("{}.yaml", environment.as_str());
+
+    let settings = config::Config::builder()
+        .add_source(config::File::from(configuration_directory.join("base.yaml")))
+        .add_source(config::File::from(configuration_directory.join(environment_filename)))
+        .build()?;
+
+    settings.try_deserialize::<Settings>()
+}
+```
+
+Tạo các file YAML tương ứng trong thư mục `configuration/`:
+
+```yaml
+#! configuration/base.yaml
+application:
+  port: 8000
+database:
+  host: "localhost"
+  port: 5432
+  username: "postgres"
+  password: "password"
+  database_name: "newsletter"
+```
+
+```yaml
+#! configuration/local.yaml
+application:
+  host: 127.0.0.1
+```
+
+```yaml
+#! configuration/production.yaml
+application:
+  host: 0.0.0.0
+```
+
+Trong `Dockerfile`, ta chỉ cần thêm dòng `ENV APP_ENVIRONMENT production`:
+
+```dockerfile
+# [...]
+ENV APP_ENVIRONMENT production
+ENTRYPOINT ["./target/release/zero2prod"]
+```
+
+Build lại và chạy, bây giờ lệnh `curl http://127.0.0.1:8000/health_check` trả về ngay `HTTP/1.1 200 OK`!
+
+---
+
+## 5.3.7. Tối Ưu Hóa Kích Thước Docker Image (Từ 3.65 GB Xuống 125 MB)
+
+Hãy kiểm tra kích thước của image vừa tạo:
+
+```bash
+docker images zero2prod
+# REPOSITORY    TAG       SIZE
+# zero2prod     latest    3.65GB
+```
+
+**3.65 GB** là quá khổng lồ cho một dịch vụ web microservice! Việc kéo (pull) một image nặng như vậy trên cloud sẽ mất nhiều phút và làm chậm đáng kể quá trình tự động mở rộng (auto-scaling) hoặc deploy khẩn cấp.
+
+### Bước 1: Tạo File `.dockerignore`
+Tạo file `.dockerignore` tại thư mục gốc để loại bỏ thư mục build nặng nề khỏi build context:
+
+```text
+.env
+target/
+tests/
+Dockerfile
+scripts/
+migrations/
+```
+
+### Bước 2: Tận Dụng Multi-Stage Build & Debian Slim
+Rust biên dịch thành mã máy nhị phân độc lập (**statically linked binary**). Chúng ta không cần giữ lại mã nguồn hay toàn bộ bộ cài đặt Rust nặng nề (`rustc`, `cargo`) trong container chạy thực tế (runtime)!
+
+Chúng ta tách Dockerfile thành 2 giai đoạn:
+1. **Builder Stage**: Sử dụng image Rust đầy đủ để biên dịch binary.
+2. **Runtime Stage**: Sử dụng bản phân phối Linux tối giản `debian:bookworm-slim`, chỉ sao chép file thực thi đã biên dịch sang.
+
+```dockerfile
+# ----------------- TẦNG BIÊN DỊCH (BUILDER) -----------------
+FROM rust:1.72.0 AS builder
+WORKDIR /app
+RUN apt update && apt install lld clang -y
+COPY . .
+ENV SQLX_OFFLINE true
+RUN cargo build --release
+
+# ----------------- TẦNG THỰC THI (RUNTIME) ------------------
+FROM debian:bookworm-slim AS runtime
+WORKDIR /app
+
+# Cài đặt OpenSSL và ca-certificates (bắt buộc để xác thực HTTPS TLS)
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && apt-get autoremove -y \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Chỉ copy file nhị phân đã build từ builder stage sang
+COPY --from=builder /app/target/release/zero2prod zero2prod
+# Sao chép thư mục cấu hình runtime
+COPY configuration configuration
+
+ENV APP_ENVIRONMENT production
+ENTRYPOINT ["./zero2prod"]
+```
+
+Kiểm tra lại dung lượng sau khi build:
+
+```bash
+docker images zero2prod
+# REPOSITORY    TAG       SIZE
+# zero2prod     latest    125MB
+```
+
+Dung lượng image giảm ngoạn mục từ **3.65 GB** xuống chỉ còn **125 MB** — nhỏ hơn gần 30 lần!
+
+---
+
+## 5.3.8. Tăng Tốc Build Docker Bằng Bộ Nhớ Đệm Với `cargo-chef`
+
+Rust mang lại hiệu năng đỉnh cao khi chạy, nhưng thời gian biên dịch bản tối ưu `--release` có thể tốn từ **15 đến 20 phút** trên các máy chủ CI/CD tài nguyên giới hạn.
+
+Cơ chế **Layer Caching** của Docker hoạt động theo nguyên tắc: Nếu một tầng không thay đổi, Docker sẽ tái sử dụng kết quả trong cache thay vì chạy lại. Tuy nhiên, lệnh `COPY . .` sẽ làm mất hiệu lực cache của tất cả các tầng phía sau mỗi khi bạn sửa dù chỉ một dòng code!
+
+Trong các ngôn ngữ khác (như Node.js với `package.json` hay Python với `requirements.txt`), ta có thể copy file mô tả thư viện vào trước để cài đặt dependencies rồi mới copy mã nguồn. Nhưng `cargo` lại không hỗ trợ lệnh kiểu `cargo build --only-deps`.
+
+Để giải quyết bài toán này, tác giả cuốn sách Luca Palmieri đã phát triển công cụ mã nguồn mở kinh điển: [`cargo-chef`](https://github.com/LukeMathWalker/cargo-chef).
+
+### Quy Trình Hoạt Động Của `cargo-chef`
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 1. CHEF STAGE: Base image chứa sẵn cargo-chef              │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 2. PLANNER STAGE:                                           │
+│    cargo chef prepare --recipe-path recipe.json             │
+│    (Chỉ tính toán "công thức" dependencies từ Cargo.lock)   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 3. BUILDER STAGE:                                           │
+│    cargo chef cook --release --recipe-path recipe.json      │
+│    (Biên dịch TOÀN BỘ thư viện ngoài -> ĐƯỢC CACHE 100%!)   │
+│    COPY . .                                                 │
+│    cargo build --release --bin zero2prod                    │
+│    (Chỉ biên dịch mã nguồn của dự án -> Mất vài giây!)      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 4. RUNTIME STAGE: Debian Slim (125 MB)                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Dockerfile Hoàn Chỉnh Với `cargo-chef`
+
+```dockerfile
+FROM lukemathwalker/cargo-chef:latest-rust-1.72.0 AS chef
+WORKDIR /app
+RUN apt update && apt install lld clang -y
+
+FROM chef AS planner
+COPY . .
+# Tạo file recipe.json đại diện cho cây thư viện phụ thuộc
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Biên dịch toàn bộ dependencies! Tầng này được cache hoàn toàn nếu Cargo.lock không đổi
+RUN cargo chef cook --release --recipe-path recipe.json
+# Sao chép mã nguồn thực tế
+COPY . .
+ENV SQLX_OFFLINE true
+# Chỉ biên dịch mã nguồn ứng dụng
+RUN cargo build --release --bin zero2prod
+
+FROM debian:bookworm-slim AS runtime
+WORKDIR /app
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && apt-get autoremove -y \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/zero2prod zero2prod
+COPY configuration configuration
+ENV APP_ENVIRONMENT production
+ENTRYPOINT ["./zero2prod"]
+```
+
+Nhờ `cargo-chef`, thời gian build lại Docker image khi phát triển tính năng mới giảm từ 15 phút xuống chỉ còn **khoảng 15-30 giây**! Một bước tiến vượt bậc cho trải nghiệm phát triển và tốc độ bàn giao sản phẩm.

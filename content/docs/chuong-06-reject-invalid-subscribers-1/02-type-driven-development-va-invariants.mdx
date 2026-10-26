@@ -1,0 +1,408 @@
+---
+title: "Type-Driven Development & Bảo Vệ Invariants"
+description: "Ứng dụng Newtype Pattern trong Rust để biến trạng thái không hợp lệ thành không thể biểu diễn, kết hợp Ownership với trait AsRef để bảo toàn tính bất biến."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Ở bài trước, chúng ta đã rút ra một kết luận kiến trúc then chốt: **hàm kiểm tra validation thông thường là một "nồi súp rỉ nước"**. Để bảo vệ tính toàn vẹn của dữ liệu trong toàn bộ hệ thống, chúng ta cần một cơ chế bảo đảm về mặt cấu trúc. Và công cụ mạnh mẽ nhất mà Rust cung cấp cho chúng ta chính là **hệ thống kiểu dữ liệu (Type System)**.
+
+---
+
+## I. Type-Driven Development (Phát Triển Hướng Kiểu Dữ Liệu)
+
+Chúng ta bắt đầu bằng việc bổ sung một module mới mang tên `domain` vào dự án, đồng thời định nghĩa kiểu dữ liệu `SubscriberName` bên trong module này:
+
+```rust
+//! src/lib.rs
+pub mod configuration;
+// Khai báo module domain mới!
+pub mod domain;
+pub mod routes;
+pub mod startup;
+pub mod telemetry;
+```
+
+```rust
+//! src/domain.rs
+
+pub struct SubscriberName(String);
+```
+
+`SubscriberName` được định nghĩa dưới dạng một **tuple struct** — một kiểu dữ liệu mới hoàn toàn, chứa một trường duy nhất (không đặt tên) có kiểu dữ liệu là `String`.
+
+Trong cộng đồng Rust, kỹ thuật này được gọi là **Newtype Pattern**. Cần nhấn mạnh rằng: `SubscriberName` là một kiểu dữ liệu độc lập thực thụ, chứ **không phải là một type alias** (như `type SubscriberName = String;`). 
+
+Nó không tự động kế thừa bất kỳ phương thức nào của `String`. Nếu bạn cố tình gán một biến `String` vào một biến kiểu `SubscriberName`, trình biên dịch sẽ lập tức chặn lại và báo lỗi:
+
+```rust
+let name: SubscriberName = "A string".to_string();
+```
+
+```text
+error[E0308]: mismatched types
+   |     let name: SubscriberName = "A string".to_string();
+   |               --------------   ^^^^^^^^^^^^^^^^^^^^^^ 
+   |               |                expected struct `SubscriberName`, 
+   |               |                found struct `std::string::String`
+   |               expected due to this
+```
+
+### 1. Tính Đóng Gói (Encapsulation) & Quyền Riêng Tư
+
+Theo quy tắc tầm vực (visibility rules) của Rust, trường nội bộ bên trong `SubscriberName` hiện tại đang ở trạng thái **private**. Nó chỉ có thể được truy cập trực tiếp từ những đoạn mã nằm bên trong module `domain`.
+
+Hãy cùng kiểm chứng điều này: điều gì sẽ xảy ra nếu chúng ta cố tình khởi tạo một thể hiện của `SubscriberName` từ bên ngoài module `domain` (ví dụ ngay trong request handler `subscribe`)?
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let subscriber_name = crate::domain::SubscriberName(form.name.clone());
+    // [...]
+}
+```
+
+Trình biên dịch Rust lập tức từ chối:
+
+```text
+error[E0603]: tuple struct constructor `SubscriberName` is private
+  --> src/routes/subscriptions.rs:25:42
+   |
+25 |     let subscriber_name = crate::domain::SubscriberName(form.name.clone());
+   |                                          ^^^^^^^^^^^^^^ 
+   |                                          private tuple struct constructor
+   |
+  ::: src/domain.rs:1:27
+   |
+1  | pub struct SubscriberName(String);
+   |                           ------ a constructor is private if 
+   |                                  any of the fields is private
+```
+
+Điều này đồng nghĩa với việc: **hoàn toàn không có cách nào để khởi tạo một thể hiện của `SubscriberName` từ bên ngoài module `domain`** nếu chúng ta không cung cấp một phương thức công khai!
+
+---
+
+### 2. Hàm Khởi Tạo Duy Nhất: `SubscriberName::parse`
+
+Bây giờ, chúng ta trang bị cho `SubscriberName` một hàm khởi tạo công khai mang tên `parse`:
+
+```rust
+//! src/domain.rs
+use unicode_segmentation::UnicodeSegmentation;
+
+pub struct SubscriberName(String);
+
+impl SubscriberName {
+    /// Trả về một thể hiện của `SubscriberName` nếu chuỗi đầu vào thỏa mãn tất cả
+    /// các ràng buộc validation về tên người đăng ký.
+    /// Ngược lại, hàm sẽ kích hoạt panic.
+    pub fn parse(s: String) -> SubscriberName {
+        let is_empty_or_whitespace = s.trim().is_empty();
+        let is_too_long = s.graphemes(true).count() > 256;
+        let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
+        let contains_forbidden_characters = s
+            .chars()
+            .any(|g| forbidden_characters.contains(&g));
+
+        if is_empty_or_whitespace || is_too_long || contains_forbidden_characters {
+            panic!("{} is not a valid subscriber name.", s)
+        } else {
+            Self(s)
+        }
+    }
+}
+```
+
+Toàn bộ logic kiểm tra bên trong `parse` tương tự như những gì chúng ta đã viết trong hàm `is_valid_name` trước đó. Tuy nhiên, có một sự khác biệt mang tính cách mạng: **kiểu dữ liệu trả về**.
+
+- Hàm `is_valid_name` chỉ trả về một giá trị boolean (`bool`).
+- Phương thức `parse` trả về một **thể hiện kiểu `SubscriberName`** nếu tất cả các bước kiểm tra đều thành công.
+
+Vì `parse` là con đường duy nhất để tạo ra một instance của `SubscriberName` từ bên ngoài module `domain`, chúng ta có thể khẳng định chắc chắn 100% rằng: **bất kỳ một đối tượng `SubscriberName` nào đang tồn tại trong bộ nhớ đều chắc chắn thỏa mãn tất cả các ràng buộc nghiệp vụ của chúng ta!**
+
+Chúng ta đã biến việc tạo ra một `SubscriberName` không hợp lệ thành **điều không thể thực hiện được về mặt cú pháp**.
+
+---
+
+### 3. Tái Cấu Trúc Domain Model: `NewSubscriber`
+
+Bây giờ, hãy định nghĩa thêm một struct đại diện cho một người đăng ký mới:
+
+```rust
+//! src/domain.rs
+// [...]
+
+pub struct NewSubscriber {
+    pub email: String,
+    pub name: SubscriberName,
+}
+
+pub struct SubscriberName(String);
+// [...]
+```
+
+Và thay đổi chữ ký của hàm lưu trữ database `insert_subscriber` để tiếp nhận tham số `NewSubscriber` thay vì `FormData`:
+
+```rust
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    // [...]
+}
+```
+
+Hãy dừng lại một giây để chiêm nghiệm điều kỳ diệu vừa xảy ra:
+- Trước đây, khi `insert_subscriber` nhận `FormData`, trường `name` là một `String` thô. Hàm không có cách nào biết được liệu chuỗi đó đã hợp lệ hay chưa, buộc ta phải kiểm tra toàn cục toàn bộ codebase.
+- Giờ đây, với chữ ký mới, bản thân `insert_subscriber` có thể **tin tưởng tuyệt đối** rằng `new_subscriber.name` chắc chắn không rỗng và không chứa ký tự độc hại! Bất kỳ lập trình viên nào cố tình truyền một chuỗi rỗng vào hàm này sẽ bị trình biên dịch chặn lại ngay lập tức tại thời điểm compile.
+
+<Callout type="info" title="Triết Lý Make Illegal States Unrepresentable">
+Đây chính là cốt lõi của **Type-Driven Development**: Chúng ta mã hóa các quy tắc nghiệp vụ (**Invariants**) vào bên trong hệ thống kiểu dữ liệu, và mượn sức mạnh của trình biên dịch để cưỡng chế thực thi các quy tắc đó. Trình biên dịch trở thành người gác cổng trung thành nhất của bạn.
+</Callout>
+
+---
+
+## II. Quyền Sở Hữu (Ownership) Kết Hợp Tính Bất Biến (Invariants)
+
+Sau khi thay đổi chữ ký hàm `insert_subscriber`, chúng ta cần điều chỉnh thân hàm của request handler `subscribe`:
+
+```rust
+//! src/routes/subscriptions.rs
+use crate::domain::{NewSubscriber, SubscriberName};
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let new_subscriber = NewSubscriber {
+        email: form.0.email,
+        name: SubscriberName::parse(form.0.name),
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(new_subscriber, pool)
+)]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+        "#,
+        Uuid::new_v4(),
+        new_subscriber.email,
+        new_subscriber.name,
+        Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+    Ok(())
+}
+```
+
+Thử chạy `cargo check`, chúng ta nhận ngay thông báo lỗi:
+
+```text
+error[E0308]: mismatched types
+  --> src/routes/subscriptions.rs:50:9
+   |
+50 |         new_subscriber.name,
+   |         ^^^^^^^^^^^^^^ expected `&str`, 
+   |         found struct `SubscriberName`
+```
+
+Macro `sqlx::query!` mong đợi một chuỗi tham chiếu `&str` để truyền vào PostgreSQL driver, nhưng chúng ta lại truyền vào cả struct `SubscriberName`!
+
+Hiện tại, trường chuỗi `String` bên trong `SubscriberName` là private. Chúng ta làm cách nào để lấy giá trị chuỗi đó ra?
+
+Liệu ta có nên sửa định nghĩa thành `pub struct SubscriberName(pub String);`? **Tuyệt đối không!** Nếu công khai trường nội bộ (`pub String`), toàn bộ bức tường bảo vệ invariants mà chúng ta dày công xây dựng sẽ sụp đổ hoàn toàn:
+1. Các lập trình viên khác có thể bypass hoàn toàn hàm `parse` để tạo một thể hiện không hợp lệ:
+   ```rust
+   let liar = SubscriberName("".to_string()); // Biên dịch thành công, Invariant bị phá vỡ!
+   ```
+2. Hoặc họ có thể gọi `parse` lúc đầu, nhưng sau đó tùy tiện sửa đổi giá trị bên trong:
+   ```rust
+   let mut started_well = SubscriberName::parse("A valid name".to_string());
+   started_well.0 = "".to_string(); // Sửa thành chuỗi rỗng sau lưng chúng ta!
+   ```
+
+Đây chính là cơ hội vàng để tận dụng mô hình **Ownership** độc nhất vô nhị của Rust! Đối với một trường trong struct, chúng ta có 3 cách phơi bày ra bên ngoài:
+
+```rust
+impl SubscriberName {
+    // 1. Phơi bày By Value (tiêu thụ chính struct đó)
+    pub fn inner(self) -> String {
+        // Bên gọi nhận được chuỗi String, nhưng struct SubscriberName bị tiêu thụ hoàn toàn
+        // theo ngữ nghĩa Move của Rust. Họ không còn SubscriberName nữa!
+        self.0
+    }
+
+    // 2. Phơi bày Mutable Reference
+    pub fn inner_mut(&mut self) -> &mut str {
+        // Cực kỳ nguy hiểm! Cho phép bên gọi chỉnh sửa tùy ý chuỗi bên trong,
+        // phá vỡ toàn bộ Invariants của chúng ta!
+        &mut self.0
+    }
+
+    // 3. Phơi bày Shared Reference (Tham Chiếu Bất Biến)
+    pub fn inner_ref(&self) -> &str {
+        // Bên gọi nhận được tham chiếu chỉ đọc (read-only access).
+        // Họ hoàn toàn KHÔNG CÓ CÁCH NÀO làm biến đổi giá trị để vi phạm Invariants!
+        &self.0
+    }
+}
+```
+
+Phương thức `inner_ref` mang lại sự an toàn tuyệt đối: cho phép bên ngoài đọc dữ liệu dưới dạng `&str` để phục vụ câu truy vấn SQL, nhưng tước đoạt hoàn toàn khả năng biến đổi dữ liệu.
+
+---
+
+### 1. Chuẩn Hóa Với Trait `AsRef`
+
+Mặc dù tự viết phương thức `inner_ref` đã giải quyết được vấn đề, nhưng thư viện chuẩn của Rust cung cấp sẵn một trait chuyên dụng phục vụ chính xác mục đích này: **[`AsRef`](https://doc.rust-lang.org/std/convert/trait.AsRef.html)**.
+
+```rust
+pub trait AsRef<T: ?Sized> {
+    /// Thực hiện việc chuyển đổi tham chiếu.
+    fn as_ref(&self) -> &T;
+}
+```
+
+Khi nào bạn nên implement `AsRef<T>` cho một kiểu dữ liệu? Khi kiểu dữ liệu của bạn *đủ tương đồng* với `T` đến mức chúng ta có thể mượn tham chiếu `&self` để trích xuất ra một tham chiếu `&T`!
+
+Hãy xem chữ ký của `inner_ref`: đó chính là hiện thân của `AsRef<str>` cho `SubscriberName`. Việc cài đặt trait chuẩn của Rust mang lại tính công thái học (ergonomics) vượt trội:
+
+```rust
+//! src/domain.rs
+// [...]
+
+impl AsRef<str> for SubscriberName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+```
+
+Giờ đây trong `insert_subscriber`, chúng ta chỉ cần gọi `.as_ref()`:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+        "#,
+        Uuid::new_v4(),
+        new_subscriber.email,
+        // Sử dụng trait AsRef một cách mượt mà và chuẩn mực!
+        new_subscriber.name.as_ref(),
+        Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+    Ok(())
+}
+```
+
+Dự án biên dịch thành công 100%!
+
+---
+
+## III. Tránh Xa Panics Trong Production Code
+
+Mã nguồn đã biên dịch sạch sẽ, nhưng khi chạy lại test, chúng ta chứng kiến một sự cố:
+
+```text
+thread 'actix-rt:worker:0' panicked at 
+' is not a valid subscriber name.', src/domain.rs:39:13
+
+[...]
+
+---- subscribe_returns_a_200_when_fields_are_present_but_empty stdout ----
+thread 'subscribe_returns_a_200_when_fields_are_present_but_empty' panicked at 
+'Failed to execute request.: 
+  reqwest::Error { 
+    kind: Request, 
+    source: hyper::Error(IncompleteMessage) 
+  }', 
+tests/health_check.rs:164:14
+Panic in Arbiter thread.
+```
+
+Ở khía cạnh tích cực: API của chúng ta đã không còn trả về `200 OK` cho các tên rỗng nữa.  
+Nhưng ở khía cạnh tiêu cực: API của chúng ta đang **chấm dứt kết nối HTTP đột ngột (abrupt termination)**, khiến client nhận phải lỗi `IncompleteMessage`. Hành vi này quá thô bạo và không thể chấp nhận được trong một ứng dụng production.
+
+Nguyên nhân gốc rễ là vì chúng ta đã dùng lệnh `panic!` khi validation thất bại:
+
+```rust
+if is_empty_or_whitespace || is_too_long || contains_forbidden_characters {
+    panic!("{} is not a valid subscriber name.", s)
+}
+```
+
+<Callout type="warn" title="Bản Chất Của Panic Trong Rust">
+Trong Rust, `panic!` được sinh ra để đại diện cho các lỗi **không thể phục hồi (unrecoverable errors)** — những tình huống bất thường nằm ngoài dự tính mà hệ thống không có cách nào xử lý tiếp tục một cách có ý nghĩa (ví dụ: máy chủ hết sạch bộ nhớ RAM, ổ đĩa đầy, hoặc một lỗi logic nghiêm trọng trong code vi phạm bộ nhớ).
+
+`panic!` trong Rust **không tương đương** với Exception trong các ngôn ngữ như Java, C# hay Python. Mặc dù Rust có cơ chế `catch_unwind`, nhưng đó tuyệt đối không phải là mẫu thiết kế được khuyến khích trong việc xử lý luồng nghiệp vụ thông thường.
+</Callout>
+
+Như kỹ sư danh tiếng `burntsushi` (tác giả của `ripgrep`) từng nhấn mạnh trên diễn đàn cộng đồng Rust:
+> *"Nếu ứng dụng Rust của bạn phát nổ `panic!` trước dữ liệu đầu vào của người dùng, thì chắc chắn ứng dụng của bạn đang chứa một con BUG (lỗi lập trình) — bất kể lỗi đó nằm ở thư viện bên thứ ba hay trong chính mã nguồn của bạn."*
+
+Khi một request handler bị panic, `actix-web` xem đây là một sự cố nghiêm trọng và lập tức hủy bỏ luồng worker đang phục vụ request đó. Kết quả là kết nối socket bị ngắt ngang xương giữa chừng.
+
+Trước tiên, hãy cập nhật lại bài test để phản ánh kỳ vọng chuẩn mực của một REST API: khi người dùng gửi dữ liệu không hợp lệ, API phải trả về mã trạng thái **`400 Bad Request`**!
+
+```rust
+//! tests/health_check.rs
+// [...]
+
+#[tokio::test]
+// Đổi tên test case cho đúng bản chất
+async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
+    // [...]
+
+    assert_eq!(
+        // Kỳ vọng mã trạng thái 400 thay vì 200 hay crash!
+        400,
+        response.status().as_u16(),
+        "The API did not return a 400 Bad Request when the payload was {}.",
+        description
+    );
+    
+    // [...]
+}
+```
+
+Để hiện thực hóa điều này, chúng ta cần chuyển đổi cách tư duy xử lý lỗi từ `panic!` sang mô hình **"Lỗi như một giá trị" (Error as Values)** với kiểu dữ liệu `Result`.

@@ -1,0 +1,72 @@
+---
+title: "Tổng Quan Chương 4: Telemetry & Observability"
+description: "Giám sát từ xa, khả năng quan sát hệ thống và chẩn đoán sự cố trong ứng dụng backend viết bằng Rust"
+---
+
+# Tổng Quan Chương 4: Telemetry & Khả Năng Quan Sát Hệ Thống
+
+Trong Chương 3, chúng ta đã hoàn thành phiên bản đầu tiên của endpoint `POST /subscriptions`, hiện thực hóa câu chuyện người dùng (user story) cốt lõi của ứng dụng bản tin:
+
+> Với vai trò là một độc giả blog,  
+> Tôi muốn đăng ký nhận bản tin qua email,  
+> Để nhận được thông báo cập nhật mỗi khi có bài viết mới được xuất bản trên blog.
+
+Dù chưa dựng giao diện web với form HTML để kiểm thử luồng người dùng từ đầu đến cuối (end-to-end), chúng ta đã có một số bài kiểm thử tích hợp hộp đen (black-box integration tests) bao phủ hai kịch bản nền tảng:
+- Khi dữ liệu form hợp lệ (có đầy đủ tên và email), thông tin người dùng được lưu thành công vào cơ sở dữ liệu PostgreSQL.
+- Khi dữ liệu form bị thiếu hoặc sai lệch, API phản hồi mã lỗi `400 Bad Request`.
+
+Liệu chúng ta đã có thể yên tâm đem phiên bản này đi triển khai lên môi trường thực tế (production)? **Chưa thể.** Hệ thống hiện tại hoàn toàn "mù lòa": chúng ta chưa gắn các công cụ đo đạc (instrumentation) và chưa thu thập bất kỳ dữ liệu giám sát từ xa (telemetry data) nào. Nếu đem ứng dụng này lên production, chúng ta sẽ hoàn toàn bất lực trước những sự cố không thể lường trước (**unknown unknowns**).
+
+---
+
+## 🎯 Mục Tiêu Cốt Lõi Của Chương 4
+
+Chương này sẽ trang bị cho bạn tư duy và kỹ năng của một Senior Backend Developer / System Architect khi vận hành hệ thống trong môi trường thực tế:
+
+```text
+[HTTP Request] 
+      │
+      ▼
+┌─────────────────────────────────────────────────────────────┐
+│ actix-web HTTP Server                                       │
+│                                                             │
+│  [Request Tracing Root Span] (gắn request_id độc nhất)      │
+│         │                                                   │
+│         ▼                                                   │
+│  [POST /subscriptions Handler]                              │
+│         │                                                   │
+│         ├─► [Parse FormData Span]                           │
+│         │                                                   │
+│         └─► [Database Query Child Span]                     │
+│                   │                                         │
+│                   ▼                                         │
+│             PostgreSQL Pool                                 │
+└─────────────────────────────────────────────────────────────┘
+      │
+      ▼ (Structured Log Stream: Bunyan JSON Format)
+┌─────────────────────────────────────────────────────────────┐
+│ Telemetry Sink: stdout / Logstash / Datadog / Honeycomb    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+1. **Hiểu bản chất Khả năng quan sát (Observability)**: Phân biệt ranh giới giữa *Known Unknowns* (những lỗi đã biết trước) và *Unknown Unknowns* (những dị thường phát sinh ngoài dự kiến), đồng thời nắm vững cách đặt câu hỏi tùy ý cho hệ thống đang chạy.
+2. **Nắm vững mô hình Logging cổ điển và Facade Pattern**: Phân tích crate `log`, middleware `Logger` của `actix-web`, và tại sao mô hình chuỗi văn bản tự do (unstructured text) nhanh chóng bộc lộ điểm yếu trong môi trường bất đồng bộ (async).
+3. **Làm chủ Structured Logging với crate `tracing`**: Chuyển đổi từ text log đơn thuần sang structured event và hierarchical span. Hiểu cách context được truyền qua lại giữa các tác vụ bất đồng bộ (futures) trong Tokio runtime.
+4. **Xây dựng Pipeline Telemetry chuyên nghiệp**: Tích hợp `tracing-subscriber`, `tracing-bunyan-formatter` (chuẩn log JSON Bunyan), và `tracing-log` để gom toàn bộ log từ các thư viện bên thứ ba vào một đầu mối duy nhất.
+5. **Bảo vệ dữ liệu nhạy cảm (Secrets Protection)**: Sử dụng crate `secrecy` để loại bỏ nguy cơ rò rỉ mật khẩu cơ sở dữ liệu hoặc khóa API lên hệ thống log tập trung.
+6. **Truy vết đầu-cuối với Request ID (Correlation ID)**: Gán định danh duy nhất cho từng yêu cầu HTTP để dễ dàng xâu chuỗi mọi log record liên quan khi điều tra sự cố.
+
+---
+
+## 🗺️ Lộ Trình Các Bài Học
+
+| Bài học | Trọng tâm kỹ thuật |
+| :--- | :--- |
+| **[01. Quan Sát Hệ Thống & Logging Cơ Bản](/docs/chuong-04-telemetry/01-quan-sat-he-thong-va-logging-co-ban)** | Unknown unknowns, khái niệm Observability, crate `log`, Facade Pattern và middleware Logger. |
+| **[02. Gắn Instrument Vào POST /subscriptions](/docs/chuong-04-telemetry/02-instrument-post-subscriptions)** | Tương tác hệ thống ngoài, tư duy như người dùng, và bài toán xâu chuỗi log (correlation) khi đa luồng. |
+| **[03. Structured Logging Với Hệ Sinh Thái Tracing](/docs/chuong-04-telemetry/03-structured-logging-tracing-crate)** | Crate `tracing`, Spans, instrumenting Futures, Subscribers, định dạng Bunyan JSON và bridge `tracing-log`. |
+| **[04. Bảo Mật Secrets, Request ID & Tối Ưu Hóa](/docs/chuong-04-telemetry/04-bao-mat-secrets-va-request-id)** | Macro `#[tracing::instrument]`, bảo vệ dữ liệu với `secrecy`, Request ID middleware, và telemetry trong test. |
+
+<Callout type="info">
+  "Nếu không thể đo lường và quan sát được hệ thống khi nó gặp sự cố, bạn chỉ đang hy vọng vào may mắn chứ không thực sự vận hành phần mềm." Hãy bắt đầu xây dựng con mắt giám sát sắc bén cho dịch vụ của chúng ta.
+</Callout>

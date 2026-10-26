@@ -1,0 +1,11 @@
+{
+  "title": "Chương 7: Kiểm Tra Hợp Lệ #2 (Email & Migrations)",
+  "pages": [
+    "index",
+    "01-xac-thuc-email-va-thiet-ke-emailclient",
+    "02-nguyen-tac-viet-test-suite-ben-vung",
+    "03-zero-downtime-va-database-migrations",
+    "04-gui-email-xac-thuc-va-tokens",
+    "05-database-transactions-trong-postgres-sqlx"
+  ]
+}

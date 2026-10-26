@@ -1,0 +1,62 @@
+---
+title: "Tổng Quan Chương 9: Triển Khai Endpoint Gửi Bản Tin"
+description: "Xây dựng endpoint phát hành bản tin đầu tiên trong ứng dụng Zero2Prod: kỹ thuật kiểm thử Scoped Mocks với WireMock, xử lý dữ liệu lưu trữ không đồng bộ, và nhận diện 5 giới hạn hệ thống chết người của cách tiếp cận ngây thơ."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# Tổng Quan Chương 9: Triển Khai Endpoint Gửi Bản Tin
+
+Cho đến thời điểm hiện tại, ứng dụng của chúng ta vẫn chưa thực sự là một dịch vụ gửi bản tin hoàn chỉnh: hệ thống đã cho phép người dùng đăng ký, xác nhận email, nhưng **chưa thể phát hành bất kỳ số bản tin nào**!
+
+Chương 9 sẽ khởi động tính năng cốt lõi này bằng một triển khai cơ bản (Naive Implementation). Đây không chỉ là bước đi thực tế để hoàn thiện tính năng sản phẩm mà còn là cơ hội tuyệt vời để đào sâu các kỹ thuật kiến trúc đã tích lũy từ các chương trước:
+- Kiểm thử hộp đen (Black-box integration testing) kết hợp **Scoped Mocks** trong WireMock.
+- Thiết kế Schema JSON Request với Serde và Actix-web Extractors.
+- Xử lý dữ liệu đã lưu trữ và ranh giới trách nhiệm giữa Data Access Layer và Domain Layer.
+- Tối ưu hóa hiệu năng xử lý lỗi với `anyhow::Context` (`context` vs `with_context`).
+
+Quan trọng hơn hết, cách tiếp cận "ngây thơ" trong chương này sẽ làm lộ diện những vấn đề hóc búa nhất của một hệ thống phân tán thực thụ, làm tiền đề trực tiếp cho hai chương tiếp theo: **Bảo mật API (Chương 10)** và **Luồng chịu lỗi & Tính bất biến (Chương 11)**.
+
+---
+
+## I. Lộ Trình Nội Dung Chương 9
+
+Chương này gồm 3 bài học thực chiến:
+
+- **[9.1 - 9.3: Quy Trình Gửi Bản Tin & Lọc Subscriber Đã Xác Thực](/docs/chuong-09-naive-newsletter-delivery/01-user-stories-va-loc-subscribers)**:
+  Sự tiến hóa của User Stories theo miền nghiệp vụ. Xây dựng integration test đảm bảo không gửi thư cho người chưa xác thực. Kỹ thuật quản lý vòng đời mock với `mount_as_scoped` và `MockGuard`. Tổ chức test helper theo mô hình module hóa và green test đầu tiên cho `POST /newsletters`.
+
+- **[9.4 - 9.7: Chiến Lược Triển Khai, Body Schema & Gửi Email](/docs/chuong-09-naive-newsletter-delivery/02-implementation-va-gui-newsletter)**:
+  Xây dựng Body Schema dạng JSON lồng nhau (`BodyData` & `Content`). Viết kiểm thử tự động cho dữ liệu đầu vào không hợp lệ (400 Bad Request). Truy vấn danh sách subscriber đã xác thực từ PostgreSQL với `sqlx::query!`. Tích hợp `EmailClient` và phân biệt chi phí hiệu năng giữa `context` và lazy `with_context`.
+
+- **[9.8 - 9.10: Ranh Giới Trách Nhiệm & Giới Hạn Của Giải Pháp Cơ Bản](/docs/chuong-09-naive-newsletter-delivery/03-gioi-han-cua-naive-approach)**:
+  Hiểm họa tiềm ẩn khi giả định *"dữ liệu trong database luôn hợp lệ"*. Khớp nối thời gian (temporal coupling) giữa các phiên bản phần mềm. Kỹ thuật trả về `Vec<Result<T, E>>` để phân định ranh giới trách nhiệm. Phân tích 5 lỗ hổng chí mạng của giải pháp ngây thơ trước khi đưa ra production.
+
+---
+
+## II. 5 Lỗ Hổng Chí Mạng Của Giải Pháp Ngây Thơ (Naive Approach)
+
+Mặc dù triển khai trong chương này hoàn toàn vượt qua các bài kiểm thử chức năng, một Senior Architect sẽ lập tức nhìn thấy 5 rủi ro hệ thống chết người:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 5 GIỚI HẠN CHÍ MẠNG CẦN KHẮC PHỤC                           │
+├───────────────────┬─────────────────────────────────────────────────────────┤
+│ 1. Security       │ Endpoint POST /newsletters mở toang, không có xác thực. │
+│                   │ Bất kỳ ai trên Internet cũng có thể gửi spam hàng loạt. │
+├───────────────────┼─────────────────────────────────────────────────────────┤
+│ 2. Single-shot    │ Gửi ngay lập tức, không có chế độ bản nháp (drafts) hay │
+│                   │ xem trước (preview) để duyệt nội dung.                  │
+├───────────────────┼─────────────────────────────────────────────────────────┤
+│ 3. Latency O(N)   │ Gửi email tuần tự từng người một trong vòng lặp HTTP.   │
+│                   │ 10.000 subscriber sẽ làm request bị timeout trình duyệt.│
+├───────────────────┼─────────────────────────────────────────────────────────┤
+│ 4. Fault Tolerance│ Nếu email thứ 50 gặp lỗi mạng, toàn bộ tiến trình dừng. │
+│                   │ 9.950 người còn lại không bao giờ nhận được bản tin.    │
+├───────────────────┼─────────────────────────────────────────────────────────┤
+│ 5. Retry Safety   │ Client gặp timeout bấm gửi lại -> Những người ở đầu     │
+│    (Idempotency)  │ danh sách sẽ bị nhận email 2 lần (Spamming)!            │
+└───────────────────┴─────────────────────────────────────────────────────────┘
+```
+
+Những thiếu sót này sẽ là động lực cốt lõi để chúng ta nghiên cứu các kiến trúc nâng cao trong hai chương 10 và 11.

@@ -1,0 +1,9 @@
+{
+  "title": "Chương 1: Bắt Đầu & Thiết Lập Toolchain",
+  "pages": [
+    "index",
+    "01-cai-dat-rust-toolchain",
+    "02-khoi-tao-du-an-va-ide",
+    "03-inner-development-loop-va-ci"
+  ]
+}

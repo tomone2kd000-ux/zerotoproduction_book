@@ -1,0 +1,395 @@
+---
+title: "3.3 Endpoint Đầu Tiên: Health Check & Cấu Trúc Ứng Dụng Actix-web"
+description: "Xây dựng endpoint GET /health_check đầu tiên, mổ xẻ kiến trúc Actix-web (HttpServer, App, Route, Tokio runtime, Responder)."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info">
+  **Mục tiêu bài học:** Triển khai endpoint `GET /health_check` trả về HTTP status `200 OK` không kèm body. Qua đó, mổ xẻ tường tận 4 khối trụ cột cấu tạo nên một ứng dụng `actix-web`: `HttpServer`, `App`, `Route` và Async Runtime `tokio`. Chúng ta cũng sẽ dùng công cụ `cargo expand` để bóc trần điều kỳ diệu mà macro `#[tokio::main]` thực hiện dưới nắp ca-pô.
+</Callout>
+
+## I. Endpoint Đầu Tiên: Health Check Đơn Giản
+
+Hãy bắt đầu dự án bằng cách triển khai một endpoint kiểm tra trạng thái hoạt động (health check): khi nhận được một yêu cầu HTTP `GET` gửi tới `/health_check`, máy chủ sẽ trả về phản hồi `200 OK` với phần thân (body) hoàn toàn trống.
+
+```text
+HTTP Client (Pingdom / K8s Probe / Developer)
+                    |
+                    | GET /health_check
+                    v
+    +-------------------------------+
+    |       API Server (Rust)       |
+    |   - Kiểm tra socket sống      |
+    |   - Sẵn sàng nhận request     |
+    +-------------------------------+
+                    |
+                    | HTTP/1.1 200 OK (Content-Length: 0)
+                    v
+        "Hệ thống đang hoạt động tốt!"
+```
+
+Tại sao một endpoint không có bất kỳ logic nghiệp vụ nào lại quan trọng đến vậy trong môi trường thực tế?
+- **Giám sát uptime (Uptime Monitoring):** Kết hợp `/health_check` với các dịch vụ SaaS như Pingdom hay Datadog giúp bạn ngay lập tức nhận được cảnh báo (qua SMS, Slack hoặc PagerDuty) khi hệ thống gặp sự cố mất kết nối hoặc tê liệt hoàn toàn.
+- **Tích hợp với Container Orchestrator:** Nếu bạn triển khai ứng dụng trên Kubernetes hoặc HashiCorp Nomad, orchestrator sẽ định kỳ gọi vào `/health_check` (Liveness và Readiness Probes). Nếu API bị deadlock hoặc không phản hồi kịp thời, orchestrator sẽ tự động tiêu hủy container bị lỗi và khởi động một instance mới để tự phục hồi dịch vụ.
+
+---
+
+## II. Kết Nối Dây Nhợ Cùng Actix-web (Wiring Up actix-web)
+
+Điểm xuất phát của chúng ta sẽ là một ứng dụng *Hello World!* mẫu viết bằng `actix-web`:
+
+```rust
+use actix_web::{web, App, HttpRequest, HttpServer, Responder};
+
+async fn greet(req: HttpRequest) -> impl Responder {
+    let name = req.match_info().get("name").unwrap_or("World");
+    format!("Hello {}!", &name)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/", web::get().to(greet))
+            .route("/{name}", web::get().to(greet))
+    })
+    .bind("127.0.0.1:8000")?
+    .run()
+    .await
+}
+```
+
+Hãy dán đoạn code trên vào file `src/main.rs`. Bây giờ, hãy chạy lệnh kiểm tra nhanh với `cargo check`:
+
+<details>
+<summary><b>Lỗi biên dịch xuất hiện khi chạy cargo check lần đầu</b></summary>
+
+```text
+error[E0432]: unresolved import `actix_web`
+ --> src/main.rs:1:5
+  |
+1 | use actix_web::{web, App, HttpRequest, HttpServer, Responder};
+  |     ^^^^^^^^^ use of undeclared type or module `actix_web`
+
+error[E0433]: failed to resolve: use of undeclared type or module `tokio`
+ --> src/main.rs:8:3
+  |
+8 | #[tokio::main]
+  |   ^^^^^^^^ use of undeclared type or module `tokio`
+
+error: aborting due to 2 previous errors
+```
+</details>
+
+Trình biên dịch báo lỗi vì chúng ta chưa khai báo `actix-web` và `tokio` trong danh sách dependencies của dự án. Bạn có thể mở file `Cargo.toml` và bổ sung thủ công:
+
+```toml
+[dependencies]
+actix-web = "4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+Hoặc sử dụng tiện ích dòng lệnh `cargo add` để thêm phiên bản mới nhất:
+
+```bash
+cargo add actix-web@4
+cargo add tokio@1 --features macros,rt-multi-thread
+```
+
+Sau khi dependencies được cập nhật, chạy lại `cargo check` bạn sẽ thấy quá trình biên dịch trơn tru không còn lỗi nào. Bây giờ, hãy khởi động server bằng `cargo run` và mở một terminal khác để gửi request kiểm tra bằng lệnh `curl`:
+
+```bash
+curl http://127.0.0.1:8000
+```
+
+Kết quả trả về:
+
+```text
+Hello World!
+```
+
+Thử tiếp với một đường dẫn có tên:
+
+```bash
+curl http://127.0.0.1:8000/Zero2Prod
+# Hello Zero2Prod!
+```
+
+Server của chúng ta đã chính thức **sống dậy**! Bạn có thể nhấn tổ hợp phím `Ctrl + C` trên terminal chạy server để đóng tiến trình bất cứ lúc nào.
+
+---
+
+## III. Giải Phẫu Cấu Trúc Ứng Dụng Actix-web (Anatomy Of An actix-web Application)
+
+Hãy quay trở lại file `src/main.rs` và mổ xẻ từng thành phần bên trong hàm `main`:
+
+```rust
+//! src/main.rs
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/", web::get().to(greet))
+            .route("/{name}", web::get().to(greet))
+    })
+    .bind("127.0.0.1:8000")?
+    .run()
+    .await
+}
+```
+
+Kiến trúc của `actix-web` được xây dựng dựa trên sự phân tách trách nhiệm rất rành mạch:
+
+```text
++-------------------------------------------------------------------+
+|                           HttpServer                              |
+|   - Tầng Transport (TCP Socket: 127.0.0.1:8000)                   |
+|   - Quản lý Connection Pool, Giới hạn kết nối, TLS               |
+|   - Điều phối luồng xử lý (Multi-worker threads)                  |
++---------------------------------+---------------------------------+
+                                  |
+               Sinh ra một bản sao App cho mỗi Worker
+                                  |
+                                  v
++-------------------------------------------------------------------+
+|                              App                                  |
+|   - Tầng Application Logic (Routing, Middlewares, State)          |
+|   - Mẫu thiết kế Builder Pattern qua chuỗi gọi hàm .route()       |
++---------------------------------+---------------------------------+
+                                  |
+                                  v
++-------------------------------------------------------------------+
+|                             Route                                 |
+|   - Khớp Path Template ("/" hoặc "/{name}")                       |
+|   - Kiểm tra Guards (ví dụ: web::get() chỉ nhận HTTP GET)         |
+|   - Chuyển giao dữ liệu cho Handler Function (greet)              |
++-------------------------------------------------------------------+
+```
+
+### 1. Máy Chủ Tầng Vận Chuyển: `HttpServer`
+
+`HttpServer` đóng vai trò là "bộ xương sống" chịu tải cho toàn bộ ứng dụng. Nó đảm nhiệm toàn bộ các mối quan tâm ở **tầng transport**:
+- Lắng nghe các kết nối TCP mới ở đâu? (TCP socket ví dụ `127.0.0.1:8000` hay Unix domain socket);
+- Số lượng kết nối đồng thời tối đa là bao nhiêu? Tốc độ chấp nhận kết nối mới mỗi giây;
+- Có cấu hình mã hóa bảo mật tầng truyền tải (TLS) hay không;
+- Khởi tạo và điều phối các worker thread để tận dụng toàn bộ số nhân CPU máy chủ.
+
+Sau khi đã thiết lập xong kết nối TCP với client, `HttpServer` làm gì tiếp theo để xử lý yêu cầu HTTP thực tế? Đó là lúc `App` bước vào sân khấu.
+
+### 2. Logic Ứng Dụng: `App`
+
+`App` là nơi lưu giữ toàn bộ **logic nghiệp vụ** của bạn: bảng định tuyến (routing table), các middleware (ghi log, nén dữ liệu, xác thực), và các hàm xử lý yêu cầu (request handlers). Trách nhiệm duy nhất của `App` là tiếp nhận một HTTP request đầu vào và nhổ ra một HTTP response đầu ra.
+
+```rust
+App::new()
+    .route("/", web::get().to(greet))
+    .route("/{name}", web::get().to(greet))
+```
+
+`App` là một ví dụ kinh điển về **Builder Pattern**:
+- `App::new()` khởi tạo một khung làm việc trống trơn.
+- Các phương thức như `.route()` được nối tiếp nhau theo phong cách Fluent API để dần dần bồi đắp hành vi cho ứng dụng.
+
+### 3. Điểm Đầu Cuối: `Route`
+
+Để thêm một endpoint mới vào `App`, chúng ta sử dụng phương thức `.route()`. Phương thức này nhận vào 2 tham số:
+1. `path`: Chuỗi đường dẫn, có thể chứa định dạng mẫu (template) như `"/{name}"` để bắt các tham số động trên URL.
+2. `route`: Một instance của struct `Route`.
+
+Struct `Route` là sự kết hợp giữa một **Handler** (hàm xử lý logic) và một tập hợp các **Guards** (bộ lọc điều kiện). Guards chỉ định các tiêu chí mà request gửi đến bắt buộc phải thỏa mãn để được chuyển tới handler. Ví dụ, `web::get()` là cách viết tắt của `Route::new().guard(guard::Get())`, nghĩa là request chỉ khớp nếu phương thức HTTP là `GET`.
+
+#### Cơ chế điều phối yêu cầu (Mental Model)
+Khi một request bay tới:
+1. `App` duyệt tuần tự qua các endpoint đã đăng ký trong routing table.
+2. Endpoint nào thỏa mãn cả đường dẫn (path template) lẫn tất cả các guards thì sẽ được chọn.
+3. Đối tượng request được chuyển cho hàm handler tương ứng để xử lý.
+
+#### Chữ ký của một Request Handler
+Hãy nhìn vào hàm `greet`:
+
+```rust
+async fn greet(req: HttpRequest) -> impl Responder {
+    let name = req.match_info().get("name").unwrap_or("World");
+    format!("Hello {}!", &name)
+}
+```
+
+`greet` là một hàm bất đồng bộ (`async fn`) nhận vào một `HttpRequest` và trả về một kiểu dữ liệu bất kỳ cài đặt trait `Responder`.
+
+Trait `Responder` đóng vai trò là một khế ước chuyển đổi: bất kỳ kiểu dữ liệu nào implement trait này đều có thể tự biến đổi thành một `HttpResponse`. Rust cài đặt sẵn `Responder` cho chuỗi ký tự (`&str`, `String`), mã trạng thái (`StatusCode`), mảng byte thô, và chính bản thân struct `HttpResponse`.
+
+### 4. Nền Tảng Thực Thi Bất Đồng Bộ: `tokio` Runtime
+
+Hãy chú ý đến dòng macro `#[tokio::main]` đặt ngay trên hàm `main`. Chuyện gì sẽ xảy ra nếu chúng ta xóa bỏ dòng này? Hãy thử xóa và chạy `cargo check`:
+
+<details>
+<summary><b>Lỗi khi xóa macro #[tokio::main]</b></summary>
+
+```text
+error[E0277]: `main` has invalid return type `impl std::future::Future`
+ --> src/main.rs:8:20
+  |
+8 | async fn main() -> Result<(), std::io::Error> {
+  |                    ^^^^^^^^^^^^^^^^^^^ 
+  | `main` can only return types that implement `std::process::Termination`
+
+error[E0752]: `main` function is not allowed to be `async`
+ --> src/main.rs:8:1
+  |
+8 | async fn main() -> Result<(), std::io::Error> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
+  | `main` function is not allowed to be `async`
+```
+</details>
+
+Trình biên dịch Rust từ chối biên dịch vì: **Hàm `main` — điểm vào (entrypoint) của một file thực thi nhị phân trong hệ điều hành — tuyệt đối không được phép là một hàm `async`!**
+
+#### Tại sao `main` không thể là async?
+Lập trình bất đồng bộ trong Rust xoay quanh trait `Future`:
+- Một `Future` đại diện cho một giá trị chưa sẵn sàng ở thời điểm hiện tại nhưng sẽ được tính toán xong trong tương lai.
+- Mọi future đều cung cấp phương thức `poll()`. Để một future tiến triển và hoàn tất, nó phải được gọi `poll()` liên tục.
+- Futures trong Rust có tính chất **lười biếng (lazy)**: nếu không có ai chủ động gọi `poll()`, future sẽ đứng yên bất động và không bao giờ tự chạy. Đây là mô hình kéo (**pull model**), hoàn toàn khác biệt với mô hình đẩy (**push model**) trong JavaScript hay Goroutine của Go.
+
+Thư viện chuẩn của Rust (*by design*) không hề đi kèm một runtime bất đồng bộ nào. Hệ điều hành khi khởi chạy file nhị phân chỉ biết gọi hàm `main` đồng bộ thông thường. Không có cơ chế nào để hệ điều hành biết cách gọi `poll()` lên hàm `main` nếu nó là async!
+
+Do đó, lập trình viên có trách nhiệm khởi tạo một async runtime (như `tokio`) ngay tại dòng đầu tiên của hàm `main` đồng bộ, sau đó bàn giao các futures cho runtime này điều phối.
+
+#### Bóc trần `#[tokio::main]` bằng `cargo expand`
+Macro `#[tokio::main]` là một *procedural macro*. Nó hoạt động ở tầng phân tích cú pháp mã nguồn (tokens): tiếp nhận toàn bộ khối mã của hàm `main` và sinh ra mã nguồn Rust mới thay thế.
+
+Để "soi" xem macro này sinh ra những gì, chúng ta có thể dùng công cụ `cargo expand`:
+
+```bash
+# Cài đặt compiler nightly phục vụ cho cargo-expand
+rustup toolchain install nightly --allow-downgrade
+
+# Cài đặt cargo-expand
+cargo install cargo-expand
+
+# Chạy lệnh mở rộng macro
+cargo +nightly expand
+```
+
+Kết quả sau khi macro được bung ra:
+
+```rust
+fn main() -> Result<(), std::io::Error> { 
+    let body = async move {
+        HttpServer::new(|| {
+            App::new()
+                .route("/", web::get().to(greet))
+                .route("/{name}", web::get().to(greet))
+        })
+        .bind("127.0.0.1:8000")?
+        .run()
+        .await
+    };
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed building the Runtime")
+        .block_on(body)
+}
+```
+
+Bí mật đã bị bật mí!
+Hàm `main` thực tế được chuyển giao cho trình biên dịch là một **hàm đồng bộ hoàn toàn bình thường**. 
+Dòng lệnh mấu chốt là:
+
+```rust
+tokio::runtime::Builder::new_multi_thread()
+    .enable_all()
+    .build()
+    .expect("Failed building the Runtime")
+    .block_on(body)
+```
+
+Nó khởi động một multi-threaded async runtime của Tokio và dùng phương thức `.block_on(body)` để chặn luồng chính cho đến khi future `HttpServer::run` chạy xong.
+
+Nói một cách ngắn gọn: **`#[tokio::main]` mang lại cho chúng ta ảo giác rằng mình có thể viết một hàm `main` bất đồng bộ, trong khi bên dưới nắp ca-pô nó tự động sinh ra toàn bộ đoạn mã boilerplate khởi tạo Tokio runtime!**
+
+---
+
+## IV. Hiện Thực Health Check Handler
+
+Đã nắm vững 4 mắt xích cốt lõi, bây giờ chúng ta sẽ sửa đổi mã nguồn để hiện thực đúng yêu cầu: trả về `200 OK` không kèm body khi nhận `GET /health_check`.
+
+### 1. Viết hàm handler
+
+Bắt chước cấu trúc của `greet`, ta viết:
+
+```rust
+use actix_web::HttpResponse;
+
+async fn health_check() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+```
+
+- `HttpResponse::Ok()` trả về một `HttpResponseBuilder` với mã trạng thái 200.
+- Phương thức `.finish()` kết thúc việc tạo lập response với body rỗng và trả về một instance `HttpResponse`.
+
+Đặc biệt, bản thân `HttpResponseBuilder` cũng đã implement trait `Responder`. Do đó chúng ta thậm chí có thể bỏ luôn lời gọi `.finish()`:
+
+```rust
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok()
+}
+```
+
+### 2. Đăng ký route và loại bỏ tham số thừa
+
+Trong file `src/main.rs`:
+
+```rust
+//! src/main.rs
+
+use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+    })
+    .bind("127.0.0.1:8000")?
+    .run()
+    .await
+}
+```
+
+Hãy chú ý: hàm `health_check()` không hề khai báo tham số `req: HttpRequest` nào cả!
+Trình biên dịch vẫn cho qua một cách hoàn hảo. Nhờ hệ thống kiểu dữ liệu và trait nâng cao của Rust, `actix-web` hỗ trợ một dải chữ ký hàm cực kỳ linh hoạt cho các handler. Nếu hàm của bạn không cần dữ liệu từ request, bạn không cần phải khai báo nó trong tham số.
+
+### 3. Kiểm thử thủ công bằng `curl`
+
+Chạy server bằng `cargo run` và kiểm tra chi tiết headers bằng cờ `-v` (verbose) của `curl`:
+
+```bash
+curl -v http://127.0.0.1:8000/health_check
+```
+
+Đầu ra phản hồi từ server:
+
+```text
+*   Trying 127.0.0.1:8000...
+* Connected to 127.0.0.1 (127.0.0.1) port 8000
+> GET /health_check HTTP/1.1
+> Host: 127.0.0.1:8000
+> User-Agent: curl/7.88.1
+> Accept: */*
+> 
+< HTTP/1.1 200 OK
+< content-length: 0
+< date: Sun, 26 Oct 2026 12:00:00 GMT
+< 
+* Connection #0 to host 127.0.0.1 left intact
+```
+
+Chúc mừng bạn! Bạn đã xây dựng thành công endpoint `actix-web` hoạt động đầu tiên của mình!

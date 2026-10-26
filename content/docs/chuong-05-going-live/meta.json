@@ -1,0 +1,9 @@
+{
+  "title": "Chương 5: Triển Khai Production",
+  "pages": [
+    "index",
+    "01-chien-luoc-deployment-va-docker",
+    "02-xay-dung-dockerfile-toi-uu-va-sqlx",
+    "03-deploy-digitalocean-va-moi-truong"
+  ]
+}

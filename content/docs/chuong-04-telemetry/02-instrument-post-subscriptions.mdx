@@ -1,0 +1,293 @@
+---
+title: "Gắn Instrument Vào Endpoint POST /subscriptions"
+description: "Theo dõi tương tác hệ thống ngoài, tư duy từ góc nhìn người dùng và bài toán xâu chuỗi log (correlation) khi xử lý đồng thời"
+---
+
+# Gắn Instrument Vào Endpoint POST /subscriptions
+
+Ở chương trước, endpoint tiếp nhận đăng ký `POST /subscriptions` của chúng ta có dạng như sau:
+
+```rust
+//! src/routes/subscriptions.rs
+use actix_web::{web, HttpResponse};
+use sqlx::PgPool;
+use chrono::Utc;
+use uuid::Uuid;
+
+// ...
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    match sqlx::query!(
+        r#"
+        INSERT INTO subscriptions (id, email, name, subscribed_at)
+        VALUES ($1, $2, $3, $4)
+        "#,
+        Uuid::new_v4(),
+        form.email,
+        form.name,
+        Utc::now()
+    )
+    .execute(pool.get_ref())
+    .await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            // Sử dụng `println!` tạm thời để xem lỗi khi có sự cố
+            println!("Thực thi truy vấn thất bại: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+```
+
+Hãy thêm crate `log` vào `Cargo.toml`:
+
+```toml
+#! Cargo.toml
+[dependencies]
+log = "0.4"
+```
+
+Bây giờ, câu hỏi đặt ra cho một kỹ sư backend là: **Chúng ta nên ghi lại những thông tin gì trong các bản ghi log?**
+
+---
+
+## 4.4.1. Tương Tác Với Hệ Thống Bên Ngoài (External Systems)
+
+Một quy tắc vàng đã được kiểm chứng qua nhiều năm vận hành hệ thống: **Mọi tương tác qua mạng với các hệ thống bên ngoài đều phải được giám sát nghiêm ngặt.**
+
+Đường truyền mạng có thể chập chờn, máy chủ cơ sở dữ liệu có thể tạm thời quá tải, các truy vấn SQL có thể chậm dần theo thời gian khi bảng `subscribers` phình to lên hàng triệu dòng. 
+
+Hãy bổ sung hai bản ghi log: một bản ghi ngay trước khi bắt đầu thực thi truy vấn và một bản ghi ngay sau khi truy vấn hoàn tất thành công. Đồng thời thay thế `println!` bằng macro `log::error!`:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    log::info!("Đang chuẩn bị lưu thông tin người đăng ký mới vào cơ sở dữ liệu");
+    match sqlx::query!(/* ... */)
+        .execute(pool.get_ref())
+        .await
+    {
+        Ok(_) => {
+            log::info!("Đã lưu thành công thông tin người đăng ký mới");
+            HttpResponse::Ok().finish()
+        }
+        Err(e) => {
+            log::error!("Thực thi truy vấn thất bại: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+```
+
+<Callout type="info">
+  **Chi tiết kỹ thuật quan trọng**: Hãy chú ý chúng ta sử dụng `{:?}` (trait `std::fmt::Debug`) thay vì `{}` (trait `std::fmt::Display`) để format lỗi `e`.
+  
+  Đối tượng độc giả chính của log chính là các **kỹ sư vận hành (operators/developers)**. Chúng ta cần trích xuất tối đa thông tin thô và ngữ cảnh kỹ thuật của lỗi để phục vụ việc điều tra sự cố. Trait `Display` chỉ phù hợp để trả về thông điệp thân thiện cho người dùng cuối, còn `Debug` mang lại toàn bộ bức tranh chi tiết mà thư viện cung cấp.
+</Callout>
+
+---
+
+## 4.4.2. Tư Duy Như Người Dùng (Think Like A User)
+
+Liệu những dòng log trên đã đủ để vận hành hệ thống chưa? Hãy nhớ lại phương châm:
+
+> Chúng ta hướng tới một ứng dụng *đủ khả năng quan sát* để đảm bảo chất lượng dịch vụ đã cam kết với người dùng.
+
+Điều này có ý nghĩa gì trong thực tế? Hãy tạm quên vai trò là tác giả của phần mềm và đặt mình vào vị trí của một người dùng thực thụ — một độc giả ghé thăm blog của bạn và muốn đăng ký nhận bản tin qua email.
+
+Một kịch bản sự cố thực tế có thể diễn ra như sau qua hòm thư hỗ trợ:
+
+> *"Chào bạn! Mình vừa thử đăng ký nhận bản tin bằng email cá nhân là `thomas_mann@hotmail.com`, nhưng trang web báo một lỗi rất lạ. Bạn có thể kiểm tra giúp mình xem bị làm sao không? Cảm ơn bạn nhiều, blog viết rất hay!"*  
+> — Tom
+
+Tom đã vào trang web, bấm nút Submit và nhận về "một lỗi kỳ lạ". Ứng dụng của chúng ta được coi là *đủ khả năng quan sát* nếu chúng ta có thể chẩn đoán và tìm ra nguyên nhân gốc rễ chỉ từ manh mối duy nhất mà Tom cung cấp: **địa chỉ email của anh ấy**.
+
+Liệu với mã nguồn hiện tại, ta có làm được điều đó không?
+
+1. **Bước 1 — Xác nhận sự cố**: Ta kết nối vào PostgreSQL và kiểm tra bảng `subscribers`. Không có dòng nào chứa email `thomas_mann@hotmail.com`. Đúng là Tom chưa đăng ký được.
+2. **Bước 2 — Tra cứu log**: Chúng ta mở hệ thống log ra tìm kiếm... và nhận ra một ngõ cụt hoàn toàn! **Không có bất kỳ dòng log nào chứa email hay tên của người đăng ký**.
+
+Chúng ta có thể email lại hỏi Tom: *"Anh có nhớ anh bấm nút vào lúc mấy giờ mấy phút không?"* Nhưng đó là biểu hiện rõ ràng của một hệ thống giám sát tồi tệ.
+
+Hãy cải tiến handler để ghi nhận thông tin đầu vào:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    log::info!(
+        "Đang thêm người đăng ký mới: '{}' với email '{}'",
+        form.name,
+        form.email
+    );
+    log::info!("Đang chuẩn bị lưu thông tin vào cơ sở dữ liệu");
+    match sqlx::query!(/* ... */)
+        .execute(pool.get_ref())
+        .await
+    {
+        Ok(_) => {
+            log::info!("Đã lưu thành công thông tin người đăng ký mới");
+            HttpResponse::Ok().finish()
+        }
+        Err(e) => {
+            log::error!("Thực thi truy vấn thất bại: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+```
+
+Bây giờ chúng ta đã có tên và email trong log. Nhưng câu chuyện đã kết thúc ở đây chưa?
+
+---
+
+## 4.4.3. Sự Cố Đan Xen Log Và Nhu Cầu Xâu Chuỗi (Log Correlation)
+
+Nếu máy chủ của chúng ta chỉ chạy trên một CPU đơn lõi, tiếp nhận từng request một một cách tuần tự (single-threaded, synchronous), các dòng log sẽ xuất hiện rất ngăn nắp:
+
+```text
+# Yêu cầu thứ nhất
+[INFO zero2prod] Đang thêm người đăng ký mới: 'Tom' với email 'thomas_mann@hotmail.com'
+[INFO zero2prod] Đang chuẩn bị lưu thông tin vào cơ sở dữ liệu
+[INFO zero2prod] Đã lưu thành công thông tin người đăng ký mới
+[INFO actix_web] "POST /subscriptions HTTP/1.1" 200 OK
+
+# Yêu cầu thứ hai
+[INFO zero2prod] Đang thêm người đăng ký mới: 'Steven' với email 's_erikson@malazan.io'
+[ERROR zero2prod] Thực thi truy vấn thất bại: connection closed
+[ERROR actix_web] "POST /subscriptions HTTP/1.1" 500 Internal Server Error
+```
+
+Ranh giới giữa các request cực kỳ rõ ràng. Bạn nhìn thấy ngay request bắt đầu từ đâu, chuyện gì đã diễn ra, mã HTTP trả về là gì.
+
+Tuy nhiên, trong một máy chủ web thực tế chạy đa luồng bất đồng bộ (async concurrent requests), các dòng log từ hàng chục request gửi đến cùng một giây sẽ **bị đan xen (interleaved)** lẫn lộn:
+
+```text
+[INFO zero2prod] Tiếp nhận yêu cầu POST /subscriptions
+[INFO zero2prod] Tiếp nhận yêu cầu POST /subscriptions
+[INFO zero2prod] Đang thêm người đăng ký mới: 'Tom' với email 'thomas_mann@hotmail.com'
+[INFO zero2prod] Đang thêm người đăng ký mới: 'Steven' với email 's_erikson@malazan.io'
+[INFO zero2prod] Đang chuẩn bị lưu thông tin vào cơ sở dữ liệu
+[ERROR zero2prod] Thực thi truy vấn thất bại: connection pool exhausted
+[ERROR actix_web] "POST /subscriptions HTTP/1.1" 500 Internal Server Error
+[INFO zero2prod] Đang chuẩn bị lưu thông tin vào cơ sở dữ liệu
+[INFO zero2prod] Đã lưu thành công thông tin người đăng ký mới
+[INFO actix_web] "POST /subscriptions HTTP/1.1" 200 OK
+```
+
+Nhìn vào đoạn log trên: **Truy vấn CSDL bị thất bại là của Tom hay của Steven?**
+
+Hoàn toàn không thể xác định được!
+
+### Giải Pháp: Request ID (Correlation ID)
+
+Để xâu chuỗi mọi hành động thuộc về cùng một luồng xử lý, giải pháp chuẩn mực trong kiến trúc phân tán là sử dụng **Request ID** (hay **Correlation ID**). 
+
+Mỗi khi một request bắt đầu đi vào hệ thống, ta sinh ra một chuỗi định danh duy nhất (ví dụ mã UUID ngẫu nhiên), sau đó gắn định danh này vào mọi bản ghi log liên quan tới request đó.
+
+Hãy thử áp dụng cách làm thủ công với crate `uuid`:
+
+```rust
+//! src/routes/subscriptions.rs
+use uuid::Uuid;
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+
+    log::info!(
+        "request_id {} - Đang thêm người đăng ký mới: '{}' với email '{}'",
+        request_id,
+        form.name,
+        form.email
+    );
+    log::info!(
+        "request_id {} - Đang chuẩn bị lưu thông tin vào cơ sở dữ liệu",
+        request_id
+    );
+    match sqlx::query!(/* ... */)
+        .execute(pool.get_ref())
+        .await
+    {
+        Ok(_) => {
+            log::info!(
+                "request_id {} - Đã lưu thành công thông tin người đăng ký mới",
+                request_id
+            );
+            HttpResponse::Ok().finish()
+        }
+        Err(e) => {
+            log::error!(
+                "request_id {} - Thực thi truy vấn thất bại: {:?}",
+                request_id,
+                e
+            );
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+```
+
+Bây giờ khi gọi API:
+
+```bash
+curl -i -X POST -d 'email=thomas_mann@hotmail.com&name=Tom' \
+    http://127.0.0.1:8000/subscriptions
+```
+
+Log sinh ra sẽ có dạng:
+
+```text
+[INFO  zero2prod] request_id 9ebde7e9-1efe-40b9-ab65-86ab422e6b87 - Đang thêm người đăng ký mới: 'Tom' với email 'thomas_mann@hotmail.com'
+[INFO  zero2prod] request_id 9ebde7e9-1efe-40b9-ab65-86ab422e6b87 - Đang chuẩn bị lưu thông tin vào cơ sở dữ liệu
+[INFO  zero2prod] request_id 9ebde7e9-1efe-40b9-ab65-86ab422e6b87 - Đã lưu thành công thông tin người đăng ký mới
+[INFO  actix_web] 127.0.0.1:54320 "POST /subscriptions HTTP/1.1" 200 0 ...
+```
+
+---
+
+## 4.4.4. Điểm Giới Hạn Của Tiếp Cận Thủ Công
+
+Cách tiếp cận trên tuy giải quyết được phần ngọn nhưng bộc lộ 3 nhược điểm nghiêm trọng:
+
+1. **Rườm rà và dễ sai sót**: Lập trình viên phải nhớ chèn `request_id {}` vào từng chuỗi format string trong toàn bộ codebase.
+2. **Mất liên kết với Middleware**: `request_id` được sinh ra bên trong handler `subscribe`, nghĩa là middleware `Logger` của `actix-web` chạy ở tầng ngoài hoàn toàn không biết đến `request_id` này. Dòng log chứa HTTP status code `200` hay `500` vẫn không có `request_id`.
+3. **Ô nhiễm chữ ký hàm (Parameter Pollution)**: Nếu hàm `subscribe` gọi 5 hàm con khác (parse dữ liệu, gọi mailer, lưu database,...), ta buộc phải truyền biến `request_id: Uuid` qua tất cả các hàm con đó chỉ để chúng có thể in log!
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│              actix-web Middleware Logger                     │
+│  (Hoàn toàn KHÔNG biết request_id -> Mất dấu vết HTTP status)│
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 subscribe Handler                           │
+│  let request_id = Uuid::new_v4();                           │
+│  (Phải format thủ công từng dòng log!)                      │
+└──────────────┬───────────────────────────────┬──────────────┘
+               │                               │
+               ▼ (phải pass request_id?)       ▼ (phải pass request_id?)
+     ┌───────────────────┐           ┌───────────────────┐
+     │ parse_subscriber  │           │ insert_subscriber │
+     └───────────────────┘           └───────────────────┘
+```
+
+Rõ ràng, mô hình logging chuỗi tự do (unstructured text logging) của crate `log` đang bộc lộ giới hạn khi đối mặt với các hệ thống phân tán và bất đồng bộ hiện đại. 
+
+Chúng ta cần một giải pháp cấp tiến hơn: **Structured Logging** với crate `tracing`.

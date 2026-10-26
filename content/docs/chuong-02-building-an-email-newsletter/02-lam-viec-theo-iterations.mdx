@@ -1,0 +1,108 @@
+---
+title: "2.2 Làm Việc Theo Vòng Lặp Iterations"
+description: "Chiến lược phát triển phần mềm theo từng vòng lặp (Iterations), tư duy chất lượng Production và cách đối chiếu tiến độ qua mã nguồn mẫu."
+---
+
+# 2.2 Làm Việc Theo Vòng Lặp Iterations
+
+Hãy cùng mổ xẻ kỹ hơn một trong hai câu chuyện người dùng mà chúng ta vừa vạch ra ở bài học trước:
+
+> **Là tác giả của trang blog,**  
+> **Tôi muốn gửi email tới toàn bộ độc giả đã đăng ký,**  
+> **Để tôi có thể thông báo cho họ về nội dung vừa xuất bản.**
+
+Điều này có ý nghĩa gì *trong thực tế*? Chúng ta sẽ cần phải xây dựng những gì?
+
+Ngay khi bạn bắt đầu nhìn sâu hơn vào vấn đề, hàng loạt câu hỏi hóc búa sẽ lập tức xuất hiện:
+* Làm thế nào để hệ thống xác minh chắc chắn rằng người gọi API thực sự là tác giả của blog chứ không phải một kẻ nặc danh? (Cần cơ chế xác thực — *Authentication*).
+* Nội dung email hỗ trợ định dạng HTML phong phú hay chỉ là văn bản thô (*Plain text*)? Có cho phép chèn biểu tượng cảm xúc (emojis) không?
+* Nếu việc kết nối tới máy chủ gửi mail (SMTP) bị đứt giữa chừng khi đang gửi tới địa chỉ thứ 500 trên tổng số 10.000 người, hệ thống sẽ xử lý thế nào? Làm sao để không gửi trùng email hai lần cho 500 người đầu tiên khi tiến hành gửi lại (*Retry*)?
+
+---
+
+## I. Cạm Bẫy Của Việc Tối Ưu Hóa Cục Bộ
+
+Nếu không có một chiến lược rõ ràng, chúng ta rất dễ rơi vào cái bẫy dành hàng tháng trời để xây dựng một cỗ máy gửi email cực kỳ tinh vi, hoa mỹ và hoàn hảo... trong khi hệ thống thậm chí còn **chưa có nổi một API cơ bản để người dùng bấm nút đăng ký hoặc hủy đăng ký**!
+
+```text
+       CẠM BẪY TỐI ƯU CỤC BỘ VS TIẾP CẬN THEO VÒNG LẶP
+┌─────────────────────────────────────────────────────────────┐
+│ ❌ CÁCH TIẾP CẬN SAI LẦM: TỐI ƯU CỤC BỘ                    │
+│                                                             │
+│ [Xây module Gửi Mail cực khủng] ──> (Hết thời gian / Burnout)│
+│                                                             │
+│ Kết quả: Không có API Đăng ký -> Hệ thống vô dụng 0%        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ ✅ CÁCH TIẾP CẬN SENIOR: LÀM VIỆC THEO VÒNG LẶP (ITERATIONS) │
+│                                                             │
+│ Iteration 1: Đăng ký cơ bản + Gửi mail text đơn giản (E2E)  │
+│              └── Đưa ngay lên Production!                   │
+│                                                             │
+│ Iteration 2: Thêm xác nhận email kép (Two-phase confirm)    │
+│              └── Nâng cấp Production!                       │
+│                                                             │
+│ Iteration 3: Thêm cơ chế chịu lỗi & Retry gửi mail          │
+│              └── Hoàn thiện hệ thống vững chãi!             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Chúng ta có thể trở thành những người viết code gửi email giỏi nhất thế giới, nhưng sẽ chẳng có bất kỳ ai sử dụng được dịch vụ của chúng ta — bởi vì nó không thể bao quát trọn vẹn toàn bộ hành trình trải nghiệm của người dùng (*Full User Journey*).
+
+---
+
+## II. Chiến Lược Lặp (Working In Iterations)
+
+Thay vì đào quá sâu vào một câu chuyện duy nhất ngay từ đầu, chúng ta sẽ chọn cách tiếp cận thực tế hơn:
+
+<Callout type="info">
+  Chúng ta sẽ xây dựng vừa đủ tính năng để **thỏa mãn (ở một mức độ chấp nhận được) yêu cầu của toàn bộ các User Stories ngay trong bản phát hành đầu tiên**.
+</Callout>
+
+Sau khi luồng nghiệp vụ xuyên suốt (*End-to-End*) đã vận hành trơn tru từ đầu đến cuối, chúng ta mới quay lại từng bước để cải tiến và gia cố:
+* Bổ sung tính năng chịu lỗi (*fault-tolerance*) và cơ chế thử lại tự động (*retries*) cho tác vụ phát hành email;
+* Bổ sung luồng gửi email xác nhận hai bước (*Confirmation email*) cho người đăng ký mới;
+* Thêm lớp xác thực bảo mật và quản lý phiên làm việc (*Sessions*).
+
+Mỗi vòng lặp (*Iteration*) sẽ giải quyết một phần việc rõ ràng trong một khoảng thời gian nhất định, mang đến một phiên bản sản phẩm hoàn thiện hơn phiên bản trước, liên tục nâng cao trải nghiệm của người dùng.
+
+---
+
+## III. Nguyên Tắc Bất Di Bất Dịch Về Chất Lượng Kỹ Thuật
+
+Đây là nguyên tắc vàng mà mọi Senior Developer đều khắc cốt ghi tâm:
+
+> **Chúng ta lặp lại về tính năng sản phẩm (Product Features), chứ tuyệt đối KHÔNG nhân nhượng về chất lượng kỹ thuật (Engineering Quality).**
+
+Mã nguồn được sinh ra ở bất kỳ vòng lặp nào — dù nó chỉ giải quyết một tính năng nhỏ bé và tối giản nhất — **đều bắt buộc phải được viết test đầy đủ, kiểm tra kiểu dữ liệu chặt chẽ và ghi chú tài liệu chuẩn mực**.
+
+Mã nguồn của chúng ta sẽ được triển khai lên môi trường Production thực tế ngay ở cuối mỗi vòng lặp — do đó, nó bắt buộc phải đạt **chất lượng môi trường Production (Production-quality)** ngay từ ngày đầu tiên.
+
+---
+
+## IV. Chặng Đường Phía Trước: Khởi Đầu Từ Đăng Ký
+
+Chiến lược phát triển đã sáng tỏ, giờ là lúc chúng ta thực sự bắt tay vào hành động!
+
+Trong **Chương 3**, chúng ta sẽ tập trung toàn lực vào tính năng đầu tiên: **Đăng ký nhận bản tin (Subscription Endpoint)**.
+
+Để đưa tính năng này vào hoạt động, chúng ta sẽ cần giải quyết một khối lượng công việc nền tảng tương đối nặng:
+1. Lựa chọn Web Framework hiện đại và tối ưu trong hệ sinh thái Rust;
+2. Dựng hạ tầng kết nối cơ sở dữ liệu và quản lý Database Migrations;
+3. Thiết lập khung cấu trúc ứng dụng phân tầng rõ ràng;
+4. Xây dựng môi trường kiểm thử tích hợp hộp đen (*Black-box Integration Testing*) tự động.
+
+Hãy chuẩn bị tinh thần: Kể từ chương sau, bạn sẽ dành phần lớn thời gian để **pair programming** cùng với trình biên dịch Rust!
+
+---
+
+## V. Đối Chiếu Tiến Độ Với Mã Nguồn Mẫu
+
+Một chi tiết vô cùng quan trọng: Tác giả Luca Palmieri duy trì một kho lưu trữ mã nguồn mở chính thức dành cho cuốn sách tại:
+
+👉 [**GitHub: LukeMathWalker/zero-to-production**](https://github.com/LukeMathWalker/zero-to-production)
+
+Repository này chứa toàn bộ mã nguồn của dự án Email Newsletter API hoàn chỉnh. Đặc biệt, nó cung cấp các ảnh chụp mã nguồn trung gian (*intermediate snapshots*), phản ánh chính xác trạng thái dự án sau khi kết thúc mỗi chương và từng phần trọng điểm.
+
+Nếu trong quá trình tự gõ code và thử nghiệm, bạn gặp phải bất kỳ lỗi biên dịch khó hiểu nào không thể tự giải quyết, hãy mở repository trên và đối chiếu từng dòng mã của bạn với snapshot tương ứng. Đó là cách học tập và tự gỡ lỗi (*debugging*) hiệu quả nhất!

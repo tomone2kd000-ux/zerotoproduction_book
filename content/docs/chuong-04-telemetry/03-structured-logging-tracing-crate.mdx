@@ -1,0 +1,365 @@
+---
+title: "Structured Logging Với Hệ Sinh Thái Tracing"
+description: "Chuyển dịch từ chuỗi log tự do sang Structured Logging: Spans, Futures Instrumentation, Subscribers, định dạng Bunyan JSON và bridge tracing-log"
+---
+
+# Structured Logging Với Hệ Sinh Thái Tracing
+
+Ở bài học trước, chúng ta đã thử giải quyết bài toán truy vết bằng cách sinh `request_id` và nhúng nó vào từng macro log. Tuy nhiên, cách tiếp cận đó lập tức bế tắc:
+- Ta phải sửa lại toàn bộ các middleware ở tầng trên (như `Logger` của `actix-web`).
+- Ta phải thay đổi chữ ký của mọi hàm con ở tầng dưới chỉ để truyền biến `request_id: Uuid`.
+- Còn các thư viện phụ thuộc bên ngoài (crates) thì sao? Chúng ta đâu thể sửa mã nguồn của thư viện bên thứ ba chỉ để chúng in kèm `request_id` của mình?
+
+Rõ ràng, **cách tiếp cận này không thể mở rộng (cannot scale)**.
+
+---
+
+## 4.5.1. Khi Logs Trở Thành Sự Trừu Tượng Hóa Sai Lầm
+
+Hãy lùi lại một bước và nhìn nhận cấu trúc bản chất của một ứng dụng backend:
+- Chúng ta có một tác vụ cấp cao bao trùm: **Một HTTP Request**.
+- Tác vụ đó được chia nhỏ thành các tác vụ con: **Parse Form Dữ liệu**, **Thực thi SQL Query**, **Gửi Email**,... Các tác vụ con này lại có thể đệ quy chia thành các hàm nhỏ hơn.
+- Mỗi đơn vị công việc (unit of work) đó đều có một **thời lượng (duration)** — có thời điểm bắt đầu và thời điểm kết thúc.
+- Mỗi đơn vị công việc đều có một **ngữ cảnh (context)** gắn liền (`request_id`, `email`, `user_id`) mà tất cả các tác vụ con bên trong nó hiển nhiên được thừa hưởng.
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Root Span: HTTP Request POST /subscriptions [request_id = "f349b..."]       │
+│                                                                             │
+│   ├── Child Span: Parse Form Input                                          │
+│   │     └─ Event: "Dữ liệu form hợp lệ"                                     │
+│   │                                                                         │
+│   └── Child Span: Database Query (INSERT INTO subscriptions)                │
+│         ├─ Event: "Kết nối lấy từ Connection Pool"                          │
+│         └─ Event: "Query thực thi thành công sau 4ms"                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+Trong khi đó, logging truyền thống chỉ là các sự kiện văn bản rời rạc xảy ra tại một thời điểm tức thời. Chúng ta đang cố gắng dùng một công cụ tuyến tính một chiều để mô tả một luồng xử lý dạng cây phân cấp (tree-like hierarchy).
+
+**Logs truyền thống chính là một sự trừu tượng hóa sai lầm (Logs are the wrong abstraction).**
+
+Để giải quyết triệt để, chúng ta cần một công cụ mới: crate [`tracing`](https://docs.rs/tracing).
+
+> *"Tracing mở rộng mô hình chẩn đoán kiểu logging bằng cách cho phép các thư viện và ứng dụng ghi lại các sự kiện có cấu trúc (structured events) kèm theo thông tin về thời gian và quan hệ nhân quả. Khác với một dòng log thông thường, một **Span** trong Tracing có thời điểm bắt đầu và kết thúc, có thể được tiến vào (entered) hoặc thoát ra (exited) theo luồng thực thi, và tồn tại trong một cây phân cấp lồng nhau."*
+
+---
+
+## 4.5.2. Chuyển Đổi Từ `log` Sang `tracing`
+
+Bước đầu tiên là bổ sung `tracing` vào `Cargo.toml`:
+
+```toml
+#! Cargo.toml
+[dependencies]
+tracing = { version = "0.1", features = ["log"] }
+```
+
+Chúng ta bật feature flag `log` để giữ khả năng tương thích ngược: mỗi khi một sự kiện `tracing` phát sinh, nó sẽ đồng thời phát ra một log record tương ứng để các logger truyền thống (như `env_logger`) vẫn bắt được.
+
+Bây giờ, chỉ cần thay thế các lệnh gọi `log::` thành `tracing::` trong file `src/routes/subscriptions.rs`:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+    tracing::info!(
+        "request_id {} - Đang thêm người đăng ký: '{}' với email '{}'",
+        request_id,
+        form.name,
+        form.email
+    );
+    tracing::info!(
+        "request_id {} - Đang chuẩn bị lưu thông tin vào cơ sở dữ liệu",
+        request_id
+    );
+    match sqlx::query!(/* ... */)
+        .execute(pool.get_ref())
+        .await
+    {
+        Ok(_) => {
+            tracing::info!(
+                "request_id {} - Đã lưu thành công thông tin người đăng ký mới",
+                request_id
+            );
+            HttpResponse::Ok().finish()
+        }
+        Err(e) => {
+            tracing::error!(
+                "request_id {} - Thực thi truy vấn thất bại: {:?}",
+                request_id,
+                e
+            );
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+```
+
+Nếu chạy lại ứng dụng lúc này, định dạng log xuất ra terminal vẫn hoàn toàn giống hệt như trước nhờ cờ tương thích `features = ["log"]`.
+
+---
+
+## 4.5.3. Khái Niệm `Span` Trong Tracing
+
+Bây giờ ta bắt đầu khai thác sức mạnh thực sự của `tracing`: cấu trúc **Span**. Ta sẽ tạo một span đại diện cho toàn bộ vòng đời của HTTP request:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+
+    // Khởi tạo một span ở mức `info` kèm dữ liệu có cấu trúc (key-value)
+    let request_span = tracing::info_span!(
+        "Adding a new subscriber.",
+        %request_id,
+        subscriber_email = %form.email,
+        subscriber_name = %form.name
+    );
+
+    // Kích hoạt span bằng cách 'enter' vào nó
+    let _request_span_guard = request_span.enter();
+
+    // [...]
+    // `_request_span_guard` sẽ bị hủy (dropped) khi hàm `subscribe` kết thúc,
+    // đồng nghĩa với việc ta chính thức "thoát" (exit) khỏi span.
+}
+```
+
+Hãy phân tích kỹ các điểm sáng tạo ở đây:
+1. **Dữ liệu có cấu trúc (Structured Fields)**: Chúng ta không còn ghép chuỗi thủ công nữa. Thay vào đó, dữ liệu được truyền dưới dạng các cặp key-value (`%request_id`, `subscriber_email = %form.email`).
+2. **Ký tự `%` và `?`**: Tiền tố `%` báo cho `tracing` định dạng trường đó bằng trait `Display`, còn tiền tố `?` báo định dạng bằng trait `Debug`.
+3. **RAII Guard Pattern**: Phương thức `.enter()` trả về một guard struct có tên là `Entered`. Miễn là biến `_request_span_guard` còn tồn tại trong scope, mọi log và span con sinh ra sẽ tự động được coi là con của span này. Khi biến guard rơi ra ngoài phạm vi (out of scope), hàm hủy `Drop::drop` sẽ được compiler tự động kích hoạt để thoát (exit) khỏi span.
+
+### Phân Biệt "Exiting" Và "Closing" Một Span
+
+- **Exiting**: Rời khỏi span tạm thời khi luồng thực thi chuyển sang tác vụ khác. Bạn có thể enter và exit một span nhiều lần!
+- **Closing**: Span chính thức đóng lại và kết thúc vĩnh viễn khi bản thân đối tượng span bị drop.
+
+Cơ chế này cực kỳ quan trọng đối với các tác vụ bất đồng bộ (async tasks) có thể bị tạm dừng (pause) và tiếp tục (resume) nhiều lần.
+
+---
+
+## 4.5.4. Instrumenting Futures: Gắn Cảm Biến Vào Tác Vụ Bất Đồng Bộ
+
+<Callout type="warn">
+  **CẢNH BÁO NGUY HIỂM CHÍ MẠNG**: Tuyệt đối **KHÔNG BAO GIỜ** giữ một guard `.enter()` xuyên qua một điểm `.await` trong một async function!
+  
+  Khi một future chờ I/O tại điểm `.await`, Tokio runtime có thể tạm dừng (park) future đó và chuyển luồng CPU sang thực thi một future khác hoàn toàn. Nếu guard vẫn đang được "enter", future kia sẽ bị gán nhầm vào span của request hiện tại, dẫn đến dữ liệu telemetry bị sai lệch nghiêm trọng.
+</Callout>
+
+Để gắn span vào một Future một cách an toàn và chuẩn mực, `tracing` cung cấp extension trait [`Instrument`](https://docs.rs/tracing/latest/tracing/trait.Instrument.html) với phương thức `.instrument(...)`. 
+
+Phương thức này đảm bảo:
+- **Enter** vào span mỗi khi Future được runtime `poll`.
+- **Exit** khỏi span mỗi khi Future tạm dừng (park) chờ dữ liệu.
+
+Hãy áp dụng `.instrument(...)` cho truy vấn cơ sở dữ liệu:
+
+```rust
+//! src/routes/subscriptions.rs
+use tracing::Instrument;
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+    let request_span = tracing::info_span!(
+        "Adding a new subscriber.",
+        %request_id,
+        subscriber_email = %form.email,
+        subscriber_name = %form.name
+    );
+    let _request_span_guard = request_span.enter();
+
+    // Tạo span riêng cho truy vấn SQL (không gọi .enter())
+    let query_span = tracing::info_span!(
+        "Saving new subscriber details in the database"
+    );
+
+    // Gắn query_span vào Future thông qua `.instrument(query_span)` trước khi `.await`
+    match sqlx::query!(/* ... */)
+        .execute(pool.get_ref())
+        .instrument(query_span)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            tracing::error!("Thực thi truy vấn thất bại: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+```
+
+Nếu chạy với `RUST_LOG=trace`, bạn sẽ thấy log thể hiện chính xác số lần Tokio executor đã `poll` câu lệnh SQL (enter `->` và exit `<-`) trước khi nó hoàn tất!
+
+---
+
+## 4.5.5. Trait `Subscriber` Và Hệ Sinh Thái `tracing-subscriber`
+
+Dù đã chuyển sang dùng Span, nếu nhìn lại terminal, bạn sẽ thấy `request_id` vẫn chỉ xuất hiện ở dòng log đầu tiên chứ chưa tự động lan sang các log con. Lý do là chúng ta vẫn đang dùng `env_logger` — một logger backend chỉ hiểu văn bản thô chứ không hề biết tới cấu trúc dữ liệu của Span!
+
+Tương tự như trait `Log` của crate `log`, `tracing` định nghĩa trait [`Subscriber`](https://docs.rs/tracing/0.1.19/tracing/trait.Subscriber.html) quản lý toàn bộ vòng đời của Span (`new_span`, `enter`, `exit`, `clone_span`).
+
+Để xây dựng một pipeline xử lý log đa tầng linh hoạt, cộng đồng sử dụng crate [`tracing-subscriber`](https://docs.rs/tracing-subscriber):
+
+```toml
+#! Cargo.toml
+[dependencies]
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+```
+
+`tracing-subscriber` giới thiệu mô hình kiến trúc **Layer**: thay vì phải viết một Subscriber "nguyên khối" cồng kềnh, chúng ta có thể kết hợp nhiều tầng xử lý chuyên biệt (lọc dữ liệu, lưu trữ context, định dạng output). 
+
+Trái tim của kiến trúc này là struct [`Registry`](https://docs.rs/tracing-subscriber/0.2.12/tracing_subscriber/struct.Registry.html). `Registry` lưu trữ metadata của các span, ghi nhận mối quan hệ cha-con và theo dõi span nào đang hoạt động.
+
+---
+
+## 4.5.6. Xuất Log JSON Chuẩn Bunyan Với `tracing-bunyan-formatter`
+
+Trong môi trường phân tán thực tế, log nên được xuất ra dưới dạng JSON để các hệ sinh thái thu thập log (ELK Stack, Loki, Datadog) có thể phân tích cú pháp và lập chỉ mục (index) các trường dữ liệu mà không cần viết regex phức tạp.
+
+Chúng ta sẽ sử dụng crate [`tracing-bunyan-formatter`](https://docs.rs/tracing-bunyan-formatter):
+
+```toml
+#! Cargo.toml
+[dependencies]
+tracing-bunyan-formatter = "0.3"
+```
+
+Crate này cung cấp 2 Layer cốt lõi:
+1. `JsonStorageLayer`: Trích xuất và lưu trữ metadata của các Span dưới dạng JSON, đồng thời **tự động lan truyền toàn bộ context từ Span cha xuống các Span con**.
+2. `BunyanFormattingLayer`: Xuất log record ra màn hình console (`stdout`) theo chuẩn JSON tương thích với Bunyan.
+
+Kết hợp toàn bộ pipeline trong `src/main.rs`:
+
+```rust
+//! src/main.rs
+use tracing::subscriber::set_global_default;
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    // 1. Layer lọc log theo biến môi trường RUST_LOG
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // 2. Layer format log chuẩn Bunyan JSON ra stdout
+    let formatting_layer = BunyanFormattingLayer::new(
+        "zero2prod".into(),
+        std::io::stdout
+    );
+
+    // 3. Kết hợp các layer vào Registry
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+
+    // 4. Đăng ký subscriber làm mặc định toàn cục cho ứng dụng
+    set_global_default(subscriber).expect("Không thể thiết lập subscriber.");
+
+    // [...] Khởi động database pool và server
+}
+```
+
+Bây giờ khi gọi `POST /subscriptions`, terminal sẽ xuất ra các bản ghi JSON tiêu chuẩn:
+
+```json
+{
+  "v": 0,
+  "level": 30,
+  "name": "zero2prod",
+  "msg": "[ADDING A NEW SUBSCRIBER. - START]",
+  "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6",
+  "subscriber_email": "ursula_le_guin@gmail.com",
+  "subscriber_name": "le guin"
+}
+{
+  "v": 0,
+  "level": 30,
+  "name": "zero2prod",
+  "msg": "[SAVING NEW SUBSCRIBER DETAILS IN THE DATABASE - START]",
+  "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6",
+  "subscriber_email": "ursula_le_guin@gmail.com",
+  "subscriber_name": "le guin"
+}
+{
+  "v": 0,
+  "level": 30,
+  "name": "zero2prod",
+  "msg": "[SAVING NEW SUBSCRIBER DETAILS IN THE DATABASE - END]",
+  "elapsed_milliseconds": 4,
+  "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6"
+}
+{
+  "v": 0,
+  "level": 30,
+  "name": "zero2prod",
+  "msg": "[ADDING A NEW SUBSCRIBER. - END]",
+  "elapsed_milliseconds": 5,
+  "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6"
+}
+```
+
+Nhìn vào output JSON trên, điều kỳ diệu đã xuất hiện:
+- Toàn bộ context (`request_id`, `subscriber_email`, `subscriber_name`) đã tự động xuất hiện ở tất cả các span con!
+- Tự động đo đạc thời gian thực thi: `elapsed_milliseconds` hiển thị chính xác thời gian hoàn thành từng tác vụ.
+
+---
+
+## 4.5.7. Tích Hợp Toàn Diện Crate `tracing-log`
+
+Khi chuyển sang `set_global_default(subscriber)`, ta nhận ra các dòng log của `actix-web` đã biến mất. Đó là vì `actix-web` vẫn đang phát ra log qua crate `log`.
+
+Để chuyển hướng toàn bộ các bản ghi từ các thư viện cũ sử dụng `log` sang `tracing`, ta thêm crate [`tracing-log`](https://docs.rs/tracing-log):
+
+```toml
+#! Cargo.toml
+[dependencies]
+tracing-log = "0.1"
+```
+
+Và gọi `LogTracer::init()` ngay đầu hàm `main`:
+
+```rust
+//! src/main.rs
+use tracing_log::LogTracer;
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    // Chuyển hướng toàn bộ sự kiện từ crate `log` sang tracing Subscriber
+    LogTracer::init().expect("Không thể khởi tạo logger bridge.");
+
+    // [...] Khởi tạo Registry và subscriber như trên
+}
+```
+
+Toàn bộ log của `actix-web` và các crate khác lập tức hòa vào dòng chảy telemetry chung của ứng dụng.
+
+---
+
+## 4.5.8. Dọn Dẹp Dependencies Thừa Với `cargo-udeps`
+
+Sau đợt refactoring lớn này, dự án không còn sử dụng trực tiếp `log` và `env_logger` nữa. Để dọn dẹp dự án chuyên nghiệp, hãy cài đặt công cụ [`cargo-udeps`](https://github.com/est31/cargo-udeps):
+
+```bash
+cargo install cargo-udeps
+cargo +nightly udeps
+```
+
+Công cụ sẽ tự động rà soát file `Cargo.toml` và chỉ ra các thư viện không còn sử dụng. Ta có thể an tâm gỡ bỏ `env_logger` và `log` khỏi danh sách dependency trực tiếp, giúp giảm thời gian biên dịch của dự án.

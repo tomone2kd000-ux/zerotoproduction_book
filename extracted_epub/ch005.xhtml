@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <title>ch005.xhtml</title>
+  <style>
+  </style>
+  <link rel="stylesheet" type="text/css" href="../styles/stylesheet1.css" />
+</head>
+<body epub:type="bodymatter">
+<section id="building-an-email-newsletter" class="level1" data-number="2">
+<h1 data-number="2"><span class="header-section-number">2</span> Building An Email Newsletter</h1>
+<section id="our-driving-example" class="level2" data-number="2.1">
+<h2 data-number="2.1"><span class="header-section-number">2.1</span> Our Driving Example</h2>
+<p>The Foreword stated that</p>
+<blockquote>
+<p><em>Zero To Production</em> will focus on the challenges of writing cloud-native applications in a team of four or five engineers with different levels of experience and proficiency.</p>
+</blockquote>
+<p>How? Well, <em>by actually building one!</em></p>
+<section id="problem-based-learning" class="level3" data-number="2.1.1">
+<h3 data-number="2.1.1"><span class="header-section-number">2.1.1</span> Problem-based Learning</h3>
+<p>Choose a problem you want to solve.<br />
+Let the problem drive the introduction of new concepts and techniques.</p>
+<p>It flips the hierarchy you are used to: the material you are studying is not relevant because somebody claims it is, it is relevant because it is <strong>useful</strong> to get closer to a solution.<br />
+You learn new techniques <strong>and</strong> when it makes sense to reach for them.</p>
+<p>The devil is in the details: a problem-based learning path can be delightful, yet it is painfully easy to misjudge how challenging each step of the journey is going to be.<br />
+Our driving example needs to be:</p>
+<ul>
+<li>small enough for us to tackle in a book without cutting corners;</li>
+<li>complex enough to surface most of the key themes that come up in bigger systems;</li>
+<li>interesting enough to keep readers engaged as they progress.</li>
+</ul>
+<p>We will go for an <strong>email newsletter</strong> - the next section will detail the functionality we plan to cover<a href="#fn1" class="footnote-ref" id="fnref1" epub:type="noteref">1</a>.</p>
+</section>
+</section>
+<section id="what-should-our-newsletter-do" class="level2" data-number="2.2">
+<h2 data-number="2.2"><span class="header-section-number">2.2</span> What Should Our Newsletter Do?</h2>
+<p>There are dozens of companies providing services that include or are centered around the idea of managing a list of email addresses.</p>
+<p>While they all share a set of core functionalities (i.e. sending emails), their services are tailored to specific use-cases: UI, marketing spin and pricing will differ significantly between a product targeted at big companies managing hundreds of thousands of addresses with strict security and compliance requirements compared to a SaaS offering geared to indie content creators running their own blogs or small online stores.</p>
+<p>Now, we have no ambition to build the next MailChimp or ConvertKit - the scope would definitely be too broad for us to cover over the course of a book. Furthermore, several features would require applying the same concepts and techniques over and over again - it gets tedious to read after a while.</p>
+<p>We will try to build an email newsletter service that supports what you need to get off the ground if you are willing to add an email subscription page to your blog<a href="#fn2" class="footnote-ref" id="fnref2" epub:type="noteref">2</a>.</p>
+<section id="capturing-requirements-user-stories" class="level3" data-number="2.2.1">
+<h3 data-number="2.2.1"><span class="header-section-number">2.2.1</span> Capturing Requirements: User Stories</h3>
+<p>The product brief above leaves some room for interpretation - to better scope what our service should support we will leverage <em>user stories</em>.<br />
+The format is fairly simple:</p>
+<blockquote>
+<p>As a …,<br />
+I want to …,<br />
+So that …</p>
+</blockquote>
+<p>A user story helps us to capture who we are building for (<em>as a</em>), the actions they want to perform (<em>want to</em>) as well as their motives (<em>so that</em>).</p>
+<p>We will fulfill two user stories:</p>
+<ul>
+<li>As a blog visitor,<br />
+I want to subscribe to the newsletter,<br />
+So that I can receive email updates when new content is published on the blog;</li>
+<li>As the blog author,<br />
+I want to send an email to all my subscribers,<br />
+So that I can notify them when new content is published.</li>
+</ul>
+<p>We will not add features to</p>
+<ul>
+<li>unsubscribe;</li>
+<li>manage multiple newsletters;</li>
+<li>segment subscribers in multiple audiences;</li>
+<li>track opening and click rates.</li>
+</ul>
+<p>As said, pretty barebone. We would definitely not be able to launch publicly without giving users the possibility to unsubscribe.<br />
+Nonetheless, fulfilling those two stories will give us plenty of opportunities to practice and hone our skills!</p>
+</section>
+</section>
+<section id="working-in-iterations" class="level2" data-number="2.3">
+<h2 data-number="2.3"><span class="header-section-number">2.3</span> Working In Iterations</h2>
+<p>Let’s zoom on one of those user stories:</p>
+<blockquote>
+<p>As the blog author,<br />
+I want to send an email to all my subscribers,<br />
+So that I can notify them when new content is published.</p>
+</blockquote>
+<p>What does this mean <em>in practice</em>? What do we need to build?<br />
+As soon as you start looking closer at the problem tons of questions pop up - e.g. how do we ensure that the caller is indeed the blog author? Do we need to introduce an authentication mechanism? Do we support HTML in emails or do we stick to plain text? What about emojis?</p>
+<p>We could easily spend months implementing an extremely polished email delivery system without having even a basic subscribe/unsubscribe functionality in place.<br />
+We might become the best at sending emails, but nobody is going to use our email newsletter service - it does not cover the full journey.</p>
+<p>Instead of going deep on one story, we will try to build enough functionality to satisfy, <em>to an extent</em>, the requirements of all of our stories in our first release.<br />
+We will then go back and improve: add fault-tolerance and retries for email delivery, add a confirmation email for new subscribers, etc.</p>
+<p><strong>We will work in iterations</strong>: each iteration takes a fixed amount of time and gives us a slightly better version of the product, improving the experience of our users.</p>
+<p>Worth stressing that we are iterating on product features, not engineering quality: the code produced in each iteration will be tested and properly documented even if it only delivers a tiny, fully functional feature.<br />
+Our code is going to production at the end of each iteration - it needs to be production-quality.</p>
+<section id="coming-up" class="level3" data-number="2.3.1">
+<h3 data-number="2.3.1"><span class="header-section-number">2.3.1</span> Coming Up</h3>
+<p>Strategy is clear, we can finally get started: the next chapter will focus on the subscription functionality.<br />
+Getting off the ground will require some initial heavy-lifting: choosing a web framework, setting up the infrastructure for managing database migrations, putting together our application scaffolding as well as our setup for integration testing.<br />
+Expect to spend way more time pair programming with the compiler going forward!</p>
+</section>
+</section>
+<section id="checking-your-progress" class="level2" data-number="2.4">
+<h2 data-number="2.4"><span class="header-section-number">2.4</span> Checking Your Progress</h2>
+<p>One last (but crucial!) detail: there is a public <a href="https://github.com/LukeMathWalker/zero-to-production">GitHub repository</a> for this book.<br />
+The GitHub repository hosts all the code for our newsletter API project. It also includes intermediate snapshots, showing what the project looks like at end of each chapter and key sections.<br />
+If you get stuck, make sure to compare your code with the one in the repository!</p>
+</section>
+</section>
+<section id="footnotes" class="footnotes footnotes-end-of-document" epub:type="footnotes">
+<hr />
+<aside epub:type="footnote" id="fn1">
+<p><a href="#fnref1" class="footnote-back" role="doc-backlink">1</a>. Who knows, I might end up using our home-grown newsletter application to release the final chapter - it would definitely provide me with a sense of closure.</p>
+</aside>
+<aside epub:type="footnote" id="fn2">
+<p><a href="#fnref2" class="footnote-back" role="doc-backlink">2</a>. Make no mistake: when buying a SaaS product it is often not the software itself that you are paying for - you are paying for the peace of mind of knowing that there is an engineering team working full time to keep the service up and running, for their legal and compliance expertise, for their security team. We (developers) often underestimate how much time (and headaches) that saves us over time.</p>
+</aside>
+</section>
+</body>
+</html>

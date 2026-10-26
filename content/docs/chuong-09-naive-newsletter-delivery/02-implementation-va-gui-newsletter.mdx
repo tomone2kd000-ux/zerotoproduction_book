@@ -1,0 +1,250 @@
+---
+title: "9.4 - 9.7 Chiến Lược Triển Khai, Body Schema & Gửi Email"
+description: "Thiết kế Body Schema JSON với Serde, truy vấn dữ liệu bất đồng bộ với SQLx query_as, và tối ưu hóa hiệu năng xử lý lỗi bằng anyhow with_context."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 9.4 - 9.7 Chiến Lược Triển Khai, Body Schema & Gửi Email
+
+Với bộ kiểm thử integration test hoàn chỉnh đã xây dựng ở bài trước, chúng ta có một mạng lưới an toàn tuyệt đối để bắt tay vào triển khai endpoint `POST /newsletters`.
+
+---
+
+## I. Chiến Lược Triển Khai (Implementation Strategy)
+
+Để có được một bản nguyên mẫu (prototype) hoạt động sớm nhất, chúng ta sẽ bắt đầu bằng cách tiếp cận ngây thơ (naive approach):
+1. **Trích xuất thông tin bản tin**: Đọc tiêu đề (`title`) và nội dung (`content`) từ phần thân của HTTP request gửi đến.
+2. **Truy vấn người nhận**: Lấy danh sách toàn bộ người dùng có trạng thái `confirmed` từ PostgreSQL.
+3. **Phát hành email**: Lặp qua từng người trong danh sách và gọi phương thức của `EmailClient` để chuyển thư qua Postmark.
+
+---
+
+## II. Thiết Kế Schema Phần Thân Request (Body Schema)
+
+Để gửi một bức thư điện tử, chúng ta cần tối thiểu:
+- **Tiêu đề (title)**: Dùng làm trường Subject của email.
+- **Nội dung (content)**: Bao gồm cả định dạng thuần văn bản (`text`) và định dạng siêu văn bản (`html`) để phù hợp với mọi ứng dụng đọc email của người nhận.
+
+Chúng ta mô hình hóa cấu trúc này bằng các struct Rust kết hợp derive macro `serde::Deserialize`:
+
+```rust
+//! src/routes/newsletters.rs
+
+#[derive(serde::Deserialize)]
+pub struct BodyData {
+    pub title: String,
+    pub content: Content,
+}
+
+#[derive(serde::Deserialize)]
+pub struct Content {
+    pub html: String,
+    pub text: String,
+}
+```
+
+Ở endpoint `POST /subscriptions`, vì tiếp nhận dữ liệu từ HTML form trên web, chúng ta đã sử dụng định dạng `application/x-www-form-urlencoded` cùng extractor `web::Form`. 
+
+Ở endpoint `POST /newsletters`, đây là một API hướng tới giao tiếp giữa các dịch vụ (Machine-to-Machine REST API), do đó định dạng chuẩn mực nhất là **JSON** (`application/json`). Actix-web cung cấp sẵn extractor `web::Json`:
+
+```rust
+//! src/routes/newsletters.rs
+use actix_web::{web, HttpResponse};
+
+pub async fn publish_newsletter(_body: web::Json<BodyData>) -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+```
+
+### Kiểm thử dữ liệu đầu vào không hợp lệ (Testing Invalid Inputs)
+
+Để đảm bảo parser hoạt động chính xác và từ chối các request sai định dạng với mã `400 Bad Request`, ta bổ sung integration test:
+
+```rust
+//! tests/api/newsletter.rs
+
+#[tokio::test]
+async fn newsletters_returns_400_for_invalid_data() {
+    // Arrange
+    let app = spawn_app().await;
+    let test_cases = vec![
+        (
+            serde_json::json!({
+                "content": {
+                    "text": "Newsletter body as plain text",
+                    "html": "<p>Newsletter body as HTML</p>",
+                }
+            }),
+            "thiếu tiêu đề (missing title)",
+        ),
+        (
+            serde_json::json!({"title": "Newsletter!"}),
+            "thiếu nội dung (missing content)",
+        ),
+    ];
+
+    for (invalid_body, error_message) in test_cases {
+        let response = app.post_newsletters(invalid_body).await;
+
+        // Assert
+        assert_eq!(
+            400,
+            response.status().as_u16(),
+            "API không trả về 400 Bad Request khi payload: {}.",
+            error_message
+        );
+    }
+}
+```
+
+Ta đồng thời thêm hàm helper `post_newsletters` vào `TestApp` trong `tests/api/helpers.rs` để code test trở nên ngắn gọn:
+
+```rust
+//! tests/api/helpers.rs
+
+impl TestApp {
+    pub async fn post_newsletters(&self, body: serde_json::Value) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(&format!("{}/newsletters", &self.address))
+            .json(&body)
+            .send()
+            .await
+            .expect("Failed to execute request.")
+    }
+}
+```
+
+---
+
+## III. Truy Vấn Danh Sách Subscriber Đã Xác Thực
+
+Chúng ta cần một hàm truy vấn cơ sở dữ liệu để lọc ra tất cả các bản ghi có trạng thái `'confirmed'`.
+
+```rust
+//! src/routes/newsletters.rs
+use sqlx::PgPool;
+
+struct ConfirmedSubscriber {
+    email: String,
+}
+
+#[tracing::instrument(name = "Get confirmed subscribers", skip(pool))]
+async fn get_confirmed_subscribers(
+    pool: &PgPool,
+) -> Result<Vec<ConfirmedSubscriber>, anyhow::Error> {
+    let rows = sqlx::query_as!(
+        ConfirmedSubscriber,
+        r#"
+        SELECT email
+        FROM subscriptions
+        WHERE status = 'confirmed'
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    Ok(rows)
+}
+```
+
+Điểm mới ở đây là macro `sqlx::query_as!`. Khác với `query!`, `query_as!` tự động ánh xạ các cột lấy được từ câu lệnh SQL sang các trường tương ứng của struct `ConfirmedSubscriber` tại thời điểm biên dịch (compile-time checked).
+
+<Callout type="info" title="Tối ưu băng thông dữ liệu">
+Lưu ý rằng struct `ConfirmedSubscriber` chỉ chứa đúng một trường `email`. Câu lệnh SQL chỉ lấy đúng cột `email` thay vì `SELECT *`. Đây là nguyên tắc quan trọng trong thiết kế hệ thống lớn: hạn chế tối đa dữ liệu trung chuyển qua mạng, giảm tải cho cả PostgreSQL lẫn bộ nhớ ứng dụng.
+</Callout>
+
+### Xử lý lỗi trong Handler với `PublishError`
+
+Khi tích hợp `get_confirmed_subscribers` vào hàm `publish_newsletter`, thao tác bất đồng bộ này có thể thất bại. Vận dụng kiến thức từ Chương 8, chúng ta định nghĩa kiểu lỗi `PublishError`:
+
+```rust
+//! src/routes/newsletters.rs
+use actix_web::http::StatusCode;
+use actix_web::ResponseError;
+use crate::routes::error_chain_fmt;
+
+#[derive(thiserror::Error)]
+pub enum PublishError {
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error),
+}
+
+impl std::fmt::Debug for PublishError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+impl ResponseError for PublishError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            PublishError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+pub async fn publish_newsletter(
+    body: web::Json<BodyData>,
+    pool: web::Data<PgPool>,
+) -> Result<HttpResponse, PublishError> {
+    let _subscribers = get_confirmed_subscribers(&pool).await?;
+    Ok(HttpResponse::Ok().finish())
+}
+```
+
+---
+
+## IV. Gửi Email Bản Tin & Tối Ưu Hóa Hiệu Năng Xử Lý Lỗi
+
+Bước cuối cùng là lặp qua danh sách người nhận và gửi email bằng `EmailClient`:
+
+```rust
+//! src/routes/newsletters.rs
+use crate::email_client::EmailClient;
+
+pub async fn publish_newsletter(
+    body: web::Json<BodyData>,
+    pool: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>,
+) -> Result<HttpResponse, PublishError> {
+    let subscribers = get_confirmed_subscribers(&pool).await?;
+    for subscriber in subscribers {
+        email_client
+            .send_email(
+                &subscriber.email,
+                &body.title,
+                &body.content.html,
+                &body.content.text,
+            )
+            .await?;
+    }
+    Ok(HttpResponse::Ok().finish())
+}
+```
+
+Đoạn code trên chưa thể biên dịch ngay vì `send_email` trả về `Result<(), reqwest::Error>`, trong khi `PublishError` chỉ bọc `anyhow::Error`. Để gắn ngữ cảnh cụ thể cho lỗi khi gửi thư tới từng địa chỉ, ta sử dụng `anyhow::Context`.
+
+### So sánh: `context` vs `with_context`
+
+```rust
+use anyhow::Context;
+
+email_client
+    .send_email(/* */)
+    .await
+    .with_context(|| {
+        format!("Failed to send newsletter issue to {}", subscriber.email)
+    })?;
+```
+
+Phương thức `with_context` khác gì so với `context` mà chúng ta đã dùng ở Chương 8?
+
+| Tiêu chí | `context` | `with_context` |
+| :--- | :--- | :--- |
+| **Cơ chế đánh giá** | **Eager** (Ngay lập tức) | **Lazy** (Chỉ khi cần thiết) |
+| **Tham số** | Nhận một giá trị cụ thể (`&str`, `String`) | Nhận một Closure `FnOnce() -> C` |
+| **Chi phí cấp phát** | Chuỗi được cấp phát bộ nhớ heap **trong mọi lần gọi** (kể cả khi thành công). | Closure **chỉ được thực thi khi phép toán thất bại (`Err`)**. |
+| **Trường hợp tối ưu** | Thông điệp chuỗi tĩnh cố định: `context("Database query failed")`. | Thông điệp động cần format chuỗi tốn kém: `with_context(\|| format!(...))`. |
+
+Khi gửi bản tin cho hàng ngàn người, nếu dùng `context`, hàm `format!` sẽ liên tục cấp phát chuỗi trên Heap cho từng người nhận dù request gửi đi hoàn toàn thành công. Sử dụng `with_context` giúp loại bỏ hoàn toàn chi phí lãng phí này trên luồng chạy bình thường (happy path).

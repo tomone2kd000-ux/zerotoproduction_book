@@ -1,0 +1,110 @@
+---
+title: "Tổng Quan Chương 3: Sign Up A New Subscriber"
+description: "Chiến lược xây dựng endpoint đăng ký subscriber, kiến trúc Actix-web, kiểm thử tích hợp hộp đen và lưu trữ dữ liệu PostgreSQL với SQLx."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info">
+  **Mục tiêu chương 3:** Xây dựng hoàn chỉnh endpoint `POST /subscriptions` cho phép bạn đọc đăng ký nhận bản tin email newsletter. Trong hành trình này, chúng ta sẽ thiết lập nền móng hạ tầng vững chắc cho toàn bộ dự án: từ việc lựa chọn web framework, làm chủ kiến trúc bất đồng bộ (async), viết bộ kiểm thử tích hợp hộp đen (black-box integration tests), cho đến kết nối cơ sở dữ liệu PostgreSQL với truy vấn được kiểm tra an toàn ngay tại thời điểm biên dịch (compile-time checked queries) bằng SQLx.
+</Callout>
+
+## I. Giới Thiệu Tính Năng & User Story
+
+Ở chương trước, chúng ta đã định hình rõ bức tranh tổng thể về dịch vụ Email Newsletter cần xây dựng cũng như tập hợp các yêu cầu cốt lõi. Giờ là lúc chúng ta bắt tay vào viết những dòng mã nguồn thực tế đầu tiên.
+
+Chương này sẽ hiện thực hóa User Story đầu tiên của hệ thống:
+
+> **Là một** độc giả ghé thăm blog,  
+> **Tôi muốn** đăng ký nhận bản tin email,  
+> **Để** tôi có thể nhận thông báo qua email mỗi khi có bài viết mới được xuất bản trên blog.
+
+```text
++-------------------+      POST /subscriptions       +--------------------------+
+|                   |  Content-Type: application/     |                          |
+|   Trình duyệt     |  x-www-form-urlencoded          |     Backend API Server   |
+|   (Blog Visitor)  | ------------------------------> |     (Actix-web + Rust)   |
+|                   |                                 |                          |
+|                   | <------------------------------ |                          |
++-------------------+           200 OK / 400          +-------------+------------+
+                                                                    |
+                                                                    | INSERT INTO subscriptions
+                                                                    v
+                                                      +--------------------------+
+                                                      |   PostgreSQL Database    |
+                                                      +--------------------------+
+```
+
+Người dùng sẽ nhập địa chỉ email và tên vào một biểu mẫu (HTML form) được nhúng trên trang web. Khi bấm nút gửi, form sẽ kích hoạt một HTTP request đến máy chủ backend để xử lý thông tin, lưu trữ vào cơ sở dữ liệu và gửi phản hồi tương ứng về cho trình duyệt.
+
+Trọng tâm của chương 3 chính là máy chủ backend đó: chúng ta sẽ xây dựng endpoint `POST /subscriptions`.
+
+---
+
+## II. Lộ Trình 11 Chặng Kiến Trúc Trong Chương 3
+
+Để xây dựng một tính năng production-ready từ con số không, có rất nhiều bài toán nền tảng cần giải quyết cùng lúc: chọn web framework, thiết kế chiến lược kiểm thử, chọn thư viện tương tác cơ sở dữ liệu, quản lý migration và viết các câu truy vấn an toàn.
+
+Nếu lao thẳng vào giải quyết tất cả cùng một lúc, bạn sẽ rất dễ bị choáng ngợp. Vì vậy, cuốn sách chia nhỏ lộ trình thành các bước đệm vững chắc:
+
+| Bài học | Chủ đề cốt lõi | Mục tiêu kỹ thuật |
+| :--- | :--- | :--- |
+| **01. Chiến Lược & Chọn Framework** | Khảo sát hệ sinh thái Rust Web | So sánh Actix-web, Rocket, Axum; chốt lựa chọn Actix-web trên nền Tokio runtime |
+| **02. Endpoint Health Check** | Làm chủ kiến trúc Actix-web | Mổ xẻ `HttpServer`, `App`, `Route`, macro `#[tokio::main]`, async `Future` và `HttpResponse` |
+| **03. Integration Testing Thực Chiến** | Kiểm thử hộp đen (Black-box) | Tách biệt binary/library, dùng `reqwest`, chạy nền với `tokio::spawn`, xử lý cổng ngẫu nhiên Port 0 |
+| **04. Xử Lý HTML Forms** | Serialisation & Extractors | Parse POST body `application/x-www-form-urlencoded`, đào sâu trait `FromRequest` và cơ chế Serde |
+| **05. Lưu Trữ Dữ Liệu PostgreSQL** | SQLx & Migrations | So sánh SQLx vs Diesel vs Tokio-Postgres, setup Docker Postgres, viết migration và test compile-time query |
+| **06. Persist Subscriber & App State** | Connection Pool & Test Isolation | Quản lý state với `web::Data<PgPool>`, thực thi `INSERT`, giải quyết xung đột dữ liệu bằng kỹ thuật DB-per-test |
+
+---
+
+## III. Kiến Trúc Tổng Thể Của Ứng Dụng
+
+Sau khi hoàn thành chương 3, kiến trúc ứng dụng của chúng ta sẽ được tổ chức bài bản theo các phân tầng rõ ràng:
+
+```text
+[HTTP Request: POST /subscriptions]
+                |
+                v
++-----------------------------------------------------------------+
+|                       actix-web HttpServer                     |
+|           (Quản lý TCP Listener, Transport, Worker Threads)      |
++-----------------------------------------------------------------+
+                                |
+                                v
++-----------------------------------------------------------------+
+|                         actix-web App                           |
+|       (Routing Table: /health_check, /subscriptions)            |
+|       (Application State: web::Data<PgPool>)                    |
++-----------------------------------------------------------------+
+                                |
+            +-------------------+-------------------+
+            |                                       |
+            v                                       v
+   [GET /health_check]                    [POST /subscriptions]
+            |                                       |
+     health_check handler              +------------+------------+
+            |                          | FromRequest: web::Form  |
+       HttpResponse::Ok                | (Deserialize FormData)  |
+                                       +------------+------------+
+                                                    |
+                                            subscribe handler
+                                                    |
+                                       +------------+------------+
+                                       | sqlx::query! (INSERT)   |
+                                       | mượn connection từ pool |
+                                       +------------+------------+
+                                                    |
+                                                    v
+                                       +-------------------------+
+                                       |   PostgreSQL Database   |
+                                       +-------------------------+
+```
+
+---
+
+## IV. Tư Duy Cốt Lõi Khi Đọc Chương Này
+
+1. **Kiểm thử trước khi triển khai (Test-Driven Mindset):** Mọi endpoint đều được định hình bằng các kiểm thử tích hợp hộp đen trước khi viết logic chi tiết. Nhờ đó, chúng ta kiểm chứng được hành vi thực tế của hệ thống mà không phụ thuộc vào chi tiết cài đặt bên trong.
+2. **Không thỏa hiệp với an toàn kiểu dữ liệu (Type-Safety):** Thay vì kiểm tra truy vấn SQL ở runtime dẫn đến nguy cơ sập production vì lỗi chính tả tên cột, ta tận dụng sức mạnh của SQLx để bắt lỗi ngay trong quá trình `cargo check`.
+3. **Cô lập môi trường kiểm thử tuyệt đối (Test Isolation):** Cơ sở dữ liệu là một "biến toàn cục" tiềm ẩn rủi ro race-condition giữa các test. Chúng ta sẽ giải quyết triệt để vấn đề này bằng cách cấp phát một cơ sở dữ liệu logic riêng biệt cho từng ca kiểm thử.

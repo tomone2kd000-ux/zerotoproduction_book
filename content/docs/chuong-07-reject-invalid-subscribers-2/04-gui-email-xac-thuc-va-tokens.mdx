@@ -1,0 +1,386 @@
+---
+title: "Gửi Email Xác Thực & Quản Lý Subscription Tokens"
+description: "Xây dựng luồng gửi email xác thực với wiremock, trích xuất link với linkify, sườn endpoint GET /subscriptions/confirm và kỹ thuật sinh token ngẫu nhiên an toàn."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+Ở bài trước, chúng ta đã hoàn thành xuất sắc việc nâng cấp cơ sở dữ liệu với kỹ thuật Multi-step Migrations: bảng `subscriptions` đã có cột `status`, và bảng `subscription_tokens` đã sẵn sàng tiếp nhận các mã xác thực.
+
+Bây giờ, chúng ta sẽ kết nối tất cả các thành phần lại với nhau: gửi email xác thực, tạo endpoint xác nhận `GET /subscriptions/confirm` và sinh mã token ngẫu nhiên an toàn.
+
+---
+
+## I. Gửi Email Xác Thực Độc Giả
+
+Theo đúng triết lý TDD, chúng ta bắt đầu bằng một bài test tích hợp kiểm tra xem endpoint `POST /subscriptions` có thực sự kích hoạt việc gửi email qua Postmark hay không:
+
+### 1. Viết Bài Test Ban Đầu (Red Test)
+
+Trong file `tests/api/subscriptions.rs`:
+
+```rust
+//! tests/api/subscriptions.rs
+use crate::helpers::spawn_app;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
+
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_for_valid_data() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    // Thiết lập MockServer kỳ vọng nhận đúng 1 request POST tới /email
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    app.post_subscriptions(body.into()).await;
+
+    // Assert: MockServer sẽ tự động xác nhận số lượng request khi bài test kết thúc
+}
+```
+
+Chạy `cargo test`: Bài test thất bại thảm hại vì endpoint `subscribe` hiện tại chưa hề gọi đến `EmailClient`!
+
+---
+
+### 2. Kết Nối `EmailClient` Vào Request Handler (Green Test)
+
+Để bài test chuyển sang màu xanh, chúng ta tiêm `EmailClient` vào tham số của hàm `subscribe` thông qua `web::Data<EmailClient>`:
+
+```rust
+//! src/routes/subscriptions.rs
+use crate::email_client::EmailClient;
+// [...]
+
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, pool, email_client),
+    fields(
+        subscriber_email = %form.email,
+        subscriber_name = %form.name
+    )
+)]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>, // Tiêm EmailClient!
+) -> HttpResponse {
+    let new_subscriber = match form.0.try_into() {
+        Ok(subscriber) => subscriber,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    if insert_subscriber(&pool, &new_subscriber).await.is_err() {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // Gửi email xác nhận đến độc giả
+    if send_confirmation_email(&email_client, new_subscriber)
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    HttpResponse::Ok().finish()
+}
+
+pub async fn send_confirmation_email(
+    email_client: &EmailClient,
+    new_subscriber: NewSubscriber,
+) -> Result<(), reqwest::Error> {
+    let confirmation_link = "https://my-api-domain.com/subscriptions/confirm?token=mytoken";
+    let plain_body = format!(
+        "Chào mừng bạn đến với bản tin!\nVui lòng truy cập {} để xác nhận đăng ký.",
+        confirmation_link
+    );
+    let html_body = format!(
+        "Chào mừng bạn đến với bản tin!<br />\
+        Vui lòng nhấp vào <a href=\"{}\">đây</a> để xác nhận đăng ký.",
+        confirmation_link
+    );
+    email_client
+        .send_email(
+            &new_subscriber.email,
+            "Chào mừng bạn!",
+            &html_body,
+            &plain_body,
+        )
+        .await
+}
+```
+
+Chạy lại test: **Bài test đã chuyển sang màu xanh (Pass)!**
+
+---
+
+## II. Kiểm Tra Liên Kết Xác Thực Với Thư Viện `linkify`
+
+Một email xác thực chỉ thực sự có ý nghĩa nếu nó chứa một liên kết trỏ về endpoint xác thực của API. Làm thế nào để bài test tích hợp có thể trích xuất liên kết nằm bên trong nội dung email do Mock Server ghi nhận?
+
+Chúng ta sử dụng crate [`linkify`](https://crates.io/crates/linkify) trong `dev-dependencies` để bóc tách URL:
+
+```toml
+# Cargo.toml
+# [...]
+[dev-dependencies]
+linkify = "0.8"
+```
+
+Viết bài test kiểm tra liên kết xác thực:
+
+```rust
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_with_a_link() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    app.post_subscriptions(body.into()).await;
+
+    // Assert: Lấy request mà mock server đã chặn lại
+    let email_request = &app.email_server.received_requests().await.unwrap()[0];
+    let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap();
+
+    // Trích xuất link từ trường HtmlBody
+    let html_content = body["HtmlBody"].as_str().unwrap();
+    let links: Vec<_> = linkify::LinkFinder::new()
+        .links(html_content)
+        .filter(|l| *l.kind() == linkify::LinkKind::Url)
+        .collect();
+
+    assert_eq!(links.len(), 1);
+    let raw_link = links[0].as_str();
+    let confirmation_link = reqwest::Url::parse(raw_link).unwrap();
+
+    // Xác nhận link trỏ đúng về cổng của ứng dụng test
+    assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
+    assert_eq!(confirmation_link.port().unwrap(), app.port);
+    assert_eq!(confirmation_link.path(), "/subscriptions/confirm");
+}
+```
+
+---
+
+## III. Trạng Thái Đăng Ký Ban Đầu: `pending_confirmation`
+
+Khi độc giả mới đăng ký, họ **chưa được phép trở thành subscriber chính thức ngay lập tức**. Trạng thái của họ trong cơ sở dữ liệu phải là `pending_confirmation`.
+
+Chúng ta cập nhật lại câu lệnh SQL trong `insert_subscriber`:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<Uuid, sqlx::Error> {
+    let subscriber_id = Uuid::new_v4();
+    sqlx::query!(
+        r#"
+        INSERT INTO subscriptions (id, email, name, subscribed_at, status)
+        VALUES ($1, $2, $3, $4, 'pending_confirmation')
+        "#,
+        subscriber_id,
+        new_subscriber.email.as_ref(),
+        new_subscriber.name.as_ref(),
+        Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+    Ok(subscriber_id)
+}
+```
+
+---
+
+## IV. Xây Dựng Sườn Endpoint `GET /subscriptions/confirm`
+
+Bây giờ, chúng ta tạo endpoint mới để tiếp nhận request khi người dùng nhấp vào link từ email:
+
+Tạo file mới `src/routes/subscriptions_confirm.rs`:
+
+```rust
+//! src/routes/subscriptions_confirm.rs
+use actix_web::{web, HttpResponse};
+
+#[derive(serde::Deserialize)]
+pub struct Parameters {
+    subscription_token: String,
+}
+
+#[tracing::instrument(name = "Confirm a pending subscriber", skip(parameters))]
+pub async fn confirm(parameters: web::Query<Parameters>) -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+```
+
+Đăng ký route mới này trong `src/startup.rs`:
+
+```rust
+//! src/startup.rs
+use crate::routes::confirm;
+// [...]
+
+App::new()
+    .wrap(TracingLogger::default())
+    .route("/health_check", web::get().to(health_check))
+    .route("/subscriptions", web::post().to(subscribe))
+    // Đăng ký endpoint xác nhận mới!
+    .route("/subscriptions/confirm", web::get().to(confirm))
+    .app_data(db_pool.clone())
+    .app_data(email_client.clone())
+```
+
+Chúng ta viết các bài test tích hợp trong `tests/api/subscriptions_confirm.rs`:
+- Bắn request thiếu query parameter `token`: API phải trả về `400 Bad Request`.
+- Bắn request có `token`: API trả về `200 OK`.
+
+---
+
+## V. Cấu Hình URL Động Với `ApplicationBaseUrl`
+
+Trong hàm `send_confirmation_email`, chúng ta không thể hard-code địa chỉ URL cố định, vì:
+- Khi chạy kiểm thử cục bộ: URL phải trỏ về `http://127.0.0.1:<random-port>`.
+- Khi chạy trên production: URL phải trỏ về domain chính thức của newsletter (ví dụ: `https://newsletter.mydomain.com`).
+
+Chúng ta tạo một struct Newtype đại diện cho cấu hình Base URL:
+
+```rust
+//! src/startup.rs
+
+pub struct ApplicationBaseUrl(pub String);
+```
+
+Và đưa nó vào `app_data` của Actix-web:
+
+```rust
+App::new()
+    // [...]
+    .app_data(Data::new(ApplicationBaseUrl(base_url)))
+```
+
+Trong handler `subscribe`, chúng ta chỉ việc inject `base_url: web::Data<ApplicationBaseUrl>` để sinh ra liên kết xác thực chính xác 100%!
+
+---
+
+## VI. Sinh Subscription Tokens Ngẫu Nhiên An Toàn Bằng `rand`
+
+Token xác thực là chiếc chìa khóa duy nhất bảo vệ danh tính của độc giả. Nếu token quá ngắn hoặc được sinh ra theo quy luật dễ đoán (như số tự tăng 1, 2, 3...), kẻ tấn công có thể dễ dàng đoán mò (brute-force) để tự ý kích hoạt hàng loạt tài khoản trái phép.
+
+<Callout type="warn" title="Tiêu Chuẩn Bảo Mật Của Subscription Token">
+Token xác thực bắt buộc phải thỏa mãn:
+1. **Có tính ngẫu nhiên mật mã cao (Cryptographically secure randomness)**.
+2. **Không gian khóa đủ lớn** để triệt tiêu hoàn toàn nguy cơ trùng lặp (collision) hoặc bị tấn công vét cạn.
+</Callout>
+
+Chúng ta sử dụng crate `rand` để sinh ra một chuỗi ngẫu nhiên dài **25 ký tự chữ và số (alphanumeric)**:
+
+```toml
+# Cargo.toml
+# [...]
+[dependencies]
+rand = { version = "0.8", features = ["std_rng"] }
+```
+
+```rust
+//! src/routes/subscriptions.rs
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+
+/// Sinh mã token xác nhận ngẫu nhiên dài 25 ký tự
+fn generate_subscription_token() -> String {
+    let mut rng = thread_rng();
+    std::iter::repeat_with(|| rng.sample(Alphanumeric))
+        .map(char::from)
+        .take(25)
+        .collect()
+}
+```
+
+### Lưu Token Vào Cơ Sở Dữ Liệu & Kích Hoạt Xác Nhận
+
+Hàm `store_token` thực hiện lưu mã xác nhận liên kết với `subscriber_id`:
+
+```rust
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument(
+    name = "Store subscription token in the database",
+    skip(subscription_token, pool)
+)]
+pub async fn store_token(
+    pool: &PgPool,
+    subscriber_id: Uuid,
+    subscription_token: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO subscription_tokens (subscription_token, subscriber_id)
+        VALUES ($1, $2)"#,
+        subscription_token,
+        subscriber_id
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+    Ok(())
+}
+```
+
+Và trong endpoint `confirm`, khi người dùng nhấp vào link, chúng ta tìm kiếm subscriber tương ứng để nâng cấp trạng thái lên `confirmed`:
+
+```rust
+//! src/routes/subscriptions_confirm.rs
+// [...]
+
+#[tracing::instrument(name = "Confirm a pending subscriber", skip(parameters, pool))]
+pub async fn confirm(
+    parameters: web::Query<Parameters>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let id = match get_subscriber_id_from_token(&pool, &parameters.subscription_token).await {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    match id {
+        // Token không tồn tại trong hệ thống: từ chối với 401 Unauthorized
+        None => HttpResponse::Unauthorized().finish(),
+        // Tìm thấy subscriber: cập nhật trạng thái thành confirmed!
+        Some(subscriber_id) => {
+            if confirm_subscriber(&pool, subscriber_id).await.is_err() {
+                return HttpResponse::InternalServerError().finish();
+            }
+            HttpResponse::Ok().finish()
+        }
+    }
+}
+```
+
+Toàn bộ luồng xác thực từ gửi mail đến click link đã hoàn thành và hoạt động hoàn hảo!
+
+Thế nhưng, hãy dừng lại một chút và nhìn vào hàm `subscribe`: chúng ta đang thực hiện **hai câu lệnh INSERT độc lập** vào database. Điều gì sẽ xảy ra nếu câu lệnh thứ nhất thành công nhưng câu lệnh thứ hai thất bại? 
+
+Đó chính là câu hỏi lớn sẽ được giải quyết trọn vẹn ở bài học cuối cùng về **Database Transactions**!

@@ -1,0 +1,116 @@
+---
+title: "3.1 & 3.2 Chiến Lược Triển Khai & Lựa Chọn Web Framework"
+description: "Định hình lộ trình phát triển bước đệm với health check và đánh giá lựa chọn Web Framework trong hệ sinh thái Rust (Actix-web vs Rocket vs Axum)."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+<Callout type="info">
+  **Ý tưởng chủ đạo:** Khi bắt đầu một dự án mới từ con số không, việc lao ngay vào logic nghiệp vụ phức tạp cùng lúc với việc làm quen framework và cơ sở dữ liệu sẽ dễ dẫn đến quá tải nhận thức (cognitive overload). Việc lựa chọn một endpoint bước đệm tối giản như `/health_check` và chốt một framework trưởng thành, chạy trên runtime phổ biến như `actix-web` sẽ giúp đội ngũ thiết lập quy trình kiểm thử và CI/CD trơn tru ngay từ ngày đầu.
+</Callout>
+
+## I. Chiến Lược Triển Khai (Our Strategy)
+
+Chúng ta đang bắt đầu một dự án hoàn toàn mới từ con số không. Có một khối lượng công việc nền tảng đáng kể cần phải được giải quyết ngay từ những bước đầu tiên:
+
+- **Lựa chọn một web framework** và làm quen với các khái niệm, luồng hoạt động cốt lõi của nó;
+- **Định hình chiến lược kiểm thử** (testing strategy) để đảm bảo chất lượng phần mềm lâu dài;
+- **Chọn một crate phù hợp để tương tác với cơ sở dữ liệu** (chúng ta bắt buộc phải lưu trữ danh sách email đăng ký ở một nơi an toàn);
+- **Quy định phương thức quản lý sự thay đổi schema cơ sở dữ liệu** theo thời gian (thường được biết đến với tên gọi *database migrations*);
+- **Hiện thực hóa các câu truy vấn thực tế** (queries) để đọc và ghi dữ liệu.
+
+Khối lượng công việc trên là rất lớn. Nếu chúng ta "nhắm mắt nhảy thẳng" vào việc cài đặt ngay endpoint `/subscriptions`, rất có thể chúng ta sẽ bị choáng ngợp bởi hàng loạt lỗi biên dịch, xung đột thư viện và sự bối rối trước quá nhiều khái niệm mới cùng lúc.
+
+```text
+[Bắt đầu từ con số 0]
+          |
+          v
++------------------------------------+
+|  Bước đệm: GET /health_check       | <--- Không có nghiệp vụ phức tạp
+|  - Làm quen web framework          | <--- Dựng khung kiểm thử (Integration Test)
+|  - Hiểu rõ HttpServer, App, Route | <--- Chạy CI pipeline kiểm tra tự động
++------------------------------------+
+          |
+          v
++------------------------------------+
+|  Mục tiêu: POST /subscriptions     | <--- Xử lý HTML Forms (application/x-www-form-urlencoded)
+|  - Kết nối PostgreSQL qua SQLx     | <--- Quản lý Database Migrations
+|  - Ghi nhận thông tin Subscriber   | <--- Đảm bảo Test Isolation tuyệt đối
++------------------------------------+
+```
+
+Vì vậy, chúng ta sẽ tạo ra một **bước đệm (stepping stone)** giúp hành trình trở nên nhẹ nhàng và có kiểm soát hơn: trước khi chạm vào `/subscriptions`, chúng ta sẽ triển khai một endpoint cực kỳ đơn giản là `/health_check`.
+
+Endpoint `/health_check` hoàn toàn không chứa bất kỳ logic nghiệp vụ nào. Nhưng đây chính là cơ hội hoàn hảo để chúng ta "làm bạn" với web framework đã chọn, hiểu rõ cấu trúc các thành phần chuyển động bên trong nó và thiết lập sẵn sàng khung kiểm thử tự động.
+
+Trong suốt quá trình này, chúng ta sẽ dựa vào đường ống tích hợp liên tục (Continuous Integration - CI pipeline) đã thiết lập ở Chương 1 để đảm bảo chất lượng từng commit. Nếu bạn chưa hoàn thành bước này, hãy xem lại Chương 1 để trang bị sẵn sàng bộ CI tự động.
+
+---
+
+## II. Lựa Chọn Web Framework Trong Hệ Sinh Thái Rust
+
+Chúng ta nên sử dụng web framework nào để viết API backend bằng Rust?
+
+Nếu dạo một vòng quanh hệ sinh thái Rust, bạn sẽ thấy rất nhiều lựa chọn cạnh tranh sôi nổi:
+- `actix-web`: Framework kỳ cựu, hiệu năng cực cao, hệ sinh thái đồ sộ.
+- `axum`: Framework do chính đội ngũ phát triển Tokio bảo trợ, tích hợp sâu với hệ sinh thái Tower và Hyper.
+- `rocket`: Nổi tiếng với trải nghiệm lập trình (DX) trực quan nhờ lạm dụng macro một cách thanh lịch, ban đầu chỉ chạy trên nightly compiler nhưng sau này đã hỗ trợ stable.
+- `warp`: Framework dựa trên mô hình kết hợp bộ lọc (filter composition), có phong cách lập trình hàm rất độc đáo nhưng thời gian biên dịch và thông báo lỗi kiểu dữ liệu đôi khi rất phức tạp.
+- `poem`, `tide`: Các framework nhẹ nhàng, hiện đại khác.
+
+Trong khuôn khổ cuốn sách *Zero To Production In Rust*, chúng ta quyết định lựa chọn **`actix-web`**.
+
+```text
++--------------------------------------------------------------------------+
+|                           HỆ SINH THÁI RUST WEB                          |
+|                                                                          |
+|   +--------------------+     +------------------+     +--------------+   |
+|   |     actix-web      |     |       axum       |     |    rocket    |   |
+|   | (Kỳ cựu, Production|     | (Chính chủ Tokio,|     | (DX thân     |   |
+|   |  proven, Ecosystem)|     |  Tower services) |     |  thiện)      |   |
+|   +---------+----------+     +--------+---------+     +-------+------+   |
+|             \                         |                      /           |
+|              \                        |                     /            |
+|               +-----------------------+--------------------+             |
+|                                       |                                  |
+|                                       v                                  |
+|                       +-------------------------------+                  |
+|                       |         Tokio Runtime         |                  |
+|                       |   (Async Event Loop & IO)     |                  |
+|                       +-------------------------------+                  |
++--------------------------------------------------------------------------+
+```
+
+### Tại sao lại là `actix-web`?
+
+Lựa chọn `actix-web` dựa trên các yếu tố thực tế sau:
+
+1. **Được kiểm chứng qua môi trường Production thực tế (Production-proven):** `actix-web` là một trong những framework lâu đời nhất của Rust. Nó đã trải qua nhiều năm tôi luyện trong các môi trường chịu tải cao của các doanh nghiệp lớn, từ đó các lỗi bảo mật, tranh chấp tài nguyên hay rò rỉ bộ nhớ đều đã được phát hiện và xử lý triệt để.
+2. **Cộng đồng và hệ sinh thái plugin rộng lớn:** Nhờ tuổi đời và độ phổ biến, bạn có thể dễ dàng tìm thấy giải pháp cho hầu hết các vấn đề thường gặp: từ xác thực (authentication), quản lý session, nén dữ liệu (compression) đến ghi nhận telemetry. Khi gặp khó khăn, cộng đồng trên Discord và GitHub luôn sẵn sàng giải đáp.
+3. **Chạy trực tiếp trên nền tảng `tokio`:** `actix-web` (từ phiên bản v3 trở đi và hoàn thiện ở v4) vận hành hoàn toàn trên nền tảng runtime bất đồng bộ `tokio`. Điều này có ý nghĩa sống còn: nó giảm thiểu tối đa các xung đột về tính tương thích (incompatibility/interop) giữa các runtime async khác nhau trong hệ sinh thái Rust (chẳng hạn như việc cố gắng chạy một thư viện viết cho `tokio` bên trong runtime `async-std`).
+
+<Callout type="tip">
+  **Tài liệu tra cứu nên ghim sẵn trên trình duyệt:**  
+  Trong suốt quá trình thực hành chương này và các chương kế tiếp, bạn nên mở sẵn 3 tab trình duyệt:
+  - Trang chủ chính thức: [actix.rs](https://actix.rs/)
+  - Tài liệu API chi tiết: [docs.rs/actix-web](https://docs.rs/actix-web/)
+  - Kho ví dụ mẫu phong phú: [github.com/actix/examples](https://github.com/actix/examples)
+</Callout>
+
+---
+
+## III. Góc Nhìn Senior Architect: Quản Trị Rủi Ro Khi Chọn Tech Stack
+
+<details>
+<summary><b>🔍 Phân tích kiến trúc: "Tại sao tính tương thích của Async Runtime lại quan trọng?"</b></summary>
+
+Trong các ngôn ngữ như Go hay Java/Node.js, runtime bất đồng bộ (event loop, goroutine scheduler) được tích hợp sẵn trong runtime chuẩn của ngôn ngữ. Mọi thư viện bên thứ ba đều mặc định giao tiếp qua một cơ chế thống nhất.
+
+Ngược lại, Rust thiết kế theo triết lý **Zero-Cost Abstraction** và **tách rời runtime khỏi thư viện chuẩn (Standard Library)**. Thư viện chuẩn của Rust chỉ định nghĩa trait nền tảng `Future`. Việc thực thi (executor) và điều phối tác vụ (reactor) hoàn toàn do các thư viện bên thứ ba đảm nhiệm (nổi tiếng nhất là `tokio` và `async-std`).
+
+Nếu bạn chọn một web framework chạy trên `async-std` nhưng lại chọn một database driver hoặc HTTP client phụ thuộc cứng vào `tokio` primitives (như TCP sockets, timers), bạn sẽ rơi vào thảm họa "Runtime Mismatch":
+- Ứng dụng sẽ bị panic lúc runtime với lỗi kinh điển `there is no reactor running, must be called from the context of a Tokio 1.x runtime`.
+- Phải dùng các adapter cầu nối phức tạp, làm giảm hiệu năng và gây khó khăn khi debug.
+
+Việc chọn `actix-web` — một framework chuẩn hóa hoàn toàn trên nền `tokio` — đồng bộ hoàn hảo với các crate công nghiệp khác như `sqlx`, `reqwest` và `tracing`. Đây là một quyết định kiến trúc mang tính bảo thủ nhưng cực kỳ an toàn cho các hệ thống thương mại dài hạn.
+</details>

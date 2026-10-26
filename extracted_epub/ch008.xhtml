@@ -1,0 +1,1155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <title>ch008.xhtml</title>
+  <style>
+    /* CSS for syntax highlighting */
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+      }
+    pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+    div.sourceCode
+      { color: #cccccc; background-color: #303030; }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ffcfaf; } /* Alert */
+    code span.an { color: #7f9f7f; font-weight: bold; } /* Annotation */
+    code span.at { } /* Attribute */
+    code span.bn { color: #dca3a3; } /* BaseN */
+    code span.bu { } /* BuiltIn */
+    code span.cf { color: #f0dfaf; } /* ControlFlow */
+    code span.ch { color: #dca3a3; } /* Char */
+    code span.cn { color: #dca3a3; font-weight: bold; } /* Constant */
+    code span.co { color: #7f9f7f; } /* Comment */
+    code span.cv { color: #7f9f7f; font-weight: bold; } /* CommentVar */
+    code span.do { color: #7f9f7f; } /* Documentation */
+    code span.dt { color: #dfdfbf; } /* DataType */
+    code span.dv { color: #dcdccc; } /* DecVal */
+    code span.er { color: #c3bf9f; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #c0bed1; } /* Float */
+    code span.fu { color: #efef8f; } /* Function */
+    code span.im { } /* Import */
+    code span.in { color: #7f9f7f; font-weight: bold; } /* Information */
+    code span.kw { color: #f0dfaf; } /* Keyword */
+    code span.op { color: #f0efd0; } /* Operator */
+    code span.ot { color: #efef8f; } /* Other */
+    code span.pp { color: #ffcfaf; font-weight: bold; } /* Preprocessor */
+    code span.sc { color: #dca3a3; } /* SpecialChar */
+    code span.ss { color: #cc9393; } /* SpecialString */
+    code span.st { color: #cc9393; } /* String */
+    code span.va { } /* Variable */
+    code span.vs { color: #cc9393; } /* VerbatimString */
+    code span.wa { color: #7f9f7f; font-weight: bold; } /* Warning */
+  </style>
+  <link rel="stylesheet" type="text/css" href="../styles/stylesheet1.css" />
+</head>
+<body epub:type="bodymatter">
+<section id="going-live" class="level1" data-number="5">
+<h1 data-number="5"><span class="header-section-number">5</span> Going Live</h1>
+<p>We have a working prototype of our newsletter API - it is now time to take it <strong>live</strong>.<br />
+We will learn how to package our Rust application as a Docker container to deploy it on DigitalOcean’s <a href="https://www.digitalocean.com/docs/app-platform/">App Platform</a>.<br />
+At the end of the chapter we will have a <strong>C</strong>ontinuous <strong>D</strong>eployment (CD) pipeline: every commit to the <code>main</code> branch will <em>automatically</em> trigger the deployment of the latest version of the application to our users.</p>
+<section id="we-must-talk-about-deployments" class="level2" data-number="5.1">
+<h2 data-number="5.1"><span class="header-section-number">5.1</span> We Must Talk About Deployments</h2>
+<p>Everybody loves to talk about how important it is to deploy software to production as often as possible (and I put myself in that bunch!).</p>
+<blockquote>
+<p>“Get customer feedback early!”<br />
+“Ship often and iterate on the product!”</p>
+</blockquote>
+<p>But nobody shows you <em>how</em>.</p>
+<p>Pick a random book on web development or an introduction to framework XYZ.<br />
+Most will not dedicate more than a paragraph to the topic of deployments.<br />
+A few will have a chapter about it - usually towards the end of the book, the part you never get to actually read.<br />
+A handful actually give it the space it deserves, as early as they reasonably can.</p>
+<p>Why?</p>
+<p>Because deployments are (still) a messy business.<br />
+There are many vendors, most are not straight-forward to use and what is considered state-of-art or best-practice tends to change really quickly<a href="#fn1" class="footnote-ref" id="fnref1" epub:type="noteref">1</a>.<br />
+That is why most authors steer away from the topic: it takes many pages and it is painful to write something down to realise, one or two years later, that it is already out of date.</p>
+<p>Nonetheless deployments are a prominent concern in the daily life of a software engineer - e.g. it is difficult to talk about database schema migrations, domain validation and API evolution without taking into account your deployment process.<br />
+We simply cannot ignore the topic in a book called <em>Zero To Production</em>.</p>
+</section>
+<section id="choosing-our-tools" class="level2" data-number="5.2">
+<h2 data-number="5.2"><span class="header-section-number">5.2</span> Choosing Our Tools</h2>
+<p>The purpose of this chapter is to get you to experience, first hand, what it means to <em>actually</em> deploy on every commit to your <code>main</code> branch.<br />
+That is why we are talking about deployment as early as chapter five: to give you the chance to practice this muscle for the rest of the book, as you would actually be doing if this was a real commercial project.<br />
+We are particularly interested, in fact, on how the engineering practice of continuous deployment influences our design choices and development habits.</p>
+<p>At the same time, building the perfect continuous deployment pipeline is not the focus of the book - it deserves a book on its own, probably a whole company.<br />
+We have to be pragmatic and strike a balance between intrinsic usefulness (i.e. learn a tool that is valued in the industry) and developer experience.<br />
+And even if we spent the time to hack together the “best” setup, you are still likely to end up choosing different tools and different vendors due to the specific constraints of your organisation.</p>
+<p>What matters is the underlying <em>philosophy</em> and getting you to try continuous deployment as a practice.</p>
+<section id="virtualisation-docker" class="level3" data-number="5.2.1">
+<h3 data-number="5.2.1"><span class="header-section-number">5.2.1</span> Virtualisation: Docker</h3>
+<p>Our local development environment and our production environment serve two very different purposes.<br />
+Browsers, IDEs, our music playlists - they can co-exist on our local machine. It is a multi-purpose workstation.<br />
+Production environments, instead, have a much narrower focus: running our software to make it available to our users. Anything that is not strictly related to that goal is either a waste of resources, at best, or a security liability, at worst.</p>
+<p>This discrepancy has historically made deployments fairly troublesome, leading to the now meme-ified complaint “It works on my machine!”.<br />
+It is not enough to copy the source code to our production servers. Our software is likely to make assumptions on the capabilities exposed by the underlying operating system (e.g. a native Windows application will not run on Linux), on the availability of other software on the same machine (e.g. a certain version of the Python interpreter) or on its configuration (e.g. do I have root permissions?).<br />
+Even if we started with two identical environments we would, over time, run into troubles as versions drift and subtle inconsistencies come up to haunt our nights and weekends.</p>
+<p>The easiest way to ensure that our software runs correctly is to tightly control the <em>environment</em> it is being executed into.</p>
+<p>This is the fundamental idea behind virtualisation technology: what if, instead of shipping code to production, you could ship a self-contained environment that included your application?!<br />
+It would work great for both sides: less Friday-night surprises for you, the developer; a consistent abstraction to build on top of for those in charge of the production infrastructure.<br />
+Bonus points if the environment itself can be specified as code to ensure reproducibility.</p>
+<p>The nice thing about virtualisation is that it exists and it has been mainstream for almost a decade now.<br />
+As for most things in technology, you have a few options to choose from depending on your needs: virtual machines, containers (e.g. <a href="https://www.docker.com/resources/what-container">Docker</a>) and a few others (e.g. <a href="https://firecracker-microvm.github.io/">Firecracker</a>).</p>
+<p>We will go with the mainstream and ubiquitous option - Docker containers.</p>
+</section>
+<section id="hosting-digitalocean" class="level3" data-number="5.2.2">
+<h3 data-number="5.2.2"><span class="header-section-number">5.2.2</span> Hosting: DigitalOcean</h3>
+<p><a href="https://aws.amazon.com/">AWS</a>, <a href="https://cloud.google.com/">Google Cloud</a>, <a href="https://azure.microsoft.com/en-gb/">Azure</a>, <a href="https://www.digitalocean.com/">Digital Ocean</a>, <a href="https://www.clever-cloud.com/en/">Clever Cloud</a>, <a href="https://www.heroku.com/">Heroku</a>, <a href="https://www.qovery.com/">Qovery</a>…<br />
+The list of vendors you can pick from to host your software goes on and on.<br />
+People have made a successful business out of recommending the best cloud tailored to your specific needs and usecases - not my job (yet) or the purpose of this book.</p>
+<p>We are looking for something that is easy to use (great developer experience, minimal unnecessary complexity) and fairly established.<br />
+In November 2020, the intersection of those two requirements seems to be Digital Ocean, in particular their newly launched App Platform proposition.</p>
+<blockquote>
+<p>Disclaimer: Digital Ocean is not paying me to promote their services here.</p>
+</blockquote>
+</section>
+</section>
+<section id="a-dockerfile-for-our-application" class="level2" data-number="5.3">
+<h2 data-number="5.3"><span class="header-section-number">5.3</span> A Dockerfile For Our Application</h2>
+<p>DigitalOcean’s App Platform has <a href="https://www.digitalocean.com/docs/app-platform/languages-frameworks/docker/">native support for deploying containerised applications</a>.<br />
+This is going to be our first task: we have to write a Dockerfile to build and execute our application as a Docker container.</p>
+<section id="dockerfiles" class="level3" data-number="5.3.1">
+<h3 data-number="5.3.1"><span class="header-section-number">5.3.1</span> Dockerfiles</h3>
+<p>A Dockerfile is a <em>recipe</em> for your application environment.<br />
+They are organised in layers: you start from a base <em>image</em> (usually an OS enriched with a programming language toolchain) and execute a series of commands (<code>COPY</code>, <code>RUN</code>, etc.), one after the other, to build the environment you need.</p>
+<p>Let’s have a look at the simplest possible Dockerfile for a Rust project:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co"># We use the latest Rust stable release as base image</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> rust:1.72.0</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Let&#39;s switch our working directory to `app` (equivalent to `cd app`)</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># The `app` folder will be created for us by Docker in case it does not </span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="co"># exist already.</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Install the required system dependencies for our linking configuration</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">apt</span> update <span class="kw">&amp;&amp;</span> <span class="ex">apt</span> install lld clang <span class="at">-y</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Copy all files from our working environment to our Docker image </span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> . .</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Let&#39;s build our binary!</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="co"># We&#39;ll use the release profile to make it faaaast</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">cargo</span> build <span class="at">--release</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="co"># When `docker run` is executed, launch the binary!</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;./target/release/zero2prod&quot;</span>]</span></code></pre></div>
+<p>Save it in a file named <code>Dockerfile</code> in the root directory of our git repository:</p>
+<pre class="text"><code>zero2prod/
+  .github/
+  migrations/
+  scripts/
+  src/
+  tests/
+  .gitignore
+  Cargo.lock
+  Cargo.toml
+  configuration.yaml
+  Dockerfile</code></pre>
+<p>The process of executing those commands to get an image is called <em>building</em>.<br />
+Using the Docker CLI:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Build a docker image tagged as &quot;zero2prod&quot; according to the recipe</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="co"># specified in `Dockerfile`</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> build <span class="at">--tag</span> zero2prod <span class="at">--file</span> Dockerfile .</span></code></pre></div>
+<p>What does the <code>.</code> at the end of the command stand for?</p>
+</section>
+<section id="build-context" class="level3" data-number="5.3.2">
+<h3 data-number="5.3.2"><span class="header-section-number">5.3.2</span> Build Context</h3>
+<p><code>docker build</code> generates an image starting from a recipe (the Dockerfile) and a <em>build context</em>.<br />
+You can picture the Docker image you are building as its own fully isolated environment.<br />
+The only point of contact between the image and your local machine are commands like <code>COPY</code> or <code>ADD</code><a href="#fn2" class="footnote-ref" id="fnref2" epub:type="noteref">2</a>: the build context determines what files on your host machine are visible inside the Docker container to <code>COPY</code> and its friends.</p>
+<p>Using <code>.</code> we are telling Docker to use the current directory as the build context for this image; <code>COPY . app</code> will therefore copy all files from the current directory (including our source code!) into the <code>app</code> directory of our Docker image.<br />
+Using <code>.</code> as build context implies, for example, that Docker will not allow <code>COPY</code> to see files from the parent directory or from arbitrary paths on your machine into the image.</p>
+<p>You could use a different path or even a URL (!) as build context depending on your needs.</p>
+</section>
+<section id="sqlx-offline-mode" class="level3" data-number="5.3.3">
+<h3 data-number="5.3.3"><span class="header-section-number">5.3.3</span> Sqlx Offline Mode</h3>
+<p>If you were eager enough, you might have already launched the build command… just to realise it doesn’t work!</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> build <span class="at">--tag</span> zero2prod <span class="at">--file</span> Dockerfile .</span></code></pre></div>
+<pre class="text"><code># [...]
+Step 4/5 : RUN cargo build --release
+# [...]
+error: error communicating with the database: 
+Cannot assign requested address (os error 99)
+  --&gt; src/routes/subscriptions.rs:35:5
+   |
+35 | /     sqlx::query!(
+36 | |         r#&quot;
+37 | |     INSERT INTO subscriptions (id, email, name, subscribed_at)
+38 | |     VALUES ($1, $2, $3, $4)
+...  |
+43 | |         Utc::now()
+44 | |     )
+   | |_____^
+   |
+   = note: this error originates in a macro</code></pre>
+<p>What is going on?<br />
+<code>sqlx</code> calls into our database at compile-time to ensure that all queries can be successfully executed considering the schemas of our tables.<br />
+When running <code>cargo build</code> inside our Docker image, though, <code>sqlx</code> fails to establish a connection with the database that the <code>DATABASE_URL</code> environment variable in the <code>.env</code> file points to.</p>
+<p>How do we fix it?</p>
+<p>We could allow our image to talk to a database running on our local machine at build time using the <code>--network</code> flag. This is the strategy we follow in our CI pipeline given that we need the database anyway to run our integration tests.<br />
+Unfortunately it is somewhat troublesome to pull off for Docker builds due to how Docker networking is implemented on different operating systems (e.g. MacOS) and would significantly compromise how reproducible our builds are.</p>
+<p>A better option is to use the <strong>offline mode</strong> for <code>sqlx</code>.<br />
+We need to lean on <code>sqlx</code>’s CLI. The command we are looking for is <code>sqlx prepare</code>. Let’s look at its help message:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">sqlx</span> prepare <span class="at">--help</span></span></code></pre></div>
+<pre class="text"><code>sqlx-prepare
+Generate query metadata to support offline compile-time verification.
+
+Saves metadata for all invocations of `query!` and related macros to a 
+`.sqlx` directory in the current directory (or workspace root with 
+`--workspace`), overwriting if needed.
+
+During project compilation, the absence of the `DATABASE_URL` environment
+variable or the presence of `SQLX_OFFLINE` (with a value of `true` or `1`)
+will constrain the compile-time verification to only read from the cached 
+query metadata.
+
+USAGE:
+    sqlx prepare [FLAGS] [-- &lt;args&gt;...]
+
+ARGS:
+    &lt;args&gt;...
+            Arguments to be passed to `cargo rustc ...`
+
+FLAGS:
+        --check
+            Run in &#39;check&#39; mode. Exits with 0 if the query metadata 
+            is up-to-date. 
+            Exits with 1 if the query metadata needs updating
+        --workspace
+          Generate a single workspace-level `.sqlx` folder</code></pre>
+<p>In other words, <code>prepare</code> performs the same work that is usually done when <code>cargo build</code> is invoked but it saves the outcome of those queries into a directory (<code>.sqlx</code>) which can later be detected by <code>sqlx</code> itself and used to skip the queries altogether and perform an offline build.</p>
+<p>Let’s invoke it!</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">cargo</span> sqlx prepare <span class="at">--workspace</span></span></code></pre></div>
+<pre class="text"><code>query data written to `.sqlx` in the workspace root;  
+please check this into version control</code></pre>
+<p>Let’s commit the entire folder to version control, as the command output suggests.<br />
+We can then set the <code>SQLX_OFFLINE</code> environment variable to <code>true</code> in our Dockerfile to force <code>sqlx</code> to look at the saved metadata instead of trying to query a live database:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> rust:1.72.0</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">apt</span> update <span class="kw">&amp;&amp;</span> <span class="ex">apt</span> install lld clang <span class="at">-y</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> . .</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> SQLX_OFFLINE true</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">cargo</span> build <span class="at">--release</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;./target/release/zero2prod&quot;</span>]</span></code></pre></div>
+<p>Let’s try again to build our Docker container:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> build <span class="at">--tag</span> zero2prod <span class="at">--file</span> Dockerfile .</span></code></pre></div>
+<p>There should be no errors this time!<br />
+We have a problem though: how do we ensure that th queries in <code>.sqlx</code> do not go out of sync (e.g. when the schema of our database changes or when we add new queries)?</p>
+<p>We can use the <code>--check</code> flag in our CI pipeline to ensure that it stays up-to-date - check the updated pipeline definition in the <a href="https://github.com/LukeMathWalker/zero-to-production">book GitHub repository</a> as a reference.</p>
+</section>
+<section id="running-an-image" class="level3" data-number="5.3.4">
+<h3 data-number="5.3.4"><span class="header-section-number">5.3.4</span> Running An Image</h3>
+<p>When building our image we attached a tag to it, <code>zero2prod</code>:</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> build <span class="at">--tag</span> zero2prod <span class="at">--file</span> Dockerfile .</span></code></pre></div>
+<p>We can use the tag to refer to the image in other commands. In particular, to <em>run it</em>:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> run zero2prod</span></code></pre></div>
+<p><code>docker run</code> will trigger the execution of the command we specified in our <code>ENTRYPOINT</code> statement:</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;./target/release/zero2prod&quot;</span>]</span></code></pre></div>
+<p>In our case, it will execute our binary therefore launching our API.<br />
+Let’s launch our image then!</p>
+<p>You should immediately see an error:</p>
+<pre class="text"><code>thread &#39;main&#39; panicked at 
+  &#39;Failed to connect to Postgres: 
+   Io(Os { 
+     code: 99, 
+     kind: AddrNotAvailable, 
+     message: &quot;Cannot assign requested address&quot; 
+   })&#39;</code></pre>
+<p>This is coming from this line in our <code>main</code> function:</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/main.rs</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="co">//! [...]</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>main<span class="at">]</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> main() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">,</span> <span class="pp">std::io::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> connection_pool <span class="op">=</span> <span class="pp">PgPool::</span>connect(</span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>            <span class="op">&amp;</span>configuration<span class="op">.</span>database<span class="op">.</span>connection_string()<span class="op">.</span>expose_secret()</span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to connect to Postgres.&quot;</span>)<span class="op">;</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We can relax our requirements by using <a href="https://docs.rs/sqlx/0.7.1/sqlx/struct.Pool.html#method.connect_lazy"><code>connect_lazy</code></a> - it will only try to establish a connection when the pool is used for the first time.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/main.rs</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="co">//! [...]</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>main<span class="at">]</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> main() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">,</span> <span class="pp">std::io::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">// No longer async, given that we don&#39;t actually try to connect!</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> connection_pool <span class="op">=</span> <span class="pp">PgPool::</span>connect_lazy(</span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>            <span class="op">&amp;</span>configuration<span class="op">.</span>database<span class="op">.</span>connection_string()<span class="op">.</span>expose_secret()</span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to create Postgres connection pool.&quot;</span>)<span class="op">;</span></span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We can now re-build the Docker image and run it again: you should immediately see a couple of log lines! Let’s open another terminal and try to make a request to our health check endpoint:</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> http://127.0.0.1:8000/health_check</span></code></pre></div>
+<pre class="text"><code>curl: (7) Failed to connect to 127.0.0.1 port 8000: Connection refused</code></pre>
+<p>Not great.</p>
+</section>
+<section id="networking" class="level3" data-number="5.3.5">
+<h3 data-number="5.3.5"><span class="header-section-number">5.3.5</span> Networking</h3>
+<p>By default, Docker images do not expose their ports to the underlying host machine. We need to do it explicitly using the <code>-p</code> flag.<br />
+Let’s kill our running image to launch it again using:</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> run <span class="at">-p</span> 8000:8000 zero2prod</span></code></pre></div>
+<p>Trying to hit the health check endpoint will trigger the same error message.<br />
+We need to dig into our <code>main.rs</code> file to understand why:</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/main.rs</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">zero2prod::configuration::</span>get_configuration<span class="op">;</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">zero2prod::startup::</span>run<span class="op">;</span></span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">zero2prod::telemetry::</span><span class="op">{</span>get_subscriber<span class="op">,</span> init_subscriber<span class="op">};</span></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">sqlx::postgres::</span>PgPool<span class="op">;</span></span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">std::net::</span>TcpListener<span class="op">;</span></span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>main<span class="at">]</span></span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> main() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">,</span> <span class="pp">std::io::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb21-10"><a href="#cb21-10" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> subscriber <span class="op">=</span> get_subscriber(</span>
+<span id="cb21-11"><a href="#cb21-11" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;zero2prod&quot;</span><span class="op">.</span>into()<span class="op">,</span> <span class="st">&quot;info&quot;</span><span class="op">.</span>into()<span class="op">,</span> <span class="pp">std::io::</span>stdout</span>
+<span id="cb21-12"><a href="#cb21-12" aria-hidden="true" tabindex="-1"></a>    )<span class="op">;</span></span>
+<span id="cb21-13"><a href="#cb21-13" aria-hidden="true" tabindex="-1"></a>    init_subscriber(subscriber)<span class="op">;</span></span>
+<span id="cb21-14"><a href="#cb21-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-15"><a href="#cb21-15" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> configuration <span class="op">=</span> get_configuration()<span class="op">.</span>expect(<span class="st">&quot;Failed to read configuration.&quot;</span>)<span class="op">;</span></span>
+<span id="cb21-16"><a href="#cb21-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> connection_pool <span class="op">=</span> <span class="pp">PgPool::</span>connect_lazy(</span>
+<span id="cb21-17"><a href="#cb21-17" aria-hidden="true" tabindex="-1"></a>            <span class="op">&amp;</span>configuration<span class="op">.</span>database<span class="op">.</span>connection_string()<span class="op">.</span>expose_secret()</span>
+<span id="cb21-18"><a href="#cb21-18" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb21-19"><a href="#cb21-19" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to create Postgres connection pool.&quot;</span>)<span class="op">;</span></span>
+<span id="cb21-20"><a href="#cb21-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-21"><a href="#cb21-21" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> address <span class="op">=</span> <span class="pp">format!</span>(<span class="st">&quot;127.0.0.1:{}&quot;</span><span class="op">,</span> configuration<span class="op">.</span>application_port)<span class="op">;</span></span>
+<span id="cb21-22"><a href="#cb21-22" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> listener <span class="op">=</span> <span class="pp">TcpListener::</span>bind(address)<span class="op">?;</span></span>
+<span id="cb21-23"><a href="#cb21-23" aria-hidden="true" tabindex="-1"></a>    run(listener<span class="op">,</span> connection_pool)<span class="op">?.</span><span class="kw">await</span><span class="op">?;</span></span>
+<span id="cb21-24"><a href="#cb21-24" aria-hidden="true" tabindex="-1"></a>    <span class="cn">Ok</span>(())</span>
+<span id="cb21-25"><a href="#cb21-25" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We are using <code>127.0.0.1</code> as our host in <code>address</code> - we are instructing our application to only accept connections coming from the same machine.<br />
+However, we are firing a GET request to <code>/health_check</code> from the host machine, which is not seen as local by our Docker image, therefore triggering the <code>Connection refused</code> error we have just seen.</p>
+<p>We need to use <code>0.0.0.0</code> as host to instruct our application to accept connections from any network interface, not just the local one.<br />
+We should be careful though: using <code>0.0.0.0</code> significantly increases the “audience” of our application, with <a href="https://github.com/sinatra/sinatra/issues/1369">some security implications</a>.<br />
+The best way forward is to make the host portion of our <code>address</code> configurable - we will keep using <code>127.0.0.1</code> for our local development and set it to <code>0.0.0.0</code> in our Docker images.</p>
+</section>
+<section id="hierarchical-configuration" class="level3" data-number="5.3.6">
+<h3 data-number="5.3.6"><span class="header-section-number">5.3.6</span> Hierarchical Configuration</h3>
+<p>Our <code>Settings</code> struct currently looks like this:</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> Settings <span class="op">{</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> database<span class="op">:</span> DatabaseSettings<span class="op">,</span></span>
+<span id="cb22-7"><a href="#cb22-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> application_port<span class="op">:</span> <span class="dt">u16</span><span class="op">,</span></span>
+<span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb22-12"><a href="#cb22-12" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> username<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb22-13"><a href="#cb22-13" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> password<span class="op">:</span> Secret<span class="op">&lt;</span><span class="dt">String</span><span class="op">&gt;,</span></span>
+<span id="cb22-14"><a href="#cb22-14" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> port<span class="op">:</span> <span class="dt">u16</span><span class="op">,</span></span>
+<span id="cb22-15"><a href="#cb22-15" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> host<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb22-16"><a href="#cb22-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> database_name<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb22-17"><a href="#cb22-17" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb22-18"><a href="#cb22-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-19"><a href="#cb22-19" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span></code></pre></div>
+<p>Let’s introduce another struct, <code>ApplicationSettings</code>, to group together all configuration values related to our application address:</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> Settings <span class="op">{</span></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> database<span class="op">:</span> DatabaseSettings<span class="op">,</span></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> application<span class="op">:</span> ApplicationSettings<span class="op">,</span></span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> ApplicationSettings <span class="op">{</span></span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> port<span class="op">:</span> <span class="dt">u16</span><span class="op">,</span></span>
+<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> host<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb23-11"><a href="#cb23-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb23-12"><a href="#cb23-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-13"><a href="#cb23-13" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span></code></pre></div>
+<p>We need to update our <code>configuration.yaml</code> file to match the new structure:</p>
+<div class="sourceCode" id="cb24"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! configuration.yaml</span></span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="fu">application</span><span class="kw">:</span></span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">port</span><span class="kw">:</span><span class="at"> </span><span class="dv">8000</span></span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">host</span><span class="kw">:</span><span class="at"> </span><span class="fl">127.0.0.1</span></span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a><span class="fu">database</span><span class="kw">:</span></span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a><span class="co">  # [...]</span></span></code></pre></div>
+<p>as well as our <code>main.rs</code>, where we will leverage the new configurable <code>host</code> field:</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/main.rs</span></span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>main<span class="at">]</span></span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> main() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">,</span> <span class="pp">std::io::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> address <span class="op">=</span> <span class="pp">format!</span>(</span>
+<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;{}:{}&quot;</span><span class="op">,</span></span>
+<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a>        configuration<span class="op">.</span>application<span class="op">.</span>host<span class="op">,</span> configuration<span class="op">.</span>application<span class="op">.</span>port</span>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>    )<span class="op">;</span></span>
+<span id="cb25-11"><a href="#cb25-11" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb25-12"><a href="#cb25-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>The host is now read from configuration, but how do we use a different value for different environments?<br />
+We need to make our configuration <em>hierarchical</em>.</p>
+<p>Let’s have a look at <code>get_configuration</code>, the function in charge of loading our <code>Settings</code> struct:</p>
+<div class="sourceCode" id="cb26"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">fn</span> get_configuration() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>Settings<span class="op">,</span> <span class="pp">config::</span>ConfigError<span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Initialise our configuration reader</span></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> settings <span class="op">=</span> <span class="pp">config::Config::</span>builder()</span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Add configuration values from a file named `configuration.yaml`.</span></span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>add_source(</span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a>            <span class="pp">config::File::</span>new(<span class="st">&quot;configuration.yaml&quot;</span><span class="op">,</span> <span class="pp">config::FileFormat::</span>Yaml)</span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb26-11"><a href="#cb26-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>build()<span class="op">?;</span></span>
+<span id="cb26-12"><a href="#cb26-12" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Try to convert the configuration values it read into</span></span>
+<span id="cb26-13"><a href="#cb26-13" aria-hidden="true" tabindex="-1"></a>    <span class="co">// our Settings type</span></span>
+<span id="cb26-14"><a href="#cb26-14" aria-hidden="true" tabindex="-1"></a>    settings<span class="op">.</span><span class="pp">try_deserialize::</span><span class="op">&lt;</span>Settings<span class="op">&gt;</span>()</span>
+<span id="cb26-15"><a href="#cb26-15" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We are reading from a file named <code>configuration</code> to populate <code>Settings</code>’s fields. There is no further room for tuning the values specified in our <code>configuration.yaml</code>.<br />
+Let’s take a more refined approach. We will have:</p>
+<ul>
+<li>A base configuration file, for values that are shared across our local and production environment (e.g. database name);</li>
+<li>A collection of environment-specific configuration files, specifying values for fields that require customisation on a per-environment basis (e.g. host);</li>
+<li>An environment variable, <code>APP_ENVIRONMENT</code>, to determine the running environment (e.g. <code>production</code> or <code>local</code>).</li>
+</ul>
+<p>All configuration files will live in the same top-level directory, <code>configuration</code>.</p>
+<p>The good news is that <code>config</code>, the crate we are using, supports all the above out of the box!<br />
+Let’s put it together:</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">fn</span> get_configuration() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>Settings<span class="op">,</span> <span class="pp">config::</span>ConfigError<span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> base_path <span class="op">=</span> <span class="pp">std::env::</span>current_dir()</span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to determine the current directory&quot;</span>)<span class="op">;</span></span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> configuration_directory <span class="op">=</span> base_path<span class="op">.</span>join(<span class="st">&quot;configuration&quot;</span>)<span class="op">;</span></span>
+<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Detect the running environment.</span></span>
+<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Default to `local` if unspecified.</span></span>
+<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> environment<span class="op">:</span> Environment <span class="op">=</span> <span class="pp">std::env::</span>var(<span class="st">&quot;APP_ENVIRONMENT&quot;</span>)</span>
+<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap_or_else(<span class="op">|</span>_<span class="op">|</span> <span class="st">&quot;local&quot;</span><span class="op">.</span>into())</span>
+<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>try_into()</span>
+<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to parse APP_ENVIRONMENT.&quot;</span>)<span class="op">;</span></span>
+<span id="cb27-15"><a href="#cb27-15" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> environment_filename <span class="op">=</span> <span class="pp">format!</span>(<span class="st">&quot;{}.yaml&quot;</span><span class="op">,</span> environment<span class="op">.</span>as_str())<span class="op">;</span></span>
+<span id="cb27-16"><a href="#cb27-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> settings <span class="op">=</span> <span class="pp">config::Config::</span>builder()</span>
+<span id="cb27-17"><a href="#cb27-17" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>add_source(</span>
+<span id="cb27-18"><a href="#cb27-18" aria-hidden="true" tabindex="-1"></a>            <span class="pp">config::File::</span>from(configuration_directory<span class="op">.</span>join(<span class="st">&quot;base.yaml&quot;</span>))</span>
+<span id="cb27-19"><a href="#cb27-19" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb27-20"><a href="#cb27-20" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>add_source(</span>
+<span id="cb27-21"><a href="#cb27-21" aria-hidden="true" tabindex="-1"></a>            <span class="pp">config::File::</span>from(configuration_directory<span class="op">.</span>join(environment_filename))</span>
+<span id="cb27-22"><a href="#cb27-22" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb27-23"><a href="#cb27-23" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>build()<span class="op">?;</span></span>
+<span id="cb27-24"><a href="#cb27-24" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb27-25"><a href="#cb27-25" aria-hidden="true" tabindex="-1"></a>    settings<span class="op">.</span><span class="pp">try_deserialize::</span><span class="op">&lt;</span>Settings<span class="op">&gt;</span>()</span>
+<span id="cb27-26"><a href="#cb27-26" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb27-27"><a href="#cb27-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-28"><a href="#cb27-28" aria-hidden="true" tabindex="-1"></a><span class="co">/// The possible runtime environment for our application.</span></span>
+<span id="cb27-29"><a href="#cb27-29" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">enum</span> Environment <span class="op">{</span></span>
+<span id="cb27-30"><a href="#cb27-30" aria-hidden="true" tabindex="-1"></a>    Local<span class="op">,</span></span>
+<span id="cb27-31"><a href="#cb27-31" aria-hidden="true" tabindex="-1"></a>    Production<span class="op">,</span></span>
+<span id="cb27-32"><a href="#cb27-32" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb27-33"><a href="#cb27-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-34"><a href="#cb27-34" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> Environment <span class="op">{</span></span>
+<span id="cb27-35"><a href="#cb27-35" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">fn</span> as_str(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> <span class="op">&amp;</span><span class="ot">&#39;static</span> <span class="dt">str</span> <span class="op">{</span></span>
+<span id="cb27-36"><a href="#cb27-36" aria-hidden="true" tabindex="-1"></a>        <span class="cf">match</span> <span class="kw">self</span> <span class="op">{</span></span>
+<span id="cb27-37"><a href="#cb27-37" aria-hidden="true" tabindex="-1"></a>            <span class="pp">Environment::</span>Local <span class="op">=&gt;</span> <span class="st">&quot;local&quot;</span><span class="op">,</span></span>
+<span id="cb27-38"><a href="#cb27-38" aria-hidden="true" tabindex="-1"></a>            <span class="pp">Environment::</span>Production <span class="op">=&gt;</span> <span class="st">&quot;production&quot;</span><span class="op">,</span></span>
+<span id="cb27-39"><a href="#cb27-39" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb27-40"><a href="#cb27-40" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb27-41"><a href="#cb27-41" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb27-42"><a href="#cb27-42" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-43"><a href="#cb27-43" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> <span class="bu">TryFrom</span><span class="op">&lt;</span><span class="dt">String</span><span class="op">&gt;</span> <span class="cf">for</span> Environment <span class="op">{</span></span>
+<span id="cb27-44"><a href="#cb27-44" aria-hidden="true" tabindex="-1"></a>    <span class="kw">type</span> Error <span class="op">=</span> <span class="dt">String</span><span class="op">;</span></span>
+<span id="cb27-45"><a href="#cb27-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-46"><a href="#cb27-46" aria-hidden="true" tabindex="-1"></a>    <span class="kw">fn</span> try_from(s<span class="op">:</span> <span class="dt">String</span>) <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span><span class="dt">Self</span><span class="op">,</span> <span class="dt">Self</span><span class="pp">::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb27-47"><a href="#cb27-47" aria-hidden="true" tabindex="-1"></a>        <span class="cf">match</span> s<span class="op">.</span>to_lowercase()<span class="op">.</span>as_str() <span class="op">{</span></span>
+<span id="cb27-48"><a href="#cb27-48" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;local&quot;</span> <span class="op">=&gt;</span> <span class="cn">Ok</span>(<span class="dt">Self</span><span class="pp">::</span>Local)<span class="op">,</span></span>
+<span id="cb27-49"><a href="#cb27-49" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;production&quot;</span> <span class="op">=&gt;</span> <span class="cn">Ok</span>(<span class="dt">Self</span><span class="pp">::</span>Production)<span class="op">,</span></span>
+<span id="cb27-50"><a href="#cb27-50" aria-hidden="true" tabindex="-1"></a>            other <span class="op">=&gt;</span> <span class="cn">Err</span>(<span class="pp">format!</span>(</span>
+<span id="cb27-51"><a href="#cb27-51" aria-hidden="true" tabindex="-1"></a>                <span class="st">&quot;{} is not a supported environment. </span><span class="sc">\</span></span>
+<span id="cb27-52"><a href="#cb27-52" aria-hidden="true" tabindex="-1"></a><span class="st">                Use either `local` or `production`.&quot;</span><span class="op">,</span></span>
+<span id="cb27-53"><a href="#cb27-53" aria-hidden="true" tabindex="-1"></a>                other</span>
+<span id="cb27-54"><a href="#cb27-54" aria-hidden="true" tabindex="-1"></a>            ))<span class="op">,</span></span>
+<span id="cb27-55"><a href="#cb27-55" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span></span>
+<span id="cb27-56"><a href="#cb27-56" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb27-57"><a href="#cb27-57" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Let’s refactor our configuration file to match the new structure.<br />
+We have to get rid of <code>configuration.yaml</code> and create a new <code>configuration</code> directory with <code>base.yaml</code>, <code>local.yaml</code> and <code>production.yaml</code> inside.</p>
+<div class="sourceCode" id="cb28"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! configuration/base.yaml</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="fu">application</span><span class="kw">:</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">port</span><span class="kw">:</span><span class="at"> </span><span class="dv">8000</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a><span class="fu">database</span><span class="kw">:</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">host</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;localhost&quot;</span></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">port</span><span class="kw">:</span><span class="at"> </span><span class="dv">5432</span></span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">username</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;postgres&quot;</span></span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">password</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;password&quot;</span></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">database_name</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;newsletter&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb29"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! configuration/local.yaml</span></span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a><span class="fu">application</span><span class="kw">:</span></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">host</span><span class="kw">:</span><span class="at"> </span><span class="fl">127.0.0.1</span></span></code></pre></div>
+<div class="sourceCode" id="cb30"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! configuration/production.yaml</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="fu">application</span><span class="kw">:</span></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">host</span><span class="kw">:</span><span class="at"> </span><span class="fl">0.0.0.0</span></span></code></pre></div>
+<p>We can now instruct the binary in our Docker image to use the production configuration by setting the <code>APP_ENVIRONMENT</code> environment variable with an <code>ENV</code> instruction:</p>
+<div class="sourceCode" id="cb31"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> rust:1.72.0</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">apt</span> update <span class="kw">&amp;&amp;</span> <span class="ex">apt</span> install lld clang <span class="at">-y</span></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> . .</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> SQLX_OFFLINE true</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">cargo</span> build <span class="at">--release</span></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> APP_ENVIRONMENT production</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;./target/release/zero2prod&quot;</span>]</span></code></pre></div>
+<p>Let’s rebuild our image and launch it again:</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> build <span class="at">--tag</span> zero2prod <span class="at">--file</span> Dockerfile .</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> run <span class="at">-p</span> 8000:8000 zero2prod</span></code></pre></div>
+<p>One of the first log lines should be something like</p>
+<div class="sourceCode" id="cb33"><pre class="sourceCode json"><code class="sourceCode json"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span> </span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;name&quot;</span><span class="fu">:</span><span class="st">&quot;zero2prod&quot;</span><span class="fu">,</span></span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;msg&quot;</span><span class="fu">:</span><span class="st">&quot;Starting </span><span class="ch">\&quot;</span><span class="st">actix-web-service-0.0.0.0:8000</span><span class="ch">\&quot;</span><span class="st"> service on 0.0.0.0:8000&quot;</span><span class="fu">,</span></span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a>    <span class="er">...</span></span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span> </span></code></pre></div>
+<p>If it is, good news - our configuration works as expected!</p>
+<p>Let’s try again to hit the health check endpoint:</p>
+<div class="sourceCode" id="cb34"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-v</span> http://127.0.0.1:8000/health_check</span></code></pre></div>
+<pre class="text"><code>curl -v http://127.0.0.1:8000/health_check
+
+&gt; GET /health_check HTTP/1.1
+&gt; Host: 127.0.0.1:8000
+&gt; User-Agent: curl/7.61.0
+&gt; Accept: */*
+&gt;
+&lt; HTTP/1.1 200 OK
+&lt; content-length: 0
+&lt; date: Sun, 01 Nov 2020 17:32:19 GMT</code></pre>
+<p>It works, awesome!</p>
+</section>
+<section id="database-connectivity" class="level3" data-number="5.3.7">
+<h3 data-number="5.3.7"><span class="header-section-number">5.3.7</span> Database Connectivity</h3>
+<p>What about <code>POST /subscriptions</code>?</p>
+<div class="sourceCode" id="cb36"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">--request</span> POST <span class="dt">\</span></span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--data</span> <span class="st">&#39;name=le%20guin&amp;email=ursula_le_guin%40gmail.com&#39;</span> <span class="dt">\</span></span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>  127.0.0.1:8000/subscriptions <span class="at">--verbose</span></span></code></pre></div>
+<p>A 500!<br />
+Let’s look at the application logs (useful, aren’t they?)</p>
+<div class="sourceCode" id="cb37"><pre class="sourceCode json"><code class="sourceCode json"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;msg&quot;</span><span class="fu">:</span> <span class="st">&quot;[SAVING NEW SUBSCRIBER DETAILS IN THE DATABASE - EVENT] \</span></span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="st">            Failed to execute query: Io(</span></span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a><span class="st">                Os { </span></span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="st">                    code: 99, </span></span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a><span class="st">                    kind: AddrNotAvailable, </span></span>
+<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a><span class="st">                    message: </span><span class="ch">\&quot;</span><span class="st">Cannot assign requested address</span><span class="ch">\&quot;</span><span class="st"> </span></span>
+<span id="cb37-8"><a href="#cb37-8" aria-hidden="true" tabindex="-1"></a><span class="st">                }</span></span>
+<span id="cb37-9"><a href="#cb37-9" aria-hidden="true" tabindex="-1"></a><span class="st">            )</span></span>
+<span id="cb37-10"><a href="#cb37-10" aria-hidden="true" tabindex="-1"></a><span class="st">    ...</span></span>
+<span id="cb37-11"><a href="#cb37-11" aria-hidden="true" tabindex="-1"></a><span class="st">}</span></span></code></pre></div>
+<p>This should not come as a surprise - we swapped <code>connect</code> with <code>connect_lazy</code> to avoid dealing with the database straight away.<br />
+There are various ways to get a working local setup using Docker containers:</p>
+<ul>
+<li>Run the application container with <code>--network=host</code>, as we are currently doing for the Postgres container;</li>
+<li>Use <a href="https://docs.docker.com/compose/"><code>docker-compose</code></a>;</li>
+<li><a href="https://www.tutorialworks.com/container-networking/">Create a user-defined network</a>.</li>
+</ul>
+<p>A working local setup does not get us any closer to having a working database connection when deployed on Digital Ocean. We will therefore let it be for now.</p>
+</section>
+<section id="optimising-our-docker-image" class="level3" data-number="5.3.8">
+<h3 data-number="5.3.8"><span class="header-section-number">5.3.8</span> Optimising Our Docker Image</h3>
+<p>As far as our Docker image is concerned, it seems to work as expected - time to deploy it!<br />
+Well, not yet.</p>
+<p>There are two optimisations we can make to our Dockerfile to make our life easier going forward:</p>
+<ul>
+<li>smaller image size for faster usage;</li>
+<li>Docker layer caching for faster builds.</li>
+</ul>
+<section id="docker-image-size" class="level4" data-number="5.3.8.1">
+<h4 data-number="5.3.8.1"><span class="header-section-number">5.3.8.1</span> Docker Image Size</h4>
+<p>We will not be running <code>docker build</code> on the machines hosting our application. They will be using <code>docker pull</code> to <em>download</em> our Docker image without going through the process of building it from scratch.</p>
+<p>This is extremely convenient: it can take quite a long time to build our image (and it certainly does in Rust!) and we only need to pay that cost once.<br />
+To actually use the image we only need to pay for its download cost which is directly related to its <em>size</em>.</p>
+<p>How big is our image?</p>
+<p>We can find out using</p>
+<div class="sourceCode" id="cb38"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> images zero2prod</span></code></pre></div>
+<pre class="text"><code>REPOSITORY          TAG             SIZE
+zero2prod           latest          3.65GB</code></pre>
+<p>Is that big or small?<br />
+Well, our final image cannot be any smaller than the image we used as base - <code>rust:1.72.0</code>. How big is that?</p>
+<div class="sourceCode" id="cb40"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> images rust:1.72.0</span></code></pre></div>
+<pre class="text"><code>REPOSITORY          TAG             SIZE
+rust                1.72.0          1.77GB</code></pre>
+<p>Ok, our final image is almost twice as heavy as our base image.<br />
+We can do much better than that!</p>
+<p>Our first line of attack is reducing the size of the Docker build context by excluding files that are not needed to build our image.<br />
+Docker looks for a specific file in our project to determine what should be ignored - <code>.dockerignore</code><br />
+Let’s create one in the root directory with the following content:</p>
+<pre class="text"><code>.env
+target/
+tests/
+Dockerfile
+scripts/
+migrations/</code></pre>
+<p>All files that match the patterns specified in <code>.dockerignore</code> are not sent by Docker as part of the build context to the image, which means they will not be in scope for <code>COPY</code> instructions.<br />
+This will massively speed up our builds (and reduce the size of the final image) if we get to ignore heavy directories (e.g. the <code>target</code> folder for Rust projects).</p>
+<p>The next optimisation, instead, leverages one of Rust’s unique strengths.<br />
+Rust’s binaries are statically linked<a href="#fn3" class="footnote-ref" id="fnref3" epub:type="noteref">3</a> - we do not need to keep the source code or intermediate compilation artifacts around to run the binary, it is entirely self-contained.<br />
+This plays nicely with <em>multi-stage</em> builds, a useful Docker feature. We can split our build in two stages:</p>
+<ul>
+<li>a <code>builder</code> stage, to generate a compiled binary;</li>
+<li>a <code>runtime</code> stage, to run the binary.</li>
+</ul>
+<p>The modified Dockerfile looks like this:</p>
+<div class="sourceCode" id="cb43"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Builder stage</span></span>
+<span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> rust:1.72.0 <span class="kw">AS</span> builder</span>
+<span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-4"><a href="#cb43-4" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb43-5"><a href="#cb43-5" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">apt</span> update <span class="kw">&amp;&amp;</span> <span class="ex">apt</span> install lld clang <span class="at">-y</span></span>
+<span id="cb43-6"><a href="#cb43-6" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> . .</span>
+<span id="cb43-7"><a href="#cb43-7" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> SQLX_OFFLINE true</span>
+<span id="cb43-8"><a href="#cb43-8" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">cargo</span> build <span class="at">--release</span></span>
+<span id="cb43-9"><a href="#cb43-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-10"><a href="#cb43-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Runtime stage</span></span>
+<span id="cb43-11"><a href="#cb43-11" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> rust:1.72.0 <span class="kw">AS</span> runtime</span>
+<span id="cb43-12"><a href="#cb43-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-13"><a href="#cb43-13" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb43-14"><a href="#cb43-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Copy the compiled binary from the builder environment </span></span>
+<span id="cb43-15"><a href="#cb43-15" aria-hidden="true" tabindex="-1"></a><span class="co"># to our runtime environment</span></span>
+<span id="cb43-16"><a href="#cb43-16" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> <span class="op">--from=builder</span> /app/target/release/zero2prod zero2prod</span>
+<span id="cb43-17"><a href="#cb43-17" aria-hidden="true" tabindex="-1"></a><span class="co"># We need the configuration file at runtime!</span></span>
+<span id="cb43-18"><a href="#cb43-18" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> configuration configuration</span>
+<span id="cb43-19"><a href="#cb43-19" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> APP_ENVIRONMENT production</span>
+<span id="cb43-20"><a href="#cb43-20" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;./zero2prod&quot;</span>]</span></code></pre></div>
+<p><code>runtime</code> is our final image.<br />
+The <code>builder</code> stage does not contribute to its size - it is an intermediate step and it is discarded at the end of the build. The only piece of the <code>builder</code> stage that is found in the final artifact is what we explicitly copy over - the compiled binary!</p>
+<p>What is the image size using the above Dockerfile?</p>
+<div class="sourceCode" id="cb44"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> images zero2prod</span></code></pre></div>
+<pre class="text"><code>REPOSITORY          TAG             SIZE
+zero2prod           latest          1.78GB</code></pre>
+<p>Just ~10 MBs bigger than the size of our base image, much better!<br />
+We can go one step further: instead of using <code>rust:1.72.0</code> for our <code>runtime</code> stage we can switch to <code>rust:1.72.0-slim</code>, a smaller image using the same underlying OS.</p>
+<div class="sourceCode" id="cb46"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># [...]</span></span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Runtime stage</span></span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> rust:1.72.0-slim <span class="kw">AS</span> runtime</span>
+<span id="cb46-4"><a href="#cb46-4" aria-hidden="true" tabindex="-1"></a><span class="co"># [...]</span></span></code></pre></div>
+<div class="sourceCode" id="cb47"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> images zero2prod</span></code></pre></div>
+<pre class="text"><code>REPOSITORY          TAG             SIZE
+zero2prod           latest          1.13GB</code></pre>
+<p>That is 3x smaller than what we had at the beginning - not bad at all!<br />
+We can go even smaller by shaving off the weight of the whole Rust toolchain and machinery (i.e. <code>rustc</code>, <code>cargo</code>, etc) - none of that is needed to <em>run</em> our binary.<br />
+We can use the bare operating system as base image (<code>debian:bookworm-slim</code>) for our runtime stage:</p>
+<div class="sourceCode" id="cb49"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="co"># [...]</span></span>
+<span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Runtime stage</span></span>
+<span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> debian:bookworm-slim <span class="kw">AS</span> runtime</span>
+<span id="cb49-4"><a href="#cb49-4" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb49-5"><a href="#cb49-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Install OpenSSL - it is dynamically linked by some of our dependencies</span></span>
+<span id="cb49-6"><a href="#cb49-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Install ca-certificates - it is needed to verify TLS certificates</span></span>
+<span id="cb49-7"><a href="#cb49-7" aria-hidden="true" tabindex="-1"></a><span class="co"># when establishing HTTPS connections</span></span>
+<span id="cb49-8"><a href="#cb49-8" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">apt-get</span> update <span class="at">-y</span> <span class="dt">\</span></span>
+<span id="cb49-9"><a href="#cb49-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">&amp;&amp;</span> <span class="ex">apt-get</span> install <span class="at">-y</span> <span class="at">--no-install-recommends</span> openssl ca-certificates <span class="dt">\</span></span>
+<span id="cb49-10"><a href="#cb49-10" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Clean up</span></span>
+<span id="cb49-11"><a href="#cb49-11" aria-hidden="true" tabindex="-1"></a>    &amp;&amp; apt-get autoremove -y <span class="op">\</span></span>
+<span id="cb49-12"><a href="#cb49-12" aria-hidden="true" tabindex="-1"></a>    &amp;&amp; apt-get clean -y <span class="op">\</span></span>
+<span id="cb49-13"><a href="#cb49-13" aria-hidden="true" tabindex="-1"></a>    &amp;&amp; rm -rf /var/lib/apt/lists/*</span>
+<span id="cb49-14"><a href="#cb49-14" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> <span class="op">--from=builder</span> /app/target/release/zero2prod zero2prod</span>
+<span id="cb49-15"><a href="#cb49-15" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> configuration configuration</span>
+<span id="cb49-16"><a href="#cb49-16" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> APP_ENVIRONMENT production</span>
+<span id="cb49-17"><a href="#cb49-17" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;./zero2prod&quot;</span>]</span></code></pre></div>
+<div class="sourceCode" id="cb50"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="ex">docker</span> images zero2prod</span></code></pre></div>
+<pre class="text"><code>REPOSITORY          TAG             SIZE
+zero2prod           latest          125MB</code></pre>
+<p>Clos to a 100 MBs - ~303030x smaller than our initial attempt<a href="#fn4" class="footnote-ref" id="fnref4" epub:type="noteref">4</a>.<br />
+We could go <em>even smaller</em> by using <code>rust:1.72.0-alpine</code>, but we would have to cross-compile to the <code>linux-musl</code> target - out of scope for now. Check out <a href="https://github.com/clux/muslrust"><code>rust-musl-builder</code></a> if you are interested in generating tiny Docker images.<br />
+Another option to reduce the size of our binary further is <em>stripping</em> symbols from it - you can find more information about it <a href="https://github.com/johnthagen/min-sized-rust#strip-symbols-from-binary">here</a>.</p>
+</section>
+<section id="caching-for-rust-docker-builds" class="level4" data-number="5.3.8.2">
+<h4 data-number="5.3.8.2"><span class="header-section-number">5.3.8.2</span> Caching For Rust Docker Builds</h4>
+<p>Rust shines at runtime, consistently delivering great performance, but it comes at a cost: compilation times. They have been consistently among the top answers in the <a href="https://blog.rust-lang.org/2020/04/17/Rust-survey-2019.html#rust-adoption---a-closer-look">Rust annual survey</a> when it comes to the biggest challenges or problems for the Rust project.</p>
+<p>Optimised builds (<code>--release</code>), in particular, can be gruesome - up to 15/20 minutes on medium projects with several dependencies. Quite common on web development projects like ours that are pulling in many foundational crates from the async ecosystem (tokio, actix-web, sqlx, etc.).</p>
+<p>Unfortunately, <code>--release</code> is what we use in our <code>Dockerfile</code> to get top-performance in our production environment. How can we mitigate the pain?</p>
+<p>We can leverage another Docker feature: layer caching.</p>
+<p>Each <code>RUN</code>, <code>COPY</code> and <code>ADD</code> instruction in a Dockerfile creates a layer: a diff between the previous state (the layer above) and the current state after having executed the specified command.<br />
+Layers are cached: if the starting point of an operation has not changed (e.g. the base image) and the command itself has not changed (e.g. the checksum of the files copied by <code>COPY</code>) Docker does not perform any computation and directly retrieves a copy of the result from the local cache.</p>
+<p>Docker layer caching is fast and can be leveraged to massively speed up Docker builds.<br />
+The trick is optimising the order of operations in your Dockerfile: anything that refers to files that are changing often (e.g. source code) should appear as late as possible, therefore maximising the likelihood of the previous step being unchanged and allowing Docker to retrieve the result straight from the cache.</p>
+<p>The expensive step is usually compilation.<br />
+Most programming languages follow the same playbook: you <code>COPY</code> a lock-file of some kind first, build your dependencies, <code>COPY</code> over the rest of your source code and then build your project.<br />
+This guarantees that most of the work is cached as long as your dependency tree does not change between one build and the next.</p>
+<p>In a Python project, for example, you might have something along these lines:</p>
+<div class="sourceCode" id="cb52"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> python:3</span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> requirements.txt</span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">pip</span> install <span class="at">-r</span> requirements.txt</span>
+<span id="cb52-4"><a href="#cb52-4" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> src/ /app</span>
+<span id="cb52-5"><a href="#cb52-5" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb52-6"><a href="#cb52-6" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;python&quot;</span>, <span class="st">&quot;app&quot;</span>]</span></code></pre></div>
+<p><code>cargo</code>, unfortunately, does not provide a mechanism to build your project dependencies starting from its <code>Cargo.lock</code> file (e.g. <code>cargo build --only-deps</code>).<br />
+Once again, we can rely on a community project to expand <code>cargo</code>’s default capability: <a href="https://github.com/LukeMathWalker/cargo-chef"><code>cargo-chef</code></a><a href="#fn5" class="footnote-ref" id="fnref5" epub:type="noteref">5</a>.</p>
+<p>Let’s modify our Dockerfile as suggested in <code>cargo-chef</code>’s <code>README</code>:</p>
+<div class="sourceCode" id="cb53"><pre class="sourceCode dockerfile"><code class="sourceCode dockerfile"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> lukemathwalker/cargo-chef:latest-rust-1.72.0 as chef</span>
+<span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">apt</span> update <span class="kw">&amp;&amp;</span> <span class="ex">apt</span> install lld clang <span class="at">-y</span></span>
+<span id="cb53-4"><a href="#cb53-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-5"><a href="#cb53-5" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> chef as planner</span>
+<span id="cb53-6"><a href="#cb53-6" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> . .</span>
+<span id="cb53-7"><a href="#cb53-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Compute a lock-like file for our project</span></span>
+<span id="cb53-8"><a href="#cb53-8" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">cargo</span> chef prepare  <span class="at">--recipe-path</span> recipe.json</span>
+<span id="cb53-9"><a href="#cb53-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-10"><a href="#cb53-10" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> chef as builder</span>
+<span id="cb53-11"><a href="#cb53-11" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> <span class="op">--from=planner</span> /app/recipe.json recipe.json</span>
+<span id="cb53-12"><a href="#cb53-12" aria-hidden="true" tabindex="-1"></a><span class="co"># Build our project dependencies, not our application!</span></span>
+<span id="cb53-13"><a href="#cb53-13" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">cargo</span> chef cook <span class="at">--release</span> <span class="at">--recipe-path</span> recipe.json</span>
+<span id="cb53-14"><a href="#cb53-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Up to this point, if our dependency tree stays the same,</span></span>
+<span id="cb53-15"><a href="#cb53-15" aria-hidden="true" tabindex="-1"></a><span class="co"># all layers should be cached. </span></span>
+<span id="cb53-16"><a href="#cb53-16" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> . .</span>
+<span id="cb53-17"><a href="#cb53-17" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> SQLX_OFFLINE true</span>
+<span id="cb53-18"><a href="#cb53-18" aria-hidden="true" tabindex="-1"></a><span class="co"># Build our project</span></span>
+<span id="cb53-19"><a href="#cb53-19" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">cargo</span> build <span class="at">--release</span> <span class="at">--bin</span> zero2prod</span>
+<span id="cb53-20"><a href="#cb53-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-21"><a href="#cb53-21" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> debian:bookworm-slim <span class="kw">AS</span> runtime</span>
+<span id="cb53-22"><a href="#cb53-22" aria-hidden="true" tabindex="-1"></a><span class="kw">WORKDIR</span> /app</span>
+<span id="cb53-23"><a href="#cb53-23" aria-hidden="true" tabindex="-1"></a><span class="kw">RUN</span> <span class="ex">apt-get</span> update <span class="at">-y</span> <span class="dt">\</span></span>
+<span id="cb53-24"><a href="#cb53-24" aria-hidden="true" tabindex="-1"></a>    <span class="kw">&amp;&amp;</span> <span class="ex">apt-get</span> install <span class="at">-y</span> <span class="at">--no-install-recommends</span> openssl ca-certificates <span class="dt">\</span></span>
+<span id="cb53-25"><a href="#cb53-25" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Clean up</span></span>
+<span id="cb53-26"><a href="#cb53-26" aria-hidden="true" tabindex="-1"></a>    &amp;&amp; apt-get autoremove -y <span class="op">\</span></span>
+<span id="cb53-27"><a href="#cb53-27" aria-hidden="true" tabindex="-1"></a>    &amp;&amp; apt-get clean -y <span class="op">\</span></span>
+<span id="cb53-28"><a href="#cb53-28" aria-hidden="true" tabindex="-1"></a>    &amp;&amp; rm -rf /var/lib/apt/lists/*</span>
+<span id="cb53-29"><a href="#cb53-29" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> <span class="op">--from=builder</span> /app/target/release/zero2prod zero2prod</span>
+<span id="cb53-30"><a href="#cb53-30" aria-hidden="true" tabindex="-1"></a><span class="kw">COPY</span> configuration configuration</span>
+<span id="cb53-31"><a href="#cb53-31" aria-hidden="true" tabindex="-1"></a><span class="kw">ENV</span> APP_ENVIRONMENT production</span>
+<span id="cb53-32"><a href="#cb53-32" aria-hidden="true" tabindex="-1"></a><span class="kw">ENTRYPOINT</span> [<span class="st">&quot;./zero2prod&quot;</span>]</span></code></pre></div>
+<p>We are using three stages: the first computes the recipe file, the second caches our dependencies and then builds our binary, the third is our runtime environment. As long as our dependencies do not change the <code>recipe.json</code> file will stay the same, therefore the outcome of <code>cargo chef cook --release --recipe-path recipe.json</code> will be cached, massively speeding up our builds.</p>
+<p>We are taking advantage of how Docker layer caching interacts with multi-stage builds: the <code>COPY . .</code> statement in the <code>planner</code> stage will invalidate the cache for the <code>planner</code> container, but it will not invalidate the cache for the <code>builder</code> container as long as the checksum of the <code>recipe.json</code> returned by <code>cargo chef prepare</code> does not change.<br />
+You can think of each stage as its own Docker image with its own caching - they only interact with each other when using the <code>COPY --from</code> statement.</p>
+<p>This will save us a massive amount of time in the next section.</p>
+</section>
+</section>
+</section>
+<section id="deploy-to-digitalocean-apps-platform" class="level2" data-number="5.4">
+<h2 data-number="5.4"><span class="header-section-number">5.4</span> Deploy To DigitalOcean Apps Platform</h2>
+<p>We have built a (damn good) containerised version of our application. Let’s deploy it now!</p>
+<section id="setup" class="level3" data-number="5.4.1">
+<h3 data-number="5.4.1"><span class="header-section-number">5.4.1</span> Setup</h3>
+<p>You have to sign up on <a href="https://cloud.digitalocean.com/registrations/new">Digital Ocean’s website</a>.<br />
+Once you have an account install <code>doctl</code>, Digital Ocean’s CLI - you can find instructions <a href="https://www.digitalocean.com/docs/apis-clis/doctl/how-to/install/">in their documentation</a>.</p>
+<blockquote>
+<p>Hosting on Digital Ocean’s App Platform is not free - keeping our app and its associated database up and running costs roughly 20.00 USD/month.<br />
+I suggest you to destroy the app at the end of each session - it should keep your spend way below 1.00 USD. I spent 0.20 USD while playing around with it to write this chapter!</p>
+</blockquote>
+</section>
+<section id="app-specification" class="level3" data-number="5.4.2">
+<h3 data-number="5.4.2"><span class="header-section-number">5.4.2</span> App Specification</h3>
+<p>Digital Ocean’s App Platform uses a declarative configuration file to let us specify what our application deployment should look like - they call it <a href="https://www.digitalocean.com/docs/app-platform/concepts/app-spec/"><em>App Spec</em></a>.<br />
+Looking at the <a href="https://www.digitalocean.com/docs/app-platform/references/app-specification-reference/">reference documentation</a>, as well as some of their examples, we can piece together a first draft of what our App Spec looks like.</p>
+<p>Let’s put this manifest, <code>spec.yaml</code>, at the root of our project directory.</p>
+<div class="sourceCode" id="cb54"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! spec.yaml</span></span>
+<span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> zero2prod</span></span>
+<span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Check https://www.digitalocean.com/docs/app-platform/#regional-availability </span></span>
+<span id="cb54-4"><a href="#cb54-4" aria-hidden="true" tabindex="-1"></a><span class="co"># for a list of all the available options.</span></span>
+<span id="cb54-5"><a href="#cb54-5" aria-hidden="true" tabindex="-1"></a><span class="co"># You can get region slugs from </span></span>
+<span id="cb54-6"><a href="#cb54-6" aria-hidden="true" tabindex="-1"></a><span class="co"># https://www.digitalocean.com/docs/platform/availability-matrix/</span></span>
+<span id="cb54-7"><a href="#cb54-7" aria-hidden="true" tabindex="-1"></a><span class="co"># They must specified lowercased.</span></span>
+<span id="cb54-8"><a href="#cb54-8" aria-hidden="true" tabindex="-1"></a><span class="co"># `fra` stands for Frankfurt (Germany - EU)</span></span>
+<span id="cb54-9"><a href="#cb54-9" aria-hidden="true" tabindex="-1"></a><span class="fu">region</span><span class="kw">:</span><span class="at"> fra</span></span>
+<span id="cb54-10"><a href="#cb54-10" aria-hidden="true" tabindex="-1"></a><span class="fu">services</span><span class="kw">:</span></span>
+<span id="cb54-11"><a href="#cb54-11" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> zero2prod</span></span>
+<span id="cb54-12"><a href="#cb54-12" aria-hidden="true" tabindex="-1"></a><span class="co">    # Relative to the repository root</span></span>
+<span id="cb54-13"><a href="#cb54-13" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">dockerfile_path</span><span class="kw">:</span><span class="at"> Dockerfile</span></span>
+<span id="cb54-14"><a href="#cb54-14" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">source_dir</span><span class="kw">:</span><span class="at"> .</span></span>
+<span id="cb54-15"><a href="#cb54-15" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">github</span><span class="kw">:</span></span>
+<span id="cb54-16"><a href="#cb54-16" aria-hidden="true" tabindex="-1"></a><span class="co">      # Depending on when you created the repository, </span></span>
+<span id="cb54-17"><a href="#cb54-17" aria-hidden="true" tabindex="-1"></a><span class="co">      # the default branch on GitHub might have been named `master`</span></span>
+<span id="cb54-18"><a href="#cb54-18" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">branch</span><span class="kw">:</span><span class="at"> main</span></span>
+<span id="cb54-19"><a href="#cb54-19" aria-hidden="true" tabindex="-1"></a><span class="co">      # Deploy a new version on every commit to `main`! </span></span>
+<span id="cb54-20"><a href="#cb54-20" aria-hidden="true" tabindex="-1"></a><span class="co">      # Continuous Deployment, here we come!</span></span>
+<span id="cb54-21"><a href="#cb54-21" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">deploy_on_push</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span>
+<span id="cb54-22"><a href="#cb54-22" aria-hidden="true" tabindex="-1"></a><span class="co">      # !!! Fill in with your details</span></span>
+<span id="cb54-23"><a href="#cb54-23" aria-hidden="true" tabindex="-1"></a><span class="co">      # e.g. LukeMathWalker/zero-to-production</span></span>
+<span id="cb54-24"><a href="#cb54-24" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">repo</span><span class="kw">:</span><span class="at"> &lt;YOUR USERNAME&gt;/&lt;YOUR REPOSITORY NAME&gt;</span></span>
+<span id="cb54-25"><a href="#cb54-25" aria-hidden="true" tabindex="-1"></a><span class="co">    # Active probe used by DigitalOcean&#39;s to ensure our application is healthy</span></span>
+<span id="cb54-26"><a href="#cb54-26" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">health_check</span><span class="kw">:</span></span>
+<span id="cb54-27"><a href="#cb54-27" aria-hidden="true" tabindex="-1"></a><span class="co">      # The path to our health check endpoint! </span></span>
+<span id="cb54-28"><a href="#cb54-28" aria-hidden="true" tabindex="-1"></a><span class="co">      # It turned out to be useful in the end!</span></span>
+<span id="cb54-29"><a href="#cb54-29" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="fu">http_path</span><span class="kw">:</span><span class="at"> /health_check</span></span>
+<span id="cb54-30"><a href="#cb54-30" aria-hidden="true" tabindex="-1"></a><span class="co">    # The port the application will be listening on for incoming requests</span></span>
+<span id="cb54-31"><a href="#cb54-31" aria-hidden="true" tabindex="-1"></a><span class="co">    # It should match what we specified in our configuration/production.yaml file!</span></span>
+<span id="cb54-32"><a href="#cb54-32" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">http_port</span><span class="kw">:</span><span class="at"> </span><span class="dv">8000</span></span>
+<span id="cb54-33"><a href="#cb54-33" aria-hidden="true" tabindex="-1"></a><span class="co">    # For production workloads we&#39;d go for at least two!</span></span>
+<span id="cb54-34"><a href="#cb54-34" aria-hidden="true" tabindex="-1"></a><span class="co">    # But let&#39;s try to keep the bill under control for now...</span></span>
+<span id="cb54-35"><a href="#cb54-35" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">instance_count</span><span class="kw">:</span><span class="at"> </span><span class="dv">1</span></span>
+<span id="cb54-36"><a href="#cb54-36" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">instance_size_slug</span><span class="kw">:</span><span class="at"> basic-xxs</span></span>
+<span id="cb54-37"><a href="#cb54-37" aria-hidden="true" tabindex="-1"></a><span class="co">    # All incoming requests should be routed to our app</span></span>
+<span id="cb54-38"><a href="#cb54-38" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">routes</span><span class="kw">:</span></span>
+<span id="cb54-39"><a href="#cb54-39" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">path</span><span class="kw">:</span><span class="at"> /</span></span></code></pre></div>
+<p>Take your time to go through all the specified values and understand what they are used for.<br />
+We can use their CLI, <code>doctl</code>, to create the application for the first time:</p>
+<div class="sourceCode" id="cb55"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> apps create <span class="at">--spec</span> spec.yaml</span></code></pre></div>
+<pre class="text"><code>Error: Unable to initialize DigitalOcean API client: access token is required. 
+(hint: run &#39;doctl auth init&#39;)</code></pre>
+<p>Well, we have to authenticate first.<br />
+Let’s follow their suggestion:</p>
+<div class="sourceCode" id="cb57"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> auth init</span></code></pre></div>
+<pre class="text"><code>Please authenticate doctl for use with your DigitalOcean account. 
+You can generate a token in the control panel at 
+https://cloud.digitalocean.com/account/api/tokens</code></pre>
+<p>Once you have provided your token we can try again:</p>
+<div class="sourceCode" id="cb59"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> apps create <span class="at">--spec</span> spec.yaml</span></code></pre></div>
+<pre class="text"><code>Error: POST
+https://api.digitalocean.com/v2/apps: 400 GitHub user not
+authenticated</code></pre>
+<p>OK, follow <a href="https://www.digitalocean.com/docs/app-platform/how-to/troubleshoot-app/#review-github-permissions">their instructions</a> to link your GitHub account.<br />
+Third time’s a charm, let’s try again!</p>
+<div class="sourceCode" id="cb61"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> apps create <span class="at">--spec</span> spec.yaml</span></code></pre></div>
+<pre class="text"><code>Notice: App created
+ID        Spec Name    Default Ingress    Active Deployment ID    ...
+e80...    zero2prod                                                                            </code></pre>
+<p>It worked!<br />
+You can check your app status with</p>
+<div class="sourceCode" id="cb63"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> apps list</span></code></pre></div>
+<p>or by looking at <a href="https://cloud.digitalocean.com/apps/">DigitalOcean’s dashboard</a>.</p>
+<p>Although the app has been successfully created it is not running yet!<br />
+Check the <code>Deployment</code> tab on their dashboard - it is probably building the Docker image.<br />
+Looking at <a href="https://www.digitalocean.com/community/questions/docker-build-too-slow-in-app-platform-does-the-speed-depend-on-the-app-resources-used">a few recent issues on their bug tracker</a> it might take a while - more than a few people have reported they experienced slow builds. Digital Ocean’s support engineers suggested to leverage Docker layer caching to mitigate the issue - we already covered all the bases there!</p>
+<blockquote>
+<p>If you experience an out-of-memory error when building your Docker image on DigitalOcean, check out this <a href="https://github.com/LukeMathWalker/zero-to-production/issues/71">GitHub issue</a>.</p>
+</blockquote>
+<p>Wait for these lines to show up in their dashboard build logs:</p>
+<pre class="text"><code>zero2prod | 00:00:20 =&gt; Uploaded the built image to the container registry
+zero2prod | 00:00:20 =&gt; Build complete</code></pre>
+<p>Deployed successfully!<br />
+You should be able to see the health check logs coming in every ten seconds or so when Digital Ocean’s platform pings our application to ensure it is running.</p>
+<p>With</p>
+<div class="sourceCode" id="cb65"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb65-1"><a href="#cb65-1" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> apps list</span></code></pre></div>
+<p>you can retrieve the public facing URI of your application. Something along the lines of</p>
+<pre class="text"><code>https://zero2prod-aaaaa.ondigitalocean.app</code></pre>
+<p>Try firing off a health check request now, it should come back with a <code>200 OK</code>!<br />
+Notice that DigitalOcean took care for us to set up HTTPS by provisioning a certificate and redirecting HTTPS traffic to the port we specified in the application specification. One less thing to worry about.</p>
+<p>The <code>POST</code> <code>/subscriptions</code> endpoint is still failing, in the very same way it did locally: we do not have a live database backing our application in our production environment.<br />
+Let’s provision one.</p>
+<p>Add this segment to your <code>spec.yaml</code> file:</p>
+<div class="sourceCode" id="cb67"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a><span class="fu">databases</span><span class="kw">:</span></span>
+<span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a><span class="co">  # PG = Postgres</span></span>
+<span id="cb67-3"><a href="#cb67-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">engine</span><span class="kw">:</span><span class="at"> PG</span></span>
+<span id="cb67-4"><a href="#cb67-4" aria-hidden="true" tabindex="-1"></a><span class="co">    # Database name</span></span>
+<span id="cb67-5"><a href="#cb67-5" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">name</span><span class="kw">:</span><span class="at"> newsletter</span></span>
+<span id="cb67-6"><a href="#cb67-6" aria-hidden="true" tabindex="-1"></a><span class="co">    # Again, let&#39;s keep the bill lean</span></span>
+<span id="cb67-7"><a href="#cb67-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">num_nodes</span><span class="kw">:</span><span class="at"> </span><span class="dv">1</span></span>
+<span id="cb67-8"><a href="#cb67-8" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">size</span><span class="kw">:</span><span class="at"> db-s-dev-database</span></span>
+<span id="cb67-9"><a href="#cb67-9" aria-hidden="true" tabindex="-1"></a><span class="co">    # Postgres version </span></span>
+<span id="cb67-10"><a href="#cb67-10" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">version</span><span class="kw">:</span><span class="at"> </span><span class="st">&quot;12&quot;</span></span></code></pre></div>
+<p>Then update your app specification:</p>
+<div class="sourceCode" id="cb68"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb68-1"><a href="#cb68-1" aria-hidden="true" tabindex="-1"></a><span class="co"># You can retrieve your app id using `doctl apps list`</span></span>
+<span id="cb68-2"><a href="#cb68-2" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> apps update YOUR-APP-ID <span class="at">--spec</span><span class="op">=</span>spec.yaml</span></code></pre></div>
+<p>It will take some time for DigitalOcean to provision a Postgres instance.</p>
+<p>In the meantime we need to figure out how to point our application at the database in production.</p>
+</section>
+<section id="how-to-inject-secrets-using-environment-variables" class="level3" data-number="5.4.3">
+<h3 data-number="5.4.3"><span class="header-section-number">5.4.3</span> How To Inject Secrets Using Environment Variables</h3>
+<p>The connection string will contain values that we do not want to commit to version control - e.g. the username and the password of our database root user.<br />
+Our best option is to use environment variables as a way to inject secrets at runtime into the application environment. DigitalOcean’s apps, for example, can refer to the <code>DATABASE_URL</code> environment variable (or <a href="https://www.digitalocean.com/docs/app-platform/how-to/use-environment-variables/">a few others for a more granular view</a>) to get the database connection string at runtime.</p>
+<p>We need to upgrade our <code>get_configuration</code> function (again) to fulfill our new requirements.</p>
+<div class="sourceCode" id="cb69"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb69-2"><a href="#cb69-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb69-3"><a href="#cb69-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-4"><a href="#cb69-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">fn</span> get_configuration() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>Settings<span class="op">,</span> <span class="pp">config::</span>ConfigError<span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb69-5"><a href="#cb69-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> base_path <span class="op">=</span> <span class="pp">std::env::</span>current_dir()</span>
+<span id="cb69-6"><a href="#cb69-6" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to determine the current directory&quot;</span>)<span class="op">;</span></span>
+<span id="cb69-7"><a href="#cb69-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> configuration_directory <span class="op">=</span> base_path<span class="op">.</span>join(<span class="st">&quot;configuration&quot;</span>)<span class="op">;</span></span>
+<span id="cb69-8"><a href="#cb69-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-9"><a href="#cb69-9" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Detect the running environment.</span></span>
+<span id="cb69-10"><a href="#cb69-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Default to `local` if unspecified.</span></span>
+<span id="cb69-11"><a href="#cb69-11" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> environment<span class="op">:</span> Environment <span class="op">=</span> <span class="pp">std::env::</span>var(<span class="st">&quot;APP_ENVIRONMENT&quot;</span>)</span>
+<span id="cb69-12"><a href="#cb69-12" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>unwrap_or_else(<span class="op">|</span>_<span class="op">|</span> <span class="st">&quot;local&quot;</span><span class="op">.</span>into())</span>
+<span id="cb69-13"><a href="#cb69-13" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>try_into()</span>
+<span id="cb69-14"><a href="#cb69-14" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to parse APP_ENVIRONMENT.&quot;</span>)<span class="op">;</span></span>
+<span id="cb69-15"><a href="#cb69-15" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> environment_filename <span class="op">=</span> <span class="pp">format!</span>(<span class="st">&quot;{}.yaml&quot;</span><span class="op">,</span> environment<span class="op">.</span>as_str())<span class="op">;</span></span>
+<span id="cb69-16"><a href="#cb69-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> settings <span class="op">=</span> <span class="pp">config::Config::</span>builder()</span>
+<span id="cb69-17"><a href="#cb69-17" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>add_source(<span class="pp">config::File::</span>from(configuration_directory<span class="op">.</span>join(<span class="st">&quot;base.yaml&quot;</span>)))</span>
+<span id="cb69-18"><a href="#cb69-18" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>add_source(</span>
+<span id="cb69-19"><a href="#cb69-19" aria-hidden="true" tabindex="-1"></a>            <span class="pp">config::File::</span>from(configuration_directory<span class="op">.</span>join(environment_filename))</span>
+<span id="cb69-20"><a href="#cb69-20" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb69-21"><a href="#cb69-21" aria-hidden="true" tabindex="-1"></a>        <span class="co">// Add in settings from environment variables (with a prefix of APP and </span></span>
+<span id="cb69-22"><a href="#cb69-22" aria-hidden="true" tabindex="-1"></a>        <span class="co">// &#39;__&#39; as separator)</span></span>
+<span id="cb69-23"><a href="#cb69-23" aria-hidden="true" tabindex="-1"></a>        <span class="co">// E.g. `APP_APPLICATION__PORT=5001 would set `Settings.application.port`</span></span>
+<span id="cb69-24"><a href="#cb69-24" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>add_source(</span>
+<span id="cb69-25"><a href="#cb69-25" aria-hidden="true" tabindex="-1"></a>            <span class="pp">config::Environment::</span>with_prefix(<span class="st">&quot;APP&quot;</span>)</span>
+<span id="cb69-26"><a href="#cb69-26" aria-hidden="true" tabindex="-1"></a>                <span class="op">.</span>prefix_separator(<span class="st">&quot;_&quot;</span>)</span>
+<span id="cb69-27"><a href="#cb69-27" aria-hidden="true" tabindex="-1"></a>                <span class="op">.</span>separator(<span class="st">&quot;__&quot;</span>)</span>
+<span id="cb69-28"><a href="#cb69-28" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb69-29"><a href="#cb69-29" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>build()<span class="op">?;</span></span>
+<span id="cb69-30"><a href="#cb69-30" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb69-31"><a href="#cb69-31" aria-hidden="true" tabindex="-1"></a>    settings<span class="op">.</span><span class="pp">try_deserialize::</span><span class="op">&lt;</span>Settings<span class="op">&gt;</span>()</span>
+<span id="cb69-32"><a href="#cb69-32" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>This allows us to customize <strong>any</strong> value in our <code>Settings</code> struct using environment variables, overriding what is specified in our configuration files.</p>
+<p>Why is that convenient?<br />
+It makes it possible to inject values that are too dynamic (i.e. not known a priori) or too sensitive to be stored in version control.<br />
+It also makes it <em>fast</em> to change the behaviour of our application: we do not have to go through a full re-build if we want to tune one of those values (e.g. the database port). For languages like Rust, where a fresh build can take ten minutes or more, this can make the difference between a short outage and a substantial service degradation with customer-visible impact.</p>
+<p>Before we move on let’s take care of an annoying detail: environment variables are strings for the <code>config</code> crate and it will fail to pick up integers if using the standard deserialization routine from <code>serde</code>.<br />
+Luckily enough, we can specify a custom deserialization function.<br />
+Let’s add a new dependency, <code>serde-aux</code> (<code>serde</code> <code>aux</code>iliary):</p>
+<div class="sourceCode" id="cb70"><pre class="sourceCode toml"><code class="sourceCode toml"><span id="cb70-1"><a href="#cb70-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! Cargo.toml</span></span>
+<span id="cb70-2"><a href="#cb70-2" aria-hidden="true" tabindex="-1"></a><span class="co"># [...]</span></span>
+<span id="cb70-3"><a href="#cb70-3" aria-hidden="true" tabindex="-1"></a><span class="kw">[</span><span class="dt">dependencies</span><span class="kw">]</span></span>
+<span id="cb70-4"><a href="#cb70-4" aria-hidden="true" tabindex="-1"></a><span class="dt">serde-aux</span> <span class="op">=</span> <span class="st">&quot;4&quot;</span></span>
+<span id="cb70-5"><a href="#cb70-5" aria-hidden="true" tabindex="-1"></a><span class="co"># [...]</span></span></code></pre></div>
+<p>and let’s modify both <code>ApplicationSettings</code> and <code>DatabaseSettings</code></p>
+<div class="sourceCode" id="cb71"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb71-1"><a href="#cb71-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb71-2"><a href="#cb71-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb71-3"><a href="#cb71-3" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">serde_aux::field_attributes::</span>deserialize_number_from_string<span class="op">;</span></span>
+<span id="cb71-4"><a href="#cb71-4" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb71-5"><a href="#cb71-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb71-6"><a href="#cb71-6" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb71-7"><a href="#cb71-7" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> ApplicationSettings <span class="op">{</span></span>
+<span id="cb71-8"><a href="#cb71-8" aria-hidden="true" tabindex="-1"></a>    <span class="at">#[</span>serde<span class="at">(</span>deserialize_with <span class="op">=</span> <span class="st">&quot;deserialize_number_from_string&quot;</span><span class="at">)]</span></span>
+<span id="cb71-9"><a href="#cb71-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> port<span class="op">:</span> <span class="dt">u16</span><span class="op">,</span></span>
+<span id="cb71-10"><a href="#cb71-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb71-11"><a href="#cb71-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb71-12"><a href="#cb71-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb71-13"><a href="#cb71-13" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb71-14"><a href="#cb71-14" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb71-15"><a href="#cb71-15" aria-hidden="true" tabindex="-1"></a>    <span class="at">#[</span>serde<span class="at">(</span>deserialize_with <span class="op">=</span> <span class="st">&quot;deserialize_number_from_string&quot;</span><span class="at">)]</span></span>
+<span id="cb71-16"><a href="#cb71-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> port<span class="op">:</span> <span class="dt">u16</span><span class="op">,</span></span>
+<span id="cb71-17"><a href="#cb71-17" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb71-18"><a href="#cb71-18" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb71-19"><a href="#cb71-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb71-20"><a href="#cb71-20" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span></code></pre></div>
+</section>
+<section id="connecting-to-digital-oceans-postgres-instance" class="level3" data-number="5.4.4">
+<h3 data-number="5.4.4"><span class="header-section-number">5.4.4</span> Connecting To Digital Ocean’s Postgres Instance</h3>
+<p>Let’s have a look at the connection string of our database using DigitalOcean’s dashboard (Components -&gt; Database):</p>
+<div class="sourceCode" id="cb72"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb72-1"><a href="#cb72-1" aria-hidden="true" tabindex="-1"></a><span class="ex">postgresql://newsletter:</span><span class="op">&lt;</span>PASSWORD<span class="op">&gt;</span>@<span class="op">&lt;</span>HOST<span class="op">&gt;</span>:<span class="op">&lt;</span>PORT<span class="op">&gt;</span>/newsletter<span class="pp">?</span>sslmode=require</span></code></pre></div>
+<p>Our current <code>DatabaseSettings</code> does not handle SSL mode - it was not relevant for local development, but it is more than desirable to have transport-level encryption for our client/database communication in production.<br />
+Before trying to add new functionality, let’s <em>make room for it</em> by refactoring <code>DatabaseSettings</code>.<br />
+The current version looks like this:</p>
+<div class="sourceCode" id="cb73"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb73-1"><a href="#cb73-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb73-2"><a href="#cb73-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb73-3"><a href="#cb73-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb73-4"><a href="#cb73-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb73-5"><a href="#cb73-5" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb73-6"><a href="#cb73-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> username<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb73-7"><a href="#cb73-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> password<span class="op">:</span> Secret<span class="op">&lt;</span><span class="dt">String</span><span class="op">&gt;,</span></span>
+<span id="cb73-8"><a href="#cb73-8" aria-hidden="true" tabindex="-1"></a>    <span class="at">#[</span>serde<span class="at">(</span>deserialize_with <span class="op">=</span> <span class="st">&quot;deserialize_number_from_string&quot;</span><span class="at">)]</span></span>
+<span id="cb73-9"><a href="#cb73-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> port<span class="op">:</span> <span class="dt">u16</span><span class="op">,</span></span>
+<span id="cb73-10"><a href="#cb73-10" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> host<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb73-11"><a href="#cb73-11" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> database_name<span class="op">:</span> <span class="dt">String</span><span class="op">,</span></span>
+<span id="cb73-12"><a href="#cb73-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb73-13"><a href="#cb73-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb73-14"><a href="#cb73-14" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb73-15"><a href="#cb73-15" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">fn</span> connection_string(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> Secret<span class="op">&lt;</span><span class="dt">String</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb73-16"><a href="#cb73-16" aria-hidden="true" tabindex="-1"></a>        <span class="co">// [...]</span></span>
+<span id="cb73-17"><a href="#cb73-17" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb73-18"><a href="#cb73-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb73-19"><a href="#cb73-19" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">fn</span> connection_string_without_db(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> Secret<span class="op">&lt;</span><span class="dt">String</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb73-20"><a href="#cb73-20" aria-hidden="true" tabindex="-1"></a>        <span class="co">// [...]</span></span>
+<span id="cb73-21"><a href="#cb73-21" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb73-22"><a href="#cb73-22" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We will change its two methods to return a <code>PgConnectOptions</code> instead of a connection string: it will make it easier to manage all these moving parts.</p>
+<div class="sourceCode" id="cb74"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb74-1"><a href="#cb74-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb74-2"><a href="#cb74-2" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">sqlx::postgres::</span>PgConnectOptions<span class="op">;</span></span>
+<span id="cb74-3"><a href="#cb74-3" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb74-4"><a href="#cb74-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb74-5"><a href="#cb74-5" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb74-6"><a href="#cb74-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Renamed from `connection_string_without_db`</span></span>
+<span id="cb74-7"><a href="#cb74-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">fn</span> without_db(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> PgConnectOptions <span class="op">{</span></span>
+<span id="cb74-8"><a href="#cb74-8" aria-hidden="true" tabindex="-1"></a>        <span class="pp">PgConnectOptions::</span>new()</span>
+<span id="cb74-9"><a href="#cb74-9" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>host(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>host)</span>
+<span id="cb74-10"><a href="#cb74-10" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>username(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>username)</span>
+<span id="cb74-11"><a href="#cb74-11" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>password(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>password<span class="op">.</span>expose_secret())</span>
+<span id="cb74-12"><a href="#cb74-12" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>port(<span class="kw">self</span><span class="op">.</span>port)</span>
+<span id="cb74-13"><a href="#cb74-13" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb74-14"><a href="#cb74-14" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb74-15"><a href="#cb74-15" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Renamed from `connection_string`</span></span>
+<span id="cb74-16"><a href="#cb74-16" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">fn</span> with_db(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> PgConnectOptions <span class="op">{</span></span>
+<span id="cb74-17"><a href="#cb74-17" aria-hidden="true" tabindex="-1"></a>        <span class="kw">self</span><span class="op">.</span>without_db()<span class="op">.</span>database(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>database_name)</span>
+<span id="cb74-18"><a href="#cb74-18" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb74-19"><a href="#cb74-19" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We’ll also have to update <code>src/main.rs</code> and <code>tests/health_check.rs</code>:</p>
+<div class="sourceCode" id="cb75"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb75-1"><a href="#cb75-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/main.rs</span></span>
+<span id="cb75-2"><a href="#cb75-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb75-3"><a href="#cb75-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb75-4"><a href="#cb75-4" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span><span class="pp">tokio::</span>main<span class="at">]</span></span>
+<span id="cb75-5"><a href="#cb75-5" aria-hidden="true" tabindex="-1"></a><span class="kw">async</span> <span class="kw">fn</span> main() <span class="op">-&gt;</span> <span class="dt">Result</span><span class="op">&lt;</span>()<span class="op">,</span> <span class="pp">std::io::</span><span class="bu">Error</span><span class="op">&gt;</span> <span class="op">{</span></span>
+<span id="cb75-6"><a href="#cb75-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb75-7"><a href="#cb75-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb75-8"><a href="#cb75-8" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> connection_pool <span class="op">=</span> <span class="pp">PgPoolOptions::</span>new()</span>
+<span id="cb75-9"><a href="#cb75-9" aria-hidden="true" tabindex="-1"></a>        <span class="co">// `connect_lazy_with` instead of `connect_lazy`</span></span>
+<span id="cb75-10"><a href="#cb75-10" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>connect_lazy_with(configuration<span class="op">.</span>database<span class="op">.</span>with_db())<span class="op">;</span></span>
+<span id="cb75-11"><a href="#cb75-11" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb75-12"><a href="#cb75-12" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb75-13"><a href="#cb75-13" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb76"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb76-1"><a href="#cb76-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! tests/health_check.rs</span></span>
+<span id="cb76-2"><a href="#cb76-2" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb76-3"><a href="#cb76-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb76-4"><a href="#cb76-4" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">async</span> <span class="kw">fn</span> configure_database(config<span class="op">:</span> <span class="op">&amp;</span>DatabaseSettings) <span class="op">-&gt;</span> PgPool <span class="op">{</span></span>
+<span id="cb76-5"><a href="#cb76-5" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Create database</span></span>
+<span id="cb76-6"><a href="#cb76-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> <span class="kw">mut</span> connection <span class="op">=</span> <span class="pp">PgConnection::</span>connect_with(<span class="op">&amp;</span>config<span class="op">.</span>without_db())</span>
+<span id="cb76-7"><a href="#cb76-7" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb76-8"><a href="#cb76-8" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to connect to Postgres&quot;</span>)<span class="op">;</span></span>
+<span id="cb76-9"><a href="#cb76-9" aria-hidden="true" tabindex="-1"></a>    connection</span>
+<span id="cb76-10"><a href="#cb76-10" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>execute(<span class="pp">format!</span>(<span class="st">r#&quot;CREATE DATABASE &quot;{}&quot;;&quot;#</span><span class="op">,</span> config<span class="op">.</span>database_name)<span class="op">.</span>as_str())</span>
+<span id="cb76-11"><a href="#cb76-11" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb76-12"><a href="#cb76-12" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to create database.&quot;</span>)<span class="op">;</span></span>
+<span id="cb76-13"><a href="#cb76-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb76-14"><a href="#cb76-14" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Migrate database</span></span>
+<span id="cb76-15"><a href="#cb76-15" aria-hidden="true" tabindex="-1"></a>    <span class="kw">let</span> connection_pool <span class="op">=</span> <span class="pp">PgPool::</span>connect_with(config<span class="op">.</span>with_db())</span>
+<span id="cb76-16"><a href="#cb76-16" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb76-17"><a href="#cb76-17" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to connect to Postgres.&quot;</span>)<span class="op">;</span></span>
+<span id="cb76-18"><a href="#cb76-18" aria-hidden="true" tabindex="-1"></a>    <span class="pp">sqlx::migrate!</span>(<span class="st">&quot;./migrations&quot;</span>)</span>
+<span id="cb76-19"><a href="#cb76-19" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>run(<span class="op">&amp;</span>connection_pool)</span>
+<span id="cb76-20"><a href="#cb76-20" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span><span class="kw">await</span></span>
+<span id="cb76-21"><a href="#cb76-21" aria-hidden="true" tabindex="-1"></a>        <span class="op">.</span>expect(<span class="st">&quot;Failed to migrate the database&quot;</span>)<span class="op">;</span></span>
+<span id="cb76-22"><a href="#cb76-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb76-23"><a href="#cb76-23" aria-hidden="true" tabindex="-1"></a>    connection_pool</span>
+<span id="cb76-24"><a href="#cb76-24" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>Use <code>cargo test</code> to make sure everything is still working as expected.</p>
+<p>Let’s now add the <code>require_ssl</code> property we need to <code>DatabaseSettings</code>:</p>
+<div class="sourceCode" id="cb77"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb77-1"><a href="#cb77-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb77-2"><a href="#cb77-2" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">sqlx::postgres::</span>PgSslMode<span class="op">;</span></span>
+<span id="cb77-3"><a href="#cb77-3" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb77-4"><a href="#cb77-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb77-5"><a href="#cb77-5" aria-hidden="true" tabindex="-1"></a><span class="at">#[</span>derive<span class="at">(</span><span class="pp">serde::</span>Deserialize<span class="at">)]</span></span>
+<span id="cb77-6"><a href="#cb77-6" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">struct</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb77-7"><a href="#cb77-7" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb77-8"><a href="#cb77-8" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Determine if we demand the connection to be encrypted or not</span></span>
+<span id="cb77-9"><a href="#cb77-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> require_ssl<span class="op">:</span> <span class="dt">bool</span><span class="op">,</span></span>
+<span id="cb77-10"><a href="#cb77-10" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb77-11"><a href="#cb77-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb77-12"><a href="#cb77-12" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb77-13"><a href="#cb77-13" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">fn</span> without_db(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> PgConnectOptions <span class="op">{</span></span>
+<span id="cb77-14"><a href="#cb77-14" aria-hidden="true" tabindex="-1"></a>        <span class="kw">let</span> ssl_mode <span class="op">=</span> <span class="cf">if</span> <span class="kw">self</span><span class="op">.</span>require_ssl <span class="op">{</span></span>
+<span id="cb77-15"><a href="#cb77-15" aria-hidden="true" tabindex="-1"></a>            <span class="pp">PgSslMode::</span>Require</span>
+<span id="cb77-16"><a href="#cb77-16" aria-hidden="true" tabindex="-1"></a>        <span class="op">}</span> <span class="cf">else</span> <span class="op">{</span></span>
+<span id="cb77-17"><a href="#cb77-17" aria-hidden="true" tabindex="-1"></a>            <span class="co">// Try an encrypted connection, fallback to unencrypted if it fails</span></span>
+<span id="cb77-18"><a href="#cb77-18" aria-hidden="true" tabindex="-1"></a>            <span class="pp">PgSslMode::</span>Prefer</span>
+<span id="cb77-19"><a href="#cb77-19" aria-hidden="true" tabindex="-1"></a>        <span class="op">};</span></span>
+<span id="cb77-20"><a href="#cb77-20" aria-hidden="true" tabindex="-1"></a>        <span class="pp">PgConnectOptions::</span>new()</span>
+<span id="cb77-21"><a href="#cb77-21" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>host(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>host)</span>
+<span id="cb77-22"><a href="#cb77-22" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>username(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>username)</span>
+<span id="cb77-23"><a href="#cb77-23" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>password(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>password<span class="op">.</span>expose_secret())</span>
+<span id="cb77-24"><a href="#cb77-24" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>port(<span class="kw">self</span><span class="op">.</span>port)</span>
+<span id="cb77-25"><a href="#cb77-25" aria-hidden="true" tabindex="-1"></a>            <span class="op">.</span>ssl_mode(ssl_mode)</span>
+<span id="cb77-26"><a href="#cb77-26" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb77-27"><a href="#cb77-27" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb77-28"><a href="#cb77-28" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p>We want <code>require_ssl</code> to be <code>false</code> when we run the application locally (and for our test suite), but <code>true</code> in our production environment.<br />
+Let’s amend our configuration files accordingly:</p>
+<div class="sourceCode" id="cb78"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb78-1"><a href="#cb78-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! configuration/local.yaml</span></span>
+<span id="cb78-2"><a href="#cb78-2" aria-hidden="true" tabindex="-1"></a><span class="fu">application</span><span class="kw">:</span></span>
+<span id="cb78-3"><a href="#cb78-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">host</span><span class="kw">:</span><span class="at"> </span><span class="fl">127.0.0.1</span></span>
+<span id="cb78-4"><a href="#cb78-4" aria-hidden="true" tabindex="-1"></a><span class="fu">database</span><span class="kw">:</span></span>
+<span id="cb78-5"><a href="#cb78-5" aria-hidden="true" tabindex="-1"></a><span class="co">  # New entry!</span></span>
+<span id="cb78-6"><a href="#cb78-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">require_ssl</span><span class="kw">:</span><span class="at"> </span><span class="ch">false</span></span></code></pre></div>
+<div class="sourceCode" id="cb79"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb79-1"><a href="#cb79-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! configuration/production.yaml</span></span>
+<span id="cb79-2"><a href="#cb79-2" aria-hidden="true" tabindex="-1"></a><span class="fu">application</span><span class="kw">:</span></span>
+<span id="cb79-3"><a href="#cb79-3" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">host</span><span class="kw">:</span><span class="at"> </span><span class="fl">0.0.0.0</span></span>
+<span id="cb79-4"><a href="#cb79-4" aria-hidden="true" tabindex="-1"></a><span class="fu">database</span><span class="kw">:</span></span>
+<span id="cb79-5"><a href="#cb79-5" aria-hidden="true" tabindex="-1"></a><span class="co">  # New entry!</span></span>
+<span id="cb79-6"><a href="#cb79-6" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="fu">require_ssl</span><span class="kw">:</span><span class="at"> </span><span class="ch">true</span></span></code></pre></div>
+<p>We can take the opportunity - now that we are using <code>PgConnectOptions</code> - to tune <code>sqlx</code>’s instrumentation: lower their logs from <code>INFO</code> to <code>TRACE</code> level.<br />
+This will eliminate the noise we noticed in the previous chapter.</p>
+<div class="sourceCode" id="cb80"><pre class="sourceCode rust"><code class="sourceCode rust"><span id="cb80-1"><a href="#cb80-1" aria-hidden="true" tabindex="-1"></a><span class="co">//! src/configuration.rs</span></span>
+<span id="cb80-2"><a href="#cb80-2" aria-hidden="true" tabindex="-1"></a><span class="kw">use</span> <span class="pp">sqlx::</span>ConnectOptions<span class="op">;</span></span>
+<span id="cb80-3"><a href="#cb80-3" aria-hidden="true" tabindex="-1"></a><span class="co">// [...]</span></span>
+<span id="cb80-4"><a href="#cb80-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb80-5"><a href="#cb80-5" aria-hidden="true" tabindex="-1"></a><span class="kw">impl</span> DatabaseSettings <span class="op">{</span></span>
+<span id="cb80-6"><a href="#cb80-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">// [...]</span></span>
+<span id="cb80-7"><a href="#cb80-7" aria-hidden="true" tabindex="-1"></a>    <span class="kw">pub</span> <span class="kw">fn</span> with_db(<span class="op">&amp;</span><span class="kw">self</span>) <span class="op">-&gt;</span> PgConnectOptions <span class="op">{</span></span>
+<span id="cb80-8"><a href="#cb80-8" aria-hidden="true" tabindex="-1"></a>        <span class="kw">let</span> <span class="kw">mut</span> options <span class="op">=</span> <span class="kw">self</span><span class="op">.</span>without_db()<span class="op">.</span>database(<span class="op">&amp;</span><span class="kw">self</span><span class="op">.</span>database_name)<span class="op">;</span></span>
+<span id="cb80-9"><a href="#cb80-9" aria-hidden="true" tabindex="-1"></a>        options<span class="op">.</span>log_statements(<span class="pp">tracing_log::log::LevelFilter::</span>Trace)<span class="op">;</span></span>
+<span id="cb80-10"><a href="#cb80-10" aria-hidden="true" tabindex="-1"></a>        options</span>
+<span id="cb80-11"><a href="#cb80-11" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb80-12"><a href="#cb80-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+</section>
+<section id="environment-variables-in-the-app-spec" class="level3" data-number="5.4.5">
+<h3 data-number="5.4.5"><span class="header-section-number">5.4.5</span> Environment Variables In The App Spec</h3>
+<p>One last step: we need to amend our <code>spec.yaml</code> manifest to inject the environment variables we need.</p>
+<div class="sourceCode" id="cb81"><pre class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb81-1"><a href="#cb81-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! spec.yaml</span></span>
+<span id="cb81-2"><a href="#cb81-2" aria-hidden="true" tabindex="-1"></a><span class="fu">name</span><span class="kw">:</span><span class="at"> zero2prod</span></span>
+<span id="cb81-3"><a href="#cb81-3" aria-hidden="true" tabindex="-1"></a><span class="fu">region</span><span class="kw">:</span><span class="at"> fra</span></span>
+<span id="cb81-4"><a href="#cb81-4" aria-hidden="true" tabindex="-1"></a><span class="fu">services</span><span class="kw">:</span></span>
+<span id="cb81-5"><a href="#cb81-5" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">name</span><span class="kw">:</span><span class="at"> zero2prod</span></span>
+<span id="cb81-6"><a href="#cb81-6" aria-hidden="true" tabindex="-1"></a><span class="co">    # [...]</span></span>
+<span id="cb81-7"><a href="#cb81-7" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">envs</span><span class="kw">:</span></span>
+<span id="cb81-8"><a href="#cb81-8" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">key</span><span class="kw">:</span><span class="at"> APP_DATABASE__USERNAME</span></span>
+<span id="cb81-9"><a href="#cb81-9" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">scope</span><span class="kw">:</span><span class="at"> RUN_TIME</span></span>
+<span id="cb81-10"><a href="#cb81-10" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">value</span><span class="kw">:</span><span class="at"> ${newsletter.USERNAME}</span></span>
+<span id="cb81-11"><a href="#cb81-11" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">key</span><span class="kw">:</span><span class="at"> APP_DATABASE__PASSWORD</span></span>
+<span id="cb81-12"><a href="#cb81-12" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">scope</span><span class="kw">:</span><span class="at"> RUN_TIME</span></span>
+<span id="cb81-13"><a href="#cb81-13" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">value</span><span class="kw">:</span><span class="at"> ${newsletter.PASSWORD}</span></span>
+<span id="cb81-14"><a href="#cb81-14" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">key</span><span class="kw">:</span><span class="at"> APP_DATABASE__HOST</span></span>
+<span id="cb81-15"><a href="#cb81-15" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">scope</span><span class="kw">:</span><span class="at"> RUN_TIME</span></span>
+<span id="cb81-16"><a href="#cb81-16" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">value</span><span class="kw">:</span><span class="at"> ${newsletter.HOSTNAME}</span></span>
+<span id="cb81-17"><a href="#cb81-17" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">key</span><span class="kw">:</span><span class="at"> APP_DATABASE__PORT</span></span>
+<span id="cb81-18"><a href="#cb81-18" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">scope</span><span class="kw">:</span><span class="at"> RUN_TIME</span></span>
+<span id="cb81-19"><a href="#cb81-19" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">value</span><span class="kw">:</span><span class="at"> ${newsletter.PORT}</span></span>
+<span id="cb81-20"><a href="#cb81-20" aria-hidden="true" tabindex="-1"></a><span class="at">      </span><span class="kw">-</span><span class="at"> </span><span class="fu">key</span><span class="kw">:</span><span class="at"> APP_DATABASE__DATABASE_NAME</span></span>
+<span id="cb81-21"><a href="#cb81-21" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">scope</span><span class="kw">:</span><span class="at"> RUN_TIME</span></span>
+<span id="cb81-22"><a href="#cb81-22" aria-hidden="true" tabindex="-1"></a><span class="at">        </span><span class="fu">value</span><span class="kw">:</span><span class="at"> ${newsletter.DATABASE}</span></span>
+<span id="cb81-23"><a href="#cb81-23" aria-hidden="true" tabindex="-1"></a><span class="fu">databases</span><span class="kw">:</span></span>
+<span id="cb81-24"><a href="#cb81-24" aria-hidden="true" tabindex="-1"></a><span class="at">  </span><span class="kw">-</span><span class="at"> </span><span class="fu">engine</span><span class="kw">:</span><span class="at"> PG</span></span>
+<span id="cb81-25"><a href="#cb81-25" aria-hidden="true" tabindex="-1"></a><span class="at">    </span><span class="fu">name</span><span class="kw">:</span><span class="at"> newsletter</span></span>
+<span id="cb81-26"><a href="#cb81-26" aria-hidden="true" tabindex="-1"></a><span class="co">    # [...]</span></span></code></pre></div>
+<p>The scope is set to <code>RUN_TIME</code> to distinguish between environment variables needed during our Docker build process and those needed when the Docker image is launched.<br />
+We are populating the values of the environment variables by interpolating what is exposed by the Digital Ocean’s platform (e.g. <code>${newsletter.PORT}</code>) - refer to <a href="https://www.digitalocean.com/docs/app-platform/how-to/use-environment-variables/">their documentation</a> for more details.</p>
+</section>
+<section id="one-last-push" class="level3" data-number="5.4.6">
+<h3 data-number="5.4.6"><span class="header-section-number">5.4.6</span> One Last Push</h3>
+<p>Let’s apply the new spec</p>
+<div class="sourceCode" id="cb82"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb82-1"><a href="#cb82-1" aria-hidden="true" tabindex="-1"></a><span class="co"># You can retrieve your app id using `doctl apps list`</span></span>
+<span id="cb82-2"><a href="#cb82-2" aria-hidden="true" tabindex="-1"></a><span class="ex">doctl</span> apps update YOUR-APP-ID <span class="at">--spec</span><span class="op">=</span>spec.yaml</span></code></pre></div>
+<p>and push our change up to GitHub to trigger a new deployment.</p>
+<p>We now need to migrate the database<a href="#fn6" class="footnote-ref" id="fnref6" epub:type="noteref">6</a>:</p>
+<div class="sourceCode" id="cb83"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb83-1"><a href="#cb83-1" aria-hidden="true" tabindex="-1"></a><span class="va">DATABASE_URL</span><span class="op">=</span>YOUR-DIGITAL-OCEAN-DB-CONNECTION-STRING <span class="ex">sqlx</span> migrate run</span></code></pre></div>
+<p>We are ready to go!<br />
+Let’s fire off a <code>POST</code> request to <code>/subscriptions</code>:</p>
+<div class="sourceCode" id="cb84"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb84-1"><a href="#cb84-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">--request</span> POST <span class="dt">\</span></span>
+<span id="cb84-2"><a href="#cb84-2" aria-hidden="true" tabindex="-1"></a>    <span class="at">--data</span> <span class="st">&#39;name=le%20guin&amp;email=ursula_le_guin%40gmail.com&#39;</span> <span class="dt">\</span></span>
+<span id="cb84-3"><a href="#cb84-3" aria-hidden="true" tabindex="-1"></a>    https://zero2prod-adqrw.ondigitalocean.app/subscriptions <span class="dt">\</span></span>
+<span id="cb84-4"><a href="#cb84-4" aria-hidden="true" tabindex="-1"></a>    <span class="at">--verbose</span></span></code></pre></div>
+<p>The server should respond with a <code>200 OK</code>.<br />
+Congrats, you have just deployed your first Rust application!<br />
+And <a href="https://en.wikipedia.org/wiki/Ursula_K._Le_Guin">Ursula Le Guin</a> just subscribed to your email newsletter (allegedly)!</p>
+<p>If you have come this far, I’d love to get a screenshot of your Digital Ocean’s dashboard showing off that running application!<br />
+Email it over at <code>rust@lpalmieri.com</code> or share it on Twitter tagging the <em>Zero To Production In Rust</em> account, <a href="https://twitter.com/zero2prod"><span class="citation" data-cites="zero2prod">@zero2prod</span></a>.</p>
+</section>
+</section>
+</section>
+<section id="footnotes" class="footnotes footnotes-end-of-document" epub:type="footnotes">
+<hr />
+<aside epub:type="footnote" id="fn1">
+<p><a href="#fnref1" class="footnote-back" role="doc-backlink">1</a>. Kubernetes is six years old, Docker itself is just seven years old!</p>
+</aside>
+<aside epub:type="footnote" id="fn2">
+<p><a href="#fnref2" class="footnote-back" role="doc-backlink">2</a>. Unless you are using <code>--network=host</code>, <code>--ssh</code> or other similar options. You also have volumes as an alternative mechanism to share files at runtime.</p>
+</aside>
+<aside epub:type="footnote" id="fn3">
+<p><a href="#fnref3" class="footnote-back" role="doc-backlink">3</a>. <code>rustc</code> statically links all Rust code but dynamically links <code>libc</code> from the underlying system if you are using the Rust standard library. You can get a fully statically linked binary by targeting <code>linux-musl</code>; check out <a href="https://doc.rust-lang.org/edition-guide/rust-2018/platform-and-target-support/musl-support-for-fully-static-binaries.html">Rust’s supported platforms and targets</a> for more information.</p>
+</aside>
+<aside epub:type="footnote" id="fn4">
+<p><a href="#fnref4" class="footnote-back" role="doc-backlink">4</a>. Credits to Ian Purton and flat_of_angles for pointing out that there was further room for improvement.</p>
+</aside>
+<aside epub:type="footnote" id="fn5">
+<p><a href="#fnref5" class="footnote-back" role="doc-backlink">5</a>. Full disclosure - I am the author of <code>cargo-chef</code>.</p>
+</aside>
+<aside epub:type="footnote" id="fn6">
+<p><a href="#fnref6" class="footnote-back" role="doc-backlink">6</a>. You will have to temporarily disable <a href="https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/"><code>Trusted Sources</code></a> to run the migrations from your local machine.</p>
+</aside>
+</section>
+</body>
+</html>

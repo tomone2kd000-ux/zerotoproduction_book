@@ -1,0 +1,364 @@
+---
+title: "8.3 Biểu Diễn Lỗi Bằng Enum & Loại Bỏ Boilerplate Với thiserror"
+description: "Phân tầng kiến trúc lỗi (Error Layering), mô hình hóa lỗi bằng Enum để điều khiển luồng HTTP status codes, và sử dụng crate thiserror để loại bỏ boilerplate code thừa thãi trong Rust."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 8.3 Biểu Diễn Lỗi Bằng Enum & Loại Bỏ Boilerplate Với thiserror
+
+Ở phần trước, chúng ta đã thành công trong việc ghi lại nhật ký lỗi chi tiết cho operator thông qua Newtype `StoreTokenError` và việc triển khai trait `ResponseError`. 
+
+Tuy nhiên, nếu nhìn nhận từ góc độ **Kiến trúc phần mềm sạch (Clean Architecture / Separation of Concerns)**, giải pháp này bộc lộ một lỗ hổng nghiêm trọng về ranh giới trách nhiệm giữa các tầng (Layering).
+
+---
+
+## I. Phân Tầng Kiến Trúc (Layering)
+
+Hãy xem xét lại dòng code:
+
+```rust
+//! src/routes/subscriptions.rs
+
+impl ResponseError for StoreTokenError {}
+```
+
+Chúng ta đang cài đặt một trait thuộc về web framework (`actix_web::ResponseError`) cho một kiểu lỗi trả về từ một hàm nghiệp vụ lưu trữ cơ sở dữ liệu (`store_token`). 
+
+Hàm `store_token` về bản chất chỉ quan tâm đến việc ghi dữ liệu vào bảng `subscription_tokens`. Nó hoàn toàn **không nên và không được phép biết** gì về giao thức HTTP hay kiến trúc REST:
+1. Nếu sau này `store_token` được gọi từ một ứng dụng dòng lệnh (CLI), một message queue worker (RabbitMQ/Kafka consumer), hoặc một bài kiểm thử đơn vị, việc nó phụ thuộc vào `ResponseError` của web framework là một sự rò rỉ phụ thuộc (leaky abstraction).
+2. Kể cả khi chỉ chạy trong REST API, một endpoint khác sau này sử dụng `store_token` có thể muốn xử lý lỗi theo một cách khác chứ không nhất thiết phải trả về mã `500 Internal Server Error`.
+
+**Quy tắc bất di bất dịch**: *Việc quyết định HTTP status code nào tương ứng với một lỗi là trách nhiệm độc quyền của Request Handler (tầng giao diện/vận chuyển), không được phép rò rỉ vào các tầng nghiệp vụ bên dưới.*
+
+Vì vậy, ta phải xóa bỏ việc triển khai `ResponseError` trên `StoreTokenError`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+// Xóa bỏ hoàn toàn cài đặt này!
+// impl ResponseError for StoreTokenError {}
+```
+
+Thay vào đó, ta định nghĩa một kiểu lỗi riêng cho request handler: `SubscribeError`. Kiểu lỗi này sẽ chịu trách nhiệm toàn bộ logic liên quan đến HTTP:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+    // [...]    
+}
+
+#[derive(Debug)]
+pub struct SubscribeError {}
+
+impl std::fmt::Display for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to create a new subscriber.")
+    }
+}
+
+impl std::error::Error for SubscribeError {}
+
+impl ResponseError for SubscribeError {}
+```
+
+Nếu chạy `cargo check` lúc này, trình biên dịch sẽ báo hàng loạt lỗi vì toán tử `?` không thể tự động chuyển đổi các lỗi con (`sqlx::Error`, `StoreTokenError`, `reqwest::Error`) thành `SubscribeError`.
+
+---
+
+## II. Mô Hình Hóa Lỗi Bằng Enum (Modelling Errors As Enums)
+
+Cách tiếp cận chuẩn tắc và mạnh mẽ nhất trong Rust để gom nhóm nhiều khả năng lỗi khác nhau là sử dụng **Enum**:
+
+```rust
+//! src/routes/subscriptions.rs
+
+#[derive(Debug)]
+pub enum SubscribeError {
+    ValidationError(String),
+    DatabaseError(sqlx::Error),
+    StoreTokenError(StoreTokenError),
+    SendEmailError(reqwest::Error),
+}
+```
+
+Để sử dụng toán tử `?` một cách mượt mà trong hàm `subscribe`, chúng ta triển khai trait `From` cho từng kiểu lỗi con:
+
+```rust
+//! src/routes/subscriptions.rs
+
+impl From<reqwest::Error> for SubscribeError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::SendEmailError(e)
+    }
+}
+
+impl From<sqlx::Error> for SubscribeError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::DatabaseError(e)
+    }
+}
+
+impl From<StoreTokenError> for SubscribeError {
+    fn from(e: StoreTokenError) -> Self {
+        Self::StoreTokenError(e)
+    }
+}
+
+impl From<String> for SubscribeError {
+    fn from(e: String) -> Self {
+        Self::ValidationError(e)
+    }
+}
+```
+
+Nhờ đó, mã nguồn của request handler `subscribe` trở nên cực kỳ tinh gọn, không còn những khối `match` hay `if is_err()` cồng kềnh:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>,
+    base_url: web::Data<ApplicationBaseUrl>,
+) -> Result<HttpResponse, SubscribeError> {
+    let new_subscriber = form.0.try_into()?;
+    let mut transaction = pool.begin().await?;
+    let subscriber_id = insert_subscriber(&mut transaction, &new_subscriber).await?;
+    let subscription_token = generate_subscription_token();
+    store_token(&mut transaction, subscriber_id, &subscription_token).await?;
+    transaction.commit().await?;
+    send_confirmation_email(
+        &email_client,
+        new_subscriber,
+        &base_url.0,
+        &subscription_token,
+    ).await?;
+    
+    Ok(HttpResponse::Ok().finish())
+}
+```
+
+### Điều khiển luồng HTTP Status Codes bằng `match`
+
+Mã nguồn đã biên dịch thành công, nhưng kiểm thử kiểm tra dữ liệu đầu vào không hợp lệ (`subscribe_returns_a_400_when_fields_are_present_but_invalid`) lại thất bại:
+
+```text
+assertion failed: `(left == right)`
+  left: `400`,
+ right: `500`: The API did not return a 400 Bad Request when the payload was empty name.
+```
+
+Nguyên nhân là do phương thức `status_code` mặc định của `ResponseError` luôn trả về `500 Internal Server Error`. Đây chính là lúc enum phát huy sức mạnh vượt trội cho **Control Flow**: chúng ta dùng biểu thức `match` để phân định chính xác HTTP status code dựa trên biến thể của enum:
+
+```rust
+//! src/routes/subscriptions.rs
+use actix_web::http::StatusCode;
+
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
+            SubscribeError::DatabaseError(_)
+            | SubscribeError::StoreTokenError(_)
+            | SubscribeError::SendEmailError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+```
+
+Toàn bộ test suite lập tức chuyển sang màu xanh (`passed`).
+
+---
+
+## III. Kiểu Lỗi Đơn Thuần Là Không Đủ (The Error Type Is Not Enough)
+
+Hãy kiểm tra lại nhật ký log hệ thống xem báo cáo lỗi cho operator có còn giữ được độ chi tiết hay không:
+
+```text
+ INFO: [HTTP REQUEST - END] 
+    exception.details="StoreTokenError(
+            A database failure was encountered while trying to store a subscription token.
+            
+        Caused by:
+            error returned from database: column 'subscription_token' of relation 'subscription_tokens' does not exist)"
+    exception.message="Failed to create a new subscriber.",
+    target=tracing_actix_web::root_span_builder, 
+    http.status_code=500
+```
+
+`exception.details` vẫn rất tốt, nhưng `exception.message` thì trở nên vô hồn: bất kể lỗi gì xảy ra, nó đều in ra cùng một câu cố định: *"Failed to create a new subscriber"*.
+
+Chúng ta bắt đầu tự triển khai `Debug`, `Display` và `Error::source` cho `SubscribeError`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+impl std::error::Error for SubscribeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SubscribeError::ValidationError(_) => None,
+            SubscribeError::DatabaseError(e) => Some(e),
+            SubscribeError::StoreTokenError(e) => Some(e),
+            SubscribeError::SendEmailError(e) => Some(e),
+        }
+    }
+}
+
+impl std::fmt::Display for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubscribeError::ValidationError(e) => write!(f, "{}", e),
+            // Ta nên ghi gì ở đây?
+            SubscribeError::DatabaseError(_) => write!(f, "???"),
+            SubscribeError::StoreTokenError(_) => write!(
+                f,
+                "Failed to store the confirmation token for a new subscriber."
+            ),
+            SubscribeError::SendEmailError(_) => {
+                write!(f, "Failed to send a confirmation email.")
+            },
+        }
+    }
+}
+```
+
+Tại nhánh `SubscribeError::DatabaseError(_)`, chúng ta vấp phải một vấn đề kiến trúc: Biến thể `DatabaseError` bọc `sqlx::Error` được dùng chung cho **3 thao tác hoàn toàn khác nhau**:
+1. Lấy kết nối từ connection pool (`pool.begin()`).
+2. Chèn thông tin người đăng ký (`insert_subscriber()`).
+3. Commit transaction (`transaction.commit()`).
+
+Nếu chỉ nhìn vào kiểu `sqlx::Error`, phương thức `Display` không có cách nào biết được câu truy vấn nào đã thất bại. **Bản thân kiểu dữ liệu là không đủ để diễn giải ngữ cảnh**.
+
+### Tách nhỏ các biến thể Enum theo ngữ cảnh thao tác
+
+Để xóa bỏ sự mơ hồ, ta thay thế `DatabaseError` bằng ba biến thể rõ nghĩa:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub enum SubscribeError {
+    ValidationError(String),
+    PoolError(sqlx::Error),
+    InsertSubscriberError(sqlx::Error),
+    TransactionCommitError(sqlx::Error),
+    StoreTokenError(StoreTokenError),
+    SendEmailError(reqwest::Error),
+}
+
+impl std::fmt::Display for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubscribeError::ValidationError(e) => write!(f, "{}", e),
+            SubscribeError::PoolError(_) => {
+                write!(f, "Failed to acquire a Postgres connection from the pool.")
+            }
+            SubscribeError::InsertSubscriberError(_) => {
+                write!(f, "Failed to insert new subscriber in the database.")
+            }
+            SubscribeError::TransactionCommitError(_) => {
+                write!(f, "Failed to commit SQL transaction to store a new subscriber.")
+            }
+            SubscribeError::StoreTokenError(_) => {
+                write!(f, "Failed to store the confirmation token for a new subscriber.")
+            }
+            SubscribeError::SendEmailError(_) => {
+                write!(f, "Failed to send a confirmation email.")
+            }
+        }
+    }
+}
+```
+
+Bởi vì cùng một kiểu `sqlx::Error` có thể ánh xạ sang `PoolError`, `InsertSubscriberError` hoặc `TransactionCommitError`, chúng ta không thể cài đặt trait `From<sqlx::Error>` được nữa (trình biên dịch sẽ từ chối vì có 3 đích đến khả dĩ). Thay vào đó, trong hàm `subscribe`, ta dùng `map_err`:
+
+```rust
+let mut transaction = pool.begin().await.map_err(SubscribeError::PoolError)?;
+let subscriber_id = insert_subscriber(&mut transaction, &new_subscriber)
+    .await
+    .map_err(SubscribeError::InsertSubscriberError)?;
+// [...]
+transaction.commit().await.map_err(SubscribeError::TransactionCommitError)?;
+```
+
+Kết quả log quay trở lại trạng thái hoàn hảo:
+
+```text
+ INFO: [HTTP REQUEST - END] 
+    exception.details="Failed to store the confirmation token for a new subscriber.
+
+        Caused by:
+            A database failure was encountered while trying to store a subscription token.
+        Caused by:
+            error returned from database: column 'subscription_token' of relation 'subscription_tokens' does not exist"
+    exception.message="Failed to store the confirmation token for a new subscriber.",
+    target=tracing_actix_web::root_span_builder, 
+    http.status_code=500
+```
+
+---
+
+## IV. Loại Bỏ Mã Thừa (Boilerplate) Với `thiserror`
+
+Mặc dù đã đạt được mục tiêu về kiến trúc và chất lượng telemetry, chúng ta phải viết tới gần 90 dòng mã thủ công chỉ để cài đặt `Debug`, `Display`, `Error::source`, `From` và `ResponseError` cho `SubscribeError`.
+
+Code quá nhiều mã thừa (boilerplate) sẽ làm giảm năng suất và dễ gây lỗi chính tả. May mắn thay, trong hệ sinh thái Rust đã có giải pháp hoàn hảo: crate [`thiserror`](https://github.com/dtolnay/thiserror) do David Tolnay phát triển.
+
+Thêm vào `Cargo.toml`:
+
+```toml
+[dependencies]
+thiserror = "1"
+```
+
+Crate này cung cấp một procedural derive macro mạnh mẽ `#[derive(thiserror::Error)]`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error("Failed to acquire a Postgres connection from the pool")]
+    PoolError(#[source] sqlx::Error),
+    #[error("Failed to insert new subscriber in the database.")]
+    InsertSubscriberError(#[source] sqlx::Error),
+    #[error("Failed to store the confirmation token for a new subscriber.")]
+    StoreTokenError(#[from] StoreTokenError),
+    #[error("Failed to commit SQL transaction to store a new subscriber.")]
+    TransactionCommitError(#[source] sqlx::Error),
+    #[error("Failed to send a confirmation email.")]
+    SendEmailError(#[from] reqwest::Error),
+}
+
+// Giữ lại custom Debug để tận dụng hàm error_chain_fmt định dạng chuỗi nguyên nhân
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+```
+
+Từ **90 dòng code thủ công**, chúng ta rút gọn chỉ còn **21 dòng mã khai báo** rõ ràng, sạch sẽ và an toàn tuyệt đối!
+
+### Các thuộc tính cốt lõi của `thiserror`
+
+| Thuộc tính | Ý nghĩa & Hành vi |
+| :--- | :--- |
+| `#[error("...")]` | Tự động sinh cài đặt `Display`. Hỗ trợ nội suy chuỗi giá trị từ các trường trong tuple hoặc struct (ví dụ `{0}` trỏ tới trường dữ liệu đầu tiên `self.0`). |
+| `#[source]` | Đánh dấu trường dữ liệu này là nguyên nhân gốc rễ để trả về trong phương thức `Error::source`. |
+| `#[from]` | Vừa tự động triển khai trait `From<T>` cho kiểu lỗi ngoài cùng (cho phép dùng toán tử `?`), vừa tự động đánh dấu trường đó là `#[source]`. |
+
+<Callout type="warn" title="Lưu ý về ValidationError(String)">
+Tại sao biến thể `ValidationError(String)` không thể dùng `#[from]` hay `#[source]`? 
+Bởi vì kiểu nguyên thủy `String` **không triển khai** trait `std::error::Error`. Nó chỉ là một chuỗi văn bản thuần túy, do đó không thể trả về dưới dạng một `&dyn Error` trong `Error::source`.
+</Callout>

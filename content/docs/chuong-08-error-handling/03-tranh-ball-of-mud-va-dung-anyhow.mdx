@@ -1,0 +1,273 @@
+---
+title: "8.4 - 8.6 Tránh Ball Of Mud, So Sánh anyhow vs thiserror"
+description: "Tránh bẫy thiết kế Ball of Mud Error Enums, trừu tượng hóa lỗi bằng anyhow::Error, phân tích khi nào dùng thiserror vs anyhow, và triết lý ghi log lỗi chuẩn mực trong hệ thống phân tán."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 8.4 - 8.6 Tránh Ball Of Mud, So Sánh anyhow vs thiserror
+
+Trong bài học trước, chúng ta đã dùng `thiserror` để định nghĩa một enum `SubscribeError` chi tiết. Tuy nhiên, khi nhìn lại enum này, một vấn đề kiến trúc mới lại nảy sinh:
+
+```rust
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error("Failed to acquire a Postgres connection from the pool")]
+    PoolError(#[source] sqlx::Error),
+    #[error("Failed to insert new subscriber in the database.")]
+    InsertSubscriberError(#[source] sqlx::Error),
+    #[error("Failed to store the confirmation token for a new subscriber.")]
+    StoreTokenError(#[from] StoreTokenError),
+    #[error("Failed to commit SQL transaction to store a new subscriber.")]
+    TransactionCommitError(#[source] sqlx::Error),
+    #[error("Failed to send a confirmation email.")]
+    SendEmailError(#[from] reqwest::Error),
+}
+```
+
+Mỗi khi thêm một hàm có khả năng thất bại vào request handler, ta lại phải thêm một biến thể mới vào `SubscribeError`. Enum này đang phình to và trở thành một **"Quả bóng bùn lầy" (Ball of Mud)**: nó phơi bày toàn bộ chi tiết triển khai nội bộ ra bên ngoài!
+
+---
+
+## I. Tránh Enum Lỗi Kiểu "Ball Of Mud" (Avoid "Ball Of Mud" Error Enums)
+
+Hãy tư duy dưới góc độ **Các tầng trừu tượng (Abstraction Layers)**: Bên gọi hàm `subscribe` (chính là Actix-web router và middleware) thực sự **cần** biết điều gì?
+
+Tầng web bên ngoài chỉ cần biết đúng một thông tin duy nhất: **Cần trả về mã phản hồi HTTP nào cho client (thông qua `ResponseError`)**.
+
+Web server không hiểu và cũng không cần hiểu sự khác biệt nghiệp vụ giữa việc `SendEmailError` hay `TransactionCommitError` thất bại. Đối với web server, tất cả những lỗi đó đều quy về một bản chất duy nhất: *Hệ thống đã gặp một lỗi bất ngờ ngoài tầm kiểm soát và cần trả về mã 500 cho người dùng*.
+
+Do đó, kiểu lỗi lý tưởng ở tầng này chỉ nên có đúng hai nhóm khả năng:
+
+```rust
+//! src/routes/subscriptions.rs 
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error(/* ... */)]
+    UnexpectedError(/* ... */),
+}
+```
+- `ValidationError`: Ánh xạ sang mã `400 Bad Request`.
+- `UnexpectedError`: Ánh xạ sang mã `500 Internal Server Error`.
+
+### Kiểu lỗi mờ đục (Opaque Error Type)
+
+Ta cần lưu trữ nhiều kiểu lỗi khác nhau (`sqlx::Error`, `StoreTokenError`, `reqwest::Error`) bên trong biến thể `UnexpectedError` mà không được để lộ kiểu cụ thể ra ngoài. Đây chính là khái niệm **Kiểu lỗi mờ đục (Opaque Error)**.
+
+Giải pháp đầu tiên trong thư viện chuẩn là dùng `Box<dyn std::error::Error>` cùng thuộc tính `#[error(transparent)]` của `thiserror`:
+
+```rust
+//! src/routes/subscriptions.rs 
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    // transparent sẽ ủy quyền toàn bộ Display và source cho lỗi được bọc bên trong
+    #[error(transparent)]
+    UnexpectedError(#[from] Box<dyn std::error::Error>),
+}
+```
+
+Khi đó, cài đặt `ResponseError` trở nên cực kỳ gọn gàng:
+
+```rust
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
+            SubscribeError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+```
+
+Tuy nhiên, khi chạy thử nghiệm bằng cách làm hỏng database (`ALTER TABLE subscriptions DROP COLUMN email;`), nhật ký log lại bị thoái hóa:
+
+```text
+ INFO: [HTTP REQUEST - END] 
+    exception.details: "error returned from database: column 'email' of relation 'subscriptions' does not exist"
+    exception.message: "error returned from database: column 'email' of relation 'subscriptions' does not exist"
+```
+
+Chúng ta đã đánh mất thông điệp ngữ cảnh cấp cao thân thiện với operator (*"Failed to insert new subscriber in the database"*). Vì vậy, ta cần một cơ chế vừa cho phép bọc lỗi mờ đục, vừa cho phép đính kèm ngữ cảnh (context) linh hoạt.
+
+---
+
+## II. Sử Dụng `anyhow` Làm Kiểu Lỗi Mờ Đục
+
+Thay vì tự xây dựng cơ chế bọc ngữ cảnh thủ công, hệ sinh thái Rust đã có sẵn một crate tiêu chuẩn công nghiệp: [`anyhow`](https://github.com/dtolnay/anyhow).
+
+Thêm vào `Cargo.toml`:
+
+```toml
+[dependencies]
+anyhow = "1"
+```
+
+Theo tài liệu của crate:
+> `anyhow::Error` là một wrapper bao bọc xung quanh một dynamic error type, tương tự như `Box<dyn std::error::Error>`, nhưng sở hữu các ưu điểm vượt trội:
+> - Yêu cầu lỗi phải thỏa mãn `Send`, `Sync` và `'static` (an toàn tuyệt đối khi gửi qua các luồng async của tokio).
+> - Đảm bảo luôn sẵn sàng `Backtrace`, ngay cả khi kiểu lỗi gốc không hỗ trợ.
+> - Được tối ưu dung lượng bộ nhớ: chỉ chiếm đúng kích thước 1 từ máy (narrow pointer - 1 word size).
+
+Hãy thay thế `Box<dyn std::error::Error>` bằng `anyhow::Error`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error),
+}
+```
+
+### Bổ sung ngữ cảnh với `anyhow::Context`
+
+Crate `anyhow` cung cấp một extension trait tên là `Context`. Khi `use anyhow::Context;`, mọi giá trị `Result` đều được bổ sung phương thức `.context()` và `.with_context()`:
+
+```rust
+//! src/routes/subscriptions.rs
+use anyhow::Context;
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>,
+    base_url: web::Data<ApplicationBaseUrl>,
+) -> Result<HttpResponse, SubscribeError> {
+    let new_subscriber = form.0.try_into().map_err(SubscribeError::ValidationError)?;
+    let mut transaction = pool
+        .begin()
+        .await
+        .context("Failed to acquire a Postgres connection from the pool")?;
+    let subscriber_id = insert_subscriber(&mut transaction, &new_subscriber)
+        .await
+        .context("Failed to insert new subscriber in the database.")?;
+    let subscription_token = generate_subscription_token();
+    store_token(&mut transaction, subscriber_id, &subscription_token)
+        .await
+        .context("Failed to store the confirmation token for a new subscriber.")?;
+    transaction
+        .commit()
+        .await
+        .context("Failed to commit SQL transaction to store a new subscriber.")?;
+    send_confirmation_email(
+        &email_client,
+        new_subscriber,
+        &base_url.0,
+        &subscription_token,
+    )
+    .await
+    .context("Failed to send a confirmation email.")?;
+
+    Ok(HttpResponse::Ok().finish())
+}
+```
+
+Phương thức `.context()` thực hiện đồng thời hai nhiệm vụ:
+1. Tự động chuyển đổi lỗi gốc thành `anyhow::Error`.
+2. Bọc lỗi gốc vào một lớp ngữ cảnh mang ý định của lập trình viên tại thời điểm xảy ra sự cố.
+
+Nhật ký log cuối request giờ đây hiển thị chính xác mọi tầng thông tin mà người vận hành mong muốn:
+
+```text
+ INFO: [HTTP REQUEST - END] 
+    exception.details=
+        "Failed to insert new subscriber in the database.
+        
+        Caused by:
+            error returned from database: column 'email' of relation 'subscriptions' does not exist"
+    exception.message="Failed to insert new subscriber in the database."
+```
+
+---
+
+## III. Phân Biệt Thực Chiến: `anyhow` Hay `thiserror`?
+
+Trong cộng đồng Rust, có một quan niệm truyền miệng rất phổ biến:
+> *"anyhow dành cho Application, còn thiserror dành cho Library."*
+
+Đây là một cách nhìn nhận phiến diện. Việc lựa chọn công cụ phải bắt nguồn từ **Ý định kiến trúc (Intent)** chứ không phải vị trí dự án:
+
+```text
+                                   Ý ĐỊNH CỦA BẠN LÀ GÌ?
+                                             │
+                     ┌───────────────────────┴───────────────────────┐
+                     ▼                                               ▼
+         Bên gọi cần PHÂN NHÁNH XỬ LÝ?                 Bên gọi chỉ cần BÁO CÁO LỖI?
+         (Programmatic Control Flow)                   (Reporting / Diagnostics)
+                     │                                               │
+                     ▼                                               ▼
+              Dùng ENUM                                      Dùng OPAQUE TYPE
+          (Kết hợp thiserror)                               (Kết hợp anyhow)
+```
+
+1. **Khi nào dùng `thiserror`**:
+   - Khi bạn muốn bên gọi có khả năng dùng `match` để xử lý từng trường hợp lỗi cụ thể (ví dụ: phân biệt giữa lỗi dữ liệu 400 và lỗi hạ tầng 500, hoặc phân biệt lỗi mất mạng để retry với lỗi sai cú pháp SQL).
+   - Thường xuất hiện ở các thư viện hoặc ranh giới giữa các tầng kiến trúc cần kiểm soát chặt chẽ.
+
+2. **Khi nào dùng `anyhow`**:
+   - Khi bên gọi không thể và không muốn can thiệp cứu vãn tình thế, chỉ cần chuyển tiếp lỗi lên cấp cao nhất để ghi log hoặc trả về phản hồi chung chung cho người dùng.
+   - Khi bạn muốn làm giàu ngữ cảnh lỗi nhanh chóng bằng `.context(...)` mà không cần tốn công định nghĩa hàng chục biến thể enum vô nghĩa.
+
+---
+
+## IV. Ai Nên Là Người Ghi Log Lỗi? (Who Should Log Errors?)
+
+Khi một request gặp sự cố trong hệ thống của chúng ta, nếu quan sát kỹ luồng log, ta sẽ thấy cùng một thông tin lỗi xuất hiện tới **3 lần**:
+1. Một dòng log từ lệnh `tracing::error!` nằm trong hàm `insert_subscriber`.
+2. Một dòng log do `actix_web` phát ra khi chuyển đổi kiểu lỗi thành `actix_web::Error`.
+3. Một dòng log tổng hợp do middleware `tracing_actix_web::TracingLogger` phát ra.
+
+Việc log trùng lặp này gây ô nhiễm hệ thống giám sát (log spamming), làm gia tăng chi phí lưu trữ đám mây và gây hoang mang cho operator: *"Đây là 3 lỗi độc lập xảy ra đồng thời, hay chỉ là 1 lỗi duy nhất bị ghi nhiều lần?"*
+
+<Callout type="info" title="Nguyên Tắc Vàng Khi Ghi Log Lỗi">
+**"Errors should be logged when they are handled" (Lỗi chỉ nên được ghi log khi nó thực sự được xử lý).**
+</Callout>
+
+- Nếu một hàm chỉ đơn thuần chuyển tiếp lỗi lên tầng trên thông qua toán tử `?`, hàm đó **TUYỆT ĐỐI KHÔNG** được ghi log. Nó chỉ nên làm giàu ngữ cảnh thông qua `.context()` nếu cần.
+- Việc ghi log sự cố chưa được xử lý tại biên dịch vụ (edge) phải được ủy quyền toàn bộ cho một **middleware tập trung duy nhất** (`tracing_actix_web::TracingLogger`).
+
+Vì vậy, chúng ta dọn dẹp triệt để các lệnh log thừa trong `insert_subscriber` và `store_token`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+pub async fn insert_subscriber(/* */) -> Result<Uuid, sqlx::Error> {
+    let query = sqlx::query!(/* */);
+    transaction.execute(query).await?; // Không gọi tracing::error! ở đây nữa
+    Ok(subscriber_id)
+}
+
+pub async fn store_token(/* */) -> Result<(), StoreTokenError> {
+    let query = sqlx::query!(/* */);
+    transaction.execute(query).await.map_err(StoreTokenError)?; // Chỉ wrap error, không log
+    Ok(())
+}
+```
+
+Hệ thống ghi log giờ đây trở nên sạch sẽ, chính xác và chuyên nghiệp chuẩn mực production.
+
+---
+
+## V. Tổng Kết Chương 8
+
+Chúng ta đã trải qua toàn bộ hành trình tiến hóa của hệ thống xử lý lỗi trong Rust:
+1. **Xác định bản chất**: Phân định rạch ròi giữa điều khiển luồng (Control Flow) và báo cáo chẩn đoán (Reporting), giữa lỗi nội bộ (Internal) và lỗi tại biên (Edge).
+2. **Khai thác Thư viện chuẩn**: Tận dụng trait `std::error::Error`, phương thức `source()`, và Trait Object `dyn Error` để xây dựng chuỗi nguyên nhân gốc rễ (Root Cause Chain).
+3. **Phân tầng kiến trúc sạch**: Cách ly web framework logic khỏi domain logic bằng cách tạo các kiểu lỗi chuyên biệt cho từng tầng.
+4. **Tối ưu năng suất với Tooling hiện đại**: Kết hợp nhuần nhuyễn `thiserror` (cho enum điều khiển luồng nghiệp vụ) và `anyhow` (cho lỗi mờ đục đính kèm ngữ cảnh).
+5. **Văn hóa ghi log chuyên nghiệp**: Loại bỏ log rác, chỉ ghi log tại nơi lỗi thực sự được xử lý.
+
+<Callout type="info" title="Bài tập thực hành củng cố">
+Hãy áp dụng toàn bộ kỹ thuật đã học trong chương này để tái cấu trúc lại route handler `src/routes/subscriptions_confirm.rs`. Tạo một kiểu lỗi `ConfirmationError`, định nghĩa các biến thể cần thiết, cấu hình status code phù hợp và đảm bảo telemetry log ghi lại đầy đủ nguyên nhân nếu token không hợp lệ hoặc database bị lỗi.
+</Callout>

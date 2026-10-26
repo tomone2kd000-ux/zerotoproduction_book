@@ -1,0 +1,21 @@
+{
+  "title": "Zero To Production In Rust",
+  "pages": [
+    "mo-dau",
+    "--- PHẦN 1: BẮT ĐẦU VỚI RUST (FOUNDATIONS) ---",
+    "chuong-01-getting-started",
+    "chuong-02-building-an-email-newsletter",
+    "--- PHẦN 2: XÂY DỰNG WEB SERVICE (CORE BACKEND) ---",
+    "chuong-03-sign-up-a-new-subscriber",
+    "chuong-04-telemetry",
+    "chuong-05-going-live",
+    "--- PHẦN 3: KIỂM SOÁT TÍNH HỢP LỆ & XỬ LÝ LỖI ---",
+    "chuong-06-reject-invalid-subscribers-1",
+    "chuong-07-reject-invalid-subscribers-2",
+    "chuong-08-error-handling",
+    "--- PHẦN 4: HỆ THỐNG NÂNG CAO & AN TOÀN TRƯỚC LỖI ---",
+    "chuong-09-naive-newsletter-delivery",
+    "chuong-10-securing-our-api",
+    "chuong-11-fault-tolerant-workflows"
+  ]
+}

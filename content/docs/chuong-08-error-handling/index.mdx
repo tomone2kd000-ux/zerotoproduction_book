@@ -1,0 +1,72 @@
+---
+title: "Tổng Quan Chương 8: Xử Lý Lỗi Trong Rust Từ Góc Nhìn Hệ Thống"
+description: "Phân tích toàn diện về kiến trúc xử lý lỗi trong ứng dụng Rust production: phân định giữa Control Flow và Reporting, kỹ thuật bóc tách lỗi phân tầng, kết hợp hài hòa giữa thiserror và anyhow."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# Tổng Quan Chương 8: Xử Lý Lỗi Trong Rust Từ Góc Nhìn Hệ Thống
+
+Để gửi một email xác thực tài khoản trong các chương trước, chúng ta đã phải kết hợp nhiều mắt xích nghiệp vụ phức tạp: xác thực dữ liệu đầu vào (input validation), gửi email qua API bên thứ ba, và thực thi hàng loạt câu lệnh truy vấn cơ sở dữ liệu. 
+
+Tất cả các thao tác này đều có chung một đặc điểm hiển nhiên: **chúng có thể thất bại bất cứ lúc nào**.
+
+Trong Chương 6, chúng ta đã làm quen với các viên gạch cơ bản nhất của cơ chế xử lý lỗi trong Rust: kiểu `Result` và toán tử lan truyền lỗi `?`. Tuy nhiên, đó mới chỉ là cú pháp bề mặt. Khi bước vào xây dựng một hệ thống backend thực tế (production-grade web service), hàng loạt câu hỏi kiến trúc hóc búa lập tức xuất hiện:
+- Lỗi nên được định vị và lan truyền thế nào qua các tầng kiến trúc (layered architecture)?
+- Thế nào là một "lỗi tốt" (a good error)?
+- Lỗi được tạo ra để phục vụ ai: máy tính, người vận hành hệ thống (operators) hay người dùng cuối (end-users)?
+- Ai là người chịu trách nhiệm ghi log lỗi?
+- Khi nào nên dùng `thiserror`, và khi nào nên dùng `anyhow`?
+
+Chương 8 sẽ đi sâu mổ xẻ toàn diện triết lý xử lý lỗi trong Rust, biến những thông báo lỗi vô hồn thành công cụ chẩn đoán hệ thống mạnh mẽ và kiểm soát luồng thực thi an toàn.
+
+---
+
+## I. Mô Hình Ma Trận Xử Lý Lỗi 2x2
+
+Sai lầm phổ biến nhất của các lập trình viên khi tiếp cận xử lý lỗi là đánh đồng mọi loại lỗi thành một chuỗi ký tự (`String`) hoặc ném ngoại lệ một cách mù quáng. Để thiết kế một hệ thống xử lý lỗi chuẩn mực, ta cần phân định rạch ròi hai chiều kích: **Mục đích của lỗi (Purpose)** và **Vị trí phát sinh lỗi (Location)**.
+
+```text
+┌──────────────────┬─────────────────────────────────────┬────────────────────────────────────┐
+│                  │ Internal (Nội bộ ứng dụng)          │ At the Edge (Tại biên dịch vụ)     │
+├──────────────────┼─────────────────────────────────────┼────────────────────────────────────┤
+│ Control Flow     │ Kiểu dữ liệu, enum variants,        │ HTTP Status Codes                  │
+│ (Điều khiển luồng)│ methods, fields                     │ (400, 404, 500,...)                │
+├──────────────────┼─────────────────────────────────────┼────────────────────────────────────┤
+│ Reporting        │ Structured Logs, Distributed Traces │ HTTP Response Body                 │
+│ (Báo cáo chẩn đoán)│ (Dành cho System Operators / Devs)  │ (Dành cho Người dùng cuối / Clients)│
+└──────────────────┴─────────────────────────────────────┴────────────────────────────────────┘
+```
+
+1. **Theo Mục Đích (Purpose)**:
+   - **Control Flow (Điều khiển luồng)**: Giúp máy tính đưa ra quyết định hành động tiếp theo (ví dụ: retry khi timeout, rollback giao dịch khi trùng khoá, hoặc chuyển hướng người dùng). Dữ liệu này phải được cấu trúc để máy tính đọc được (machine-parsable).
+   - **Reporting (Báo cáo sự cố)**: Phục vụ con người điều tra nguyên nhân sự cố sau khi nó đã xảy ra. Nội dung báo cáo cần được tinh chỉnh theo từng đối tượng tiếp nhận.
+
+2. **Theo Vị Trí (Location)**:
+   - **Internal (Bên trong ứng dụng)**: Lời gọi giữa các hàm nội bộ. Cần tối đa ngữ cảnh chi tiết (context) và vết nguồn gốc (error chain / root cause) để lập trình viên gỡ lỗi.
+   - **At the Edge (Tại ranh giới API)**: Phản hồi trả về cho client/người dùng. Cần che giấu các chi tiết hạ tầng nội bộ để đảm bảo an ninh, đồng thời cung cấp hướng dẫn rõ ràng để client có thể tự sửa lỗi đầu vào.
+
+---
+
+## II. Lộ Trình Nội Dung Chương 8
+
+Chương này được chia thành 3 bài học thực chiến chuyên sâu:
+
+- **[8.1 & 8.2: Mục Đích Của Lỗi & Báo Cáo Lỗi Cho Operators](/docs/chuong-08-error-handling/01-muc-dich-cua-loi-va-bao-cao-loi)**:
+  Phân tích ranh giới giữa lỗi nội bộ và lỗi tại biên. Tìm hiểu cách `actix-web` quản lý lỗi thông qua trait `ResponseError`, khắc phục hạn chế của Orphan Rule bằng Newtype Pattern, và khám phá sức mạnh của trait `std::error::Error` cùng chuỗi nguyên nhân gốc rễ `source()`.
+
+- **[8.3: Dùng Lỗi Để Điều Khiển Luồng & Loại Bỏ Boilerplate Với `thiserror`](/docs/chuong-08-error-handling/02-dieu-khien-luong-va-thiserror)**:
+  Thiết lập nguyên tắc phân tầng (Layering) để tách biệt HTTP logic khỏi domain logic. Mô hình hoá lỗi bằng Enum để điều khiển HTTP status codes. Nhận diện vấn đề khi kiểu dữ liệu không mang đủ ngữ cảnh, và ứng dụng derive macro `thiserror` để loại bỏ hàng chục dòng code thừa lặp đi lặp lại.
+
+- **[8.4, 8.5 & 8.6: Tránh "Ball Of Mud", Ứng Dụng `anyhow` & Triết Lý Ghi Log](/docs/chuong-08-error-handling/03-tranh-ball-of-mud-va-dung-anyhow)**:
+  Tránh bẫy thiết kế enum lỗi phình to làm rò rỉ chi tiết cài đặt. Sử dụng kiểu lỗi mờ đục (Opaque Error Type) với `anyhow::Error` và extension trait `Context`. Giải mã cuộc tranh luận kinh điển `thiserror` vs `anyhow`. Thiết lập nguyên tắc vàng: *"Chỉ ghi log lỗi khi bạn thực sự xử lý nó"*.
+
+---
+
+## III. Các Nguyên Tắc Cốt Lõi Cần Ghi Nhớ
+
+<Callout type="warn" title="Quy Tắc Vàng Của Senior Architect">
+1. **Không rò rỉ chi tiết hạ tầng ra API client**: Người dùng không cần và không bao giờ nên nhìn thấy chuỗi truy vấn PostgreSQL hay stacktrace nội bộ trong response HTTP 500.
+2. **Không nuốt mất Root Cause**: Khi chuyển đổi kiểu lỗi ở các tầng biên, luôn bảo toàn liên kết đến lỗi ban đầu thông qua `Error::source` hoặc `.context(...)`.
+3. **Chỉ ghi log khi xử lý**: Nếu hàm của bạn chỉ lan truyền lỗi lên trên bằng toán tử `?`, tuyệt đối không ghi log tại chỗ. Hãy để middleware ở tầng cao nhất (như `TracingLogger`) ghi lại một bản ghi telemetry duy nhất, đầy đủ và chuẩn xác.
+</Callout>

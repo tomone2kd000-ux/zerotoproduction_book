@@ -1,0 +1,228 @@
+---
+title: "9.8 - 9.10 Ranh Giới Trách Nhiệm & Giới Hạn Của Giải Pháp Cơ Bản"
+description: "Xử lý khớp nối thời gian giữa dữ liệu đã lưu và quy tắc validation, kỹ thuật phân định trách nhiệm với Vec<Result<T, E>>, và phân tích 5 giới hạn hệ thống của kiến trúc gửi bản tin ngây thơ."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 9.8 - 9.10 Ranh Giới Trách Nhiệm & Giới Hạn Của Giải Pháp Cơ Bản
+
+Khi tích hợp `EmailClient` vào vòng lặp gửi bản tin, trình biên dịch Rust lập tức gióng lên một hồi chuông cảnh báo về kiểu dữ liệu:
+
+```text
+error[E0308]: mismatched types
+  --> src/routes/newsletters.rs
+   |
+48 |                 subscriber.email,
+   |                 ^^^^^^^^^^^^^^^^ expected struct `SubscriberEmail`, found struct `String`
+```
+
+Cột `email` mà chúng ta lấy từ PostgreSQL về là một `String` thuần túy. Trong khi đó, phương thức `EmailClient::send_email` được thiết kế có chủ đích ở các chương trước để chỉ chấp nhận một kiểu dữ liệu đã được kiểm chứng tính hợp lệ: struct `SubscriberEmail`.
+
+---
+
+## I. Kiểm Tra Tính Hợp Lệ Của Dữ Liệu Đã Lưu (Validation Of Stored Data)
+
+Giải pháp đầu tiên mà nhiều lập trình viên nghĩ đến là ép kiểu trực tiếp bằng `unwrap()`:
+
+```rust
+let confirmed_subscribers = rows
+    .into_iter()
+    .map(|r| ConfirmedSubscriber {
+        email: SubscriberEmail::parse(r.email).unwrap(),
+    })
+    .collect();
+```
+
+Lập luận có vẻ rất hợp lý: *"Tất cả email trong database đều đã vượt qua bước kiểm tra của `SubscriberEmail::parse` khi người dùng đăng ký ở Chương 6. Dữ liệu trong database hiển nhiên phải hợp lệ, làm sao có thể fail mà sợ panic?"*
+
+<Callout type="warn" title="Ảo Tưởng Về Tính Toàn Vẹn Của Cơ Sở Dữ Liệu">
+Lập luận trên chỉ đúng trong một thế giới tĩnh tại — nơi phần mềm không bao giờ thay đổi. Nhưng chúng ta đang xây dựng hệ thống theo triết lý **Continuous Deployment (Triển khai liên tục)**! Dữ liệu lưu trữ trong PostgreSQL tạo ra một **Khớp nối thời gian (Temporal Coupling)** vô hình giữa các phiên bản phần mềm trong quá khứ và hiện tại.
+</Callout>
+
+Hãy tưởng tượng kịch bản sau:
+1. Ở phiên bản v1, thuật toán kiểm tra email khá lỏng lẻo. Một số email dị dạng (như chứa ký tự đặc biệt) đã lọt vào database và được xác nhận.
+2. Sang phiên bản v2, bạn phát hiện ra lỗi và cập nhật `SubscriberEmail::parse` với quy tắc chặt chẽ hơn.
+3. Khi bạn deploy phiên bản v2 lên production và tác giả bấm gửi bản tin: hàm `publish_newsletter` duyệt qua danh sách, chạm phải email dị dạng cũ, lệnh `.unwrap()` kích nổ `panic!`, và toàn bộ tiến trình gửi bản tin sụp đổ hoàn toàn!
+
+### Ứng xử với dữ liệu lịch sử không hợp lệ
+
+Khi dữ liệu trong database vi phạm quy tắc nghiệp vụ hiện tại, hệ thống nên phản ứng thế nào? Không có một công thức duy nhất cho mọi bài toán:
+- Trong các hệ thống tài chính/giao dịch: Dữ liệu sai lệch là không thể chấp nhận được, tiến trình phải dừng ngay lập tức và báo động đỏ cho operator can thiệp thủ công.
+- Trong các luồng phân tích dữ liệu (Analytics/BI): Ta chấp nhận dữ liệu thô dạng `String` với ít giả định nhất có thể để không làm gián đoạn luồng ETL.
+- Trong dịch vụ gửi bản tin của chúng ta: Giải pháp cân bằng nhất là **bỏ qua (skip) email không hợp lệ**, tiếp tục gửi cho những người còn lại, đồng thời ghi lại cảnh báo `tracing::warn!` để operator rà soát và làm sạch dữ liệu sau đó.
+
+---
+
+## II. Ranh Giới Trách Nhiệm (Responsibility Boundaries)
+
+Nếu quyết định bỏ qua email không hợp lệ, câu hỏi kiến trúc tiếp theo là: **Đoạn code bỏ qua đó nên nằm ở đâu?**
+
+Nếu ta đưa logic bỏ qua vào bên trong hàm truy vấn `get_confirmed_subscribers` bằng `filter_map`:
+
+```rust
+// Liệu đây có phải là vị trí thích hợp?
+let confirmed_subscribers = rows
+    .into_iter()
+    .filter_map(|r| match SubscriberEmail::parse(r.email) {
+        Ok(email) => Some(ConfirmedSubscriber { email }),
+        Err(error) => {
+            tracing::warn!("Bỏ qua subscriber với email lỗi: {}", error);
+            None
+        }
+    })
+    .collect();
+```
+
+Đây là một sự vi phạm về **Ranh giới trách nhiệm**:
+- `get_confirmed_subscribers` chỉ là một Data Access Adapter: nhiệm vụ duy nhất của nó là chuyển đổi dữ liệu từ PostgreSQL sang Domain Model.
+- Việc quyết định *bỏ qua*, *hủy bỏ tiến trình*, hay *thử sửa chữa* một email lỗi là một **Quyết định thuộc về Miền Nghiệp Vụ (Business Logic Decision)**. Quyết định này phải thuộc về hàm điều phối cấp cao hơn: `publish_newsletter`.
+
+### Kỹ thuật phân tách lỗi với `Vec<Result<T, E>>`
+
+Để trao quyền quyết định cho tầng gọi hàm mà vẫn bắt buộc lập trình viên phải xử lý lỗi tường minh, ta thiết kế kiểu trả về theo mẫu hình sau:
+
+```rust
+//! src/routes/newsletters.rs
+
+async fn get_confirmed_subscribers(
+    pool: &PgPool,
+) -> Result<Vec<Result<ConfirmedSubscriber, anyhow::Error>>, anyhow::Error> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT email
+        FROM subscriptions
+        WHERE status = 'confirmed'
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let confirmed_subscribers = rows
+        .into_iter()
+        .map(|r| match SubscriberEmail::parse(r.email) {
+            Ok(email) => Ok(ConfirmedSubscriber { email }),
+            Err(error) => Err(anyhow::anyhow!(error)),
+        })
+        .collect();
+
+    Ok(confirmed_subscribers)
+}
+```
+
+Kiểu trả về `Result<Vec<Result<ConfirmedSubscriber, anyhow::Error>>, anyhow::Error>` chứa hai tầng thông tin riêng biệt:
+1. **Lớp Result ngoài cùng**: Thể hiện các lỗi hạ tầng tức thời (mạng đứt, kết nối Postgres thất bại). Bên gọi có thể dùng toán tử `?` để chuyển tiếp lỗi này ngay lập tức.
+2. **Lớp Result bên trong từng phần tử**: Thể hiện lỗi chuyển đổi dữ liệu của từng bản ghi cụ thể. Trình biên dịch sẽ buộc bên gọi phải dùng `match` để xử lý cả hai trường hợp `Ok` và `Err`:
+
+```rust
+//! src/routes/newsletters.rs
+
+pub async fn publish_newsletter(
+    body: web::Json<BodyData>,
+    pool: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>,
+) -> Result<HttpResponse, PublishError> {
+    let subscribers = get_confirmed_subscribers(&pool).await?;
+    
+    for subscriber in subscribers {
+        match subscriber {
+            Ok(subscriber) => {
+                email_client
+                    .send_email(
+                        &subscriber.email,
+                        &body.title,
+                        &body.content.html,
+                        &body.content.text,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("Failed to send newsletter issue to {}", subscriber.email)
+                    })?;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error.cause_chain = ?error,
+                    "Skipping a confirmed subscriber. Their stored contact details are invalid",
+                );
+            }
+        }
+    }
+    
+    Ok(HttpResponse::Ok().finish())
+}
+```
+
+---
+
+## III. Đi Theo Sự Chỉ Dẫn Của Trình Biên Dịch (Follow The Compiler)
+
+Khi biên dịch đoạn code trên, Rust tiếp tục giúp chúng ta tinh chỉnh thiết kế thông qua hai lỗi biên dịch:
+
+### 1. Triển khai `Display` cho `SubscriberEmail`
+
+Phương thức `with_context` cần format chuỗi chứa `subscriber.email`, đòi hỏi kiểu này phải cài đặt `Display`:
+
+```rust
+//! src/domain/subscriber_email.rs
+
+impl std::fmt::Display for SubscriberEmail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+```
+
+### 2. Tối ưu hóa Ownership (Borrow Checker)
+
+Trình biên dịch cảnh báo lỗi `borrow of partially moved value` vì chúng ta vừa di chuyển quyền sở hữu (move) của `subscriber.email` vào hàm `send_email`, vừa cố mượn nó trong closure của `with_context`.
+
+Thay vì lạm dụng `.clone()`, ta tối ưu hóa chữ ký của `EmailClient::send_email`: hàm này chỉ đọc dữ liệu để tạo payload gửi đi, do đó chỉ cần nhận tham chiếu mượn `&SubscriberEmail`:
+
+```rust
+//! src/email_client.rs
+
+pub async fn send_email(
+    &self,
+    recipient: &SubscriberEmail, // Nhận tham chiếu thay vì chuyển quyền sở hữu!
+    subject: &str,
+    html_content: &str,
+    text_content: &str,
+) -> Result<(), reqwest::Error> {
+    // [...]
+}
+```
+
+Toàn bộ test suite giờ đây đều đã vượt qua xuất sắc!
+
+---
+
+## IV. Nhận Diện 5 Giới Hạn Của Giải Pháp Ngây Thơ (Naive Approach)
+
+Mặc dù giải pháp hiện tại đã thỏa mãn đầy đủ các bài test chức năng, nhưng dưới góc độ của một **Kỹ sư Hạ tầng Phân tán (Distributed Systems Engineer)**, triển khai này tồn tại 5 lỗ hổng chí mạng:
+
+### 1. Lỗ hổng Bảo Mật (Security)
+Endpoint `POST /newsletters` hiện đang mở toang ra thế giới Internet mà không có bất kỳ cơ chế xác thực hay phân quyền nào. Bất kỳ ai biết được URL này đều có thể gửi request để phát tán thư rác tới toàn bộ danh sách người đăng ký của bạn.
+
+### 2. Gửi Không Có Cơ Chế Duyệt (Single-shot Delivery)
+Ngay khi request `POST /newsletters` được kích hoạt, email sẽ lập tức bay thẳng vào hòm thư của người dùng. Không có chế độ lưu bản nháp (Drafts), không có cơ chế gửi thử nghiệm (Preview/Test send) cho tác giả kiểm tra trước khi bấm nút xuất bản chính thức.
+
+### 3. Vấn Đề Hiệu Năng Vòng Lặp Tuần Tự (O(N) Latency)
+Chúng ta đang gửi email tuần tự từng người một trong một vòng lặp `for`. Nếu bạn có 10 người đăng ký, request mất vài giây. Nhưng nếu bạn có 10.000 người đăng ký và mỗi email mất 100ms để gọi tới Postmark, toàn bộ HTTP request sẽ kéo dài hơn **16 phút** — vượt xa ngưỡng timeout của bất kỳ trình duyệt hay API Gateway nào!
+
+### 4. Thiếu Khả Năng Chịu Lỗi (Fault Tolerance)
+Nếu đang gửi tới người thứ 50 mà kết nối Internet tạm thời chập chờn, toán tử `?` sẽ kích hoạt, thoát khỏi hàm và trả về mã `500 Internal Server Error`. Hậu quả: 49 người đầu đã nhận được thư, nhưng 9.950 người còn lại sẽ không bao giờ nhận được bản tin, và hệ thống không hề có cơ chế lưu lại tiến độ để gửi tiếp!
+
+### 5. Nguy Cơ Gửi Trùng Lặp Khi Thử Lại (Retry Safety / Idempotency)
+Khi tác giả gặp lỗi mạng hoặc thấy màn hình xoay tròn do timeout, phản xạ tự nhiên của con người là nhấn nút "Gửi lại" (F5 / Retry). Vì endpoint không có tính **Idempotent (Bất biến)**, 49 người đầu tiên sẽ bị nhận bức thư đó lần thứ hai (Spamming).
+
+---
+
+## V. Tổng Kết Chương 9
+
+Chúng ta đã hoàn thành bản nguyên mẫu (MVP) đầu tiên cho tính năng phân phối bản tin:
+- Nắm vững cách quản lý vòng đời Mock với `mount_as_scoped`.
+- Thiết kế Schema JSON linh hoạt với Actix-web và Serde.
+- Hiểu rõ sự đánh đổi giữa Eager (`context`) và Lazy (`with_context`).
+- Xây dựng ranh giới trách nhiệm chuẩn mực giữa Data Access và Business Domain với `Vec<Result<T, E>>`.
+
+5 giới hạn hệ thống kể trên sẽ là kim chỉ nam dẫn lối cho chúng ta bước vào hai chương nâng cao tiếp theo: **Chương 10 (Bảo Mật & Xác Thực API)** và **Chương 11 (Luồng Chịu Lỗi & Tính Bất Biến)**.

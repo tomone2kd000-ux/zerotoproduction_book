@@ -1,0 +1,10 @@
+{
+  "title": "Chương 11: Luồng Chịu Lỗi & Tính Bất Biến",
+  "pages": [
+    "index",
+    "01-post-admin-newsletters-va-cac-failure-modes",
+    "02-khai-niem-idempotency-va-chia-khoa",
+    "03-idempotency-store-save-and-replay",
+    "04-concurrent-requests-va-recovery"
+  ]
+}

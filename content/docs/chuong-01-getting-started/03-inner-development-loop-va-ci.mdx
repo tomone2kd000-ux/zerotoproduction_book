@@ -1,0 +1,291 @@
+---
+title: "1.3 Vòng Lặp Phát Triển Nhanh & Đường Ống CI"
+description: "Kỹ thuật tối ưu hóa Inner Development Loop với lld linker, cargo-watch và thiết lập pipeline Continuous Integration (CI) toàn diện cho dự án Rust."
+---
+
+# 1.3 Vòng Lặp Phát Triển Nhanh & Đường Ống CI
+
+Toolchain đã cài đặt xong. Khung dự án đã sẵn sàng. IDE đã lên đèn.
+
+Trước khi bắt tay vào những dòng mã đầu tiên của ứng dụng, chúng ta cần giải quyết hai vấn đề cốt lõi về hiệu suất làm việc và kỷ luật kỹ thuật: **tối ưu hóa vòng lặp phát triển cục bộ (Inner Development Loop)** và **thiết lập đường ống tích hợp liên tục (Continuous Integration - CI)**.
+
+---
+
+## I. Tối Ưu Vòng Lặp Phát Triển (Inner Development Loop)
+
+Trong suốt quá trình xây dựng dự án, bạn sẽ lặp đi lặp lại cùng một chuỗi thao tác quen thuộc:
+
+```text
+ ┌───────────────┐     ┌───────────────────────┐
+ │ Sửa đổi Code  │ ──> │ Biên dịch Ứng dụng    │
+ └───────────────┘     └───────────┬───────────┘
+                                   │
+                                   ▼
+ ┌───────────────┐     ┌───────────────────────┐
+ │ Chạy Ứng dụng │ <── │ Chạy Bộ Kiểm thử Test │
+ └───────────────┘     └───────────────────────┘
+```
+
+Chuỗi thao tác lặp này được gọi là **Inner Development Loop (Vòng lặp phát triển nội bộ)**.
+
+Tốc độ của vòng lặp này đóng vai trò như một **chặn trên (upper bound)** quyết định số lượng vòng lặp cải tiến mà bạn có thể hoàn thành trong một đơn vị thời gian:
+* Nếu mất **5 phút** để biên dịch và chạy kiểm thử sau mỗi thay đổi, bạn chỉ có thể thực hiện tối đa **12 lần lặp trong một giờ**.
+* Nếu rút ngắn thời gian đó xuống còn **2 phút**, bạn có thể hoàn thành tới **30 lần lặp trong cùng một giờ**!
+
+Rust nổi tiếng với sự khắt khe của trình biên dịch, và thời gian biên dịch (*compilation time*) trên các dự án lớn có thể trở thành một điểm nghẽn khó chịu. Chúng ta có hai giải pháp kỹ thuật hiệu quả để giải quyết vấn đề này.
+
+---
+
+### 1. Tăng Tốc Khâu Liên Kết (Faster Linking Với `lld`)
+
+Khi xem xét vòng lặp phát triển cục bộ, chúng ta chủ yếu quan tâm đến hiệu năng của **biên dịch tăng dần (Incremental Compilation)** — tức là `cargo` mất bao lâu để tái đóng gói file nhị phân sau khi chúng ta vừa sửa một hàm nhỏ.
+
+Một phần lớn thời gian trong quá trình này bị tiêu tốn ở **giai đoạn liên kết (Linking phase)** — khâu kết nối các file đối tượng (`.o`, `.rlib`) sau các bước biên dịch trước đó thành file nhị phân thực thi cuối cùng.
+
+Linker mặc định của hệ điều hành thường hoạt động ổn định nhưng không được tối ưu cho tốc độ. Chúng ta có thể thay thế bằng **`lld`** — một linker hiệu năng cao phát triển bởi dự án LLVM.
+
+Để kích hoạt `lld`, bạn hãy tạo một file cấu hình `.cargo/config.toml` ngay trong thư mục gốc của dự án:
+
+```toml
+# .cargo/config.toml
+
+# Dành cho Windows:
+# Chạy trước trong terminal:
+# cargo install -f cargo-binutils
+# rustup component add llvm-tools-preview
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Dành cho Linux (Ubuntu: sudo apt-get install lld clang | Arch: sudo pacman -S lld clang):
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "linker=clang", "-C", "link-arg=-fuse-ld=lld"]
+
+# Dành cho macOS (brew install llvm và làm theo hướng dẫn trong brew info llvm):
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Dành cho Apple Silicon (M1/M2/M3):
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]
+```
+
+<Callout type="info">
+  **Cập nhật công nghệ mới (`mold` linker):**  
+  Bên cạnh `lld`, hiện nay cộng đồng còn có [**`mold`**](https://github.com/rui314/mold) do Rui Ueyama phát triển với tốc độ liên kết cực kỳ ngoạn mục trên môi trường Linux. Trên các dự án lớn, `mold` có thể nhanh hơn linker mặc định tới hàng chục lần.
+</Callout>
+
+---
+
+### 2. Giảm Thời Gian Chờ Nhận Thức Với `cargo-watch`
+
+Ngoài việc tăng tốc độ máy móc, chúng ta có thể giảm **thời gian chờ đợi nhận thức (Perceived Compilation Time)** — khoảng thời gian bạn ngồi nhìn terminal trống trơn chờ `cargo check` hoặc `cargo test` chạy xong.
+
+Hãy cài đặt công cụ [**`cargo-watch`**](https://github.com/watchexec/cargo-watch):
+
+```bash
+cargo install cargo-watch
+```
+
+`cargo-watch` lắng nghe mọi thay đổi trên hệ thống file mã nguồn và tự động kích hoạt các lệnh bạn yêu cầu ngay khi bạn vừa nhấn `Ctrl + S`:
+
+```bash
+cargo watch -x check
+```
+
+Lợi ích tâm lý ở đây rất rõ ràng:
+1. Bạn vừa gõ code xong và vẫn đang ở trong editor để đọc lại đoạn mã.
+2. `cargo-watch` ngay lập tức khởi động tiến trình biên dịch ngầm ở chế độ nền.
+3. Khi bạn chuyển mắt sang cửa sổ terminal, compiler đã hoàn thành tới một nửa công việc!
+
+`cargo-watch` còn hỗ trợ chuỗi lệnh liên hoàn (*command chaining*):
+
+```bash
+cargo watch -x check -x test -x run
+```
+
+Quy trình diễn ra như sau:
+* Trước tiên chạy `cargo check` để kiểm tra lỗi cú pháp và kiểu dữ liệu.
+* Nếu thành công, tự động chạy bộ test với `cargo test`.
+* Nếu tất cả các test đều vượt qua, tự động khởi động ứng dụng với `cargo run`.
+
+Đó chính là vòng lặp phát triển lý tưởng của một lập trình viên chuyên nghiệp!
+
+---
+
+## II. Thiết Lập Đường Ống Tích Hợp Liên Tục (CI Pipeline)
+
+Trong trường phái phát triển trên nhánh chính (*Trunk-based Development*), nhánh `main` luôn phải ở trạng thái **sẵn sàng triển khai lên Production tại bất kỳ thời điểm nào**.
+
+> **Tích hợp liên tục (Continuous Integration - CI)** trao quyền cho mỗi thành viên trong nhóm tích hợp các thay đổi của họ vào nhánh chính nhiều lần trong ngày.
+
+Thực hành này mang lại những tác động tích cực to lớn:
+* **Loại bỏ ác mộng giải quyết xung đột mã nguồn (Merge Conflicts)**: Các nhánh tính năng ngắn ngủi giúp giảm thiểu nguy cơ rẽ nhánh quá xa so với `main`.
+* **Thắt chặt vòng lặp phản hồi (Tightening Feedback Loop)**: Bạn sẽ không bao giờ rơi vào cái bẫy tự giam mình viết code trong suốt hai tuần, để rồi phát hiện ra giải pháp của mình hoàn toàn không thể hòa hợp với phần còn lại của hệ thống.
+
+Chúng ta hiện thực hóa điều đó bằng một tập hợp các bước kiểm tra tự động chạy trên mọi commit: **CI Pipeline**.
+
+```text
+                     ĐƯỜNG ỐNG CI HOÀN CHỈNH CHO RUST
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  [1. Kiểm thử Tự động] ──────> cargo test                              │
+│                                (Chạy trọn vẹn unit & integration tests)│
+│                                                                        │
+│  [2. Đo Độ Bao Phủ Mã] ─────> cargo tarpaulin --ignore-tests           │
+│                                (Phát hiện các góc khuất chưa test)     │
+│                                                                        │
+│  [3. Phân Tích Tĩnh]   ──────> cargo clippy -- -D warnings             │
+│                                (Bắt lỗi logic, cấu trúc chưa chuẩn)    │
+│                                                                        │
+│  [4. Kiểm Tra Định Dạng] ────> cargo fmt -- --check                    │
+│                                (Chấm dứt tranh cãi phong cách code)    │
+│                                                                        │
+│  [5. Kiểm Toán Bảo Mật] ─────> cargo audit                             │
+│                                (Rà soát lỗ hổng từ dependency tree)    │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 1. Kiểm thử Tự động (`cargo test`)
+Nếu pipeline của bạn chỉ có duy nhất một bước, đó bắt buộc phải là **chạy test**:
+
+```bash
+cargo test
+```
+
+`cargo test` sẽ tự động biên dịch toàn bộ dự án trước khi thực thi các ca kiểm thử đơn vị (*unit tests*) và kiểm thử tích hợp (*integration tests*).
+
+---
+
+### 2. Đo Độ Bao Phủ Mã Nguồn (`cargo-tarpaulin`)
+Đo độ bao phủ (*Code Coverage*) là một cách thu thập thông tin tuyệt vời để phát hiện những phân vùng mã nguồn quan trọng đang bị bỏ quên và thiếu vắng bài test:
+
+```bash
+# Cài đặt (Hỗ trợ tốt nhất trên Linux x86_64)
+cargo install cargo-tarpaulin
+
+# Chạy kiểm tra độ bao phủ (bỏ qua các hàm test chính nó)
+cargo tarpaulin --ignore-tests
+```
+
+`tarpaulin` có thể xuất dữ liệu để tích hợp trực tiếp lên các dịch vụ phân tích chất lượng như Codecov hay Coveralls.
+
+---
+
+### 3. Phân Tích Tĩnh Với `clippy`
+Viết code chuẩn chỉ (*idiomatic*) trong một ngôn ngữ mới luôn cần nhiều thời gian tích lũy kinh nghiệm. 
+
+Trình phân tích tĩnh chính thức [**`clippy`**](https://github.com/rust-lang/rust-clippy) đóng vai trò như một senior soi xét từng dòng code, giúp bạn chỉ ra các cấu trúc rườm rà không cần thiết và những lỗi tiềm ẩn phổ biến:
+
+```bash
+# Cài đặt clippy nếu chưa có
+rustup component add clippy
+
+# Chạy clippy và biến mọi cảnh báo thành lỗi để chặn merge
+cargo clippy -- -D warnings
+```
+
+Nếu một cảnh báo cụ thể là cố ý và an toàn trong ngữ cảnh của bạn, bạn có thể chủ động bỏ qua cảnh báo đó bằng thuộc tính `#[allow(clippy::lint_name)]` ngay trên khối mã tương ứng.
+
+---
+
+### 4. Chuẩn Hóa Định Dạng Mã Nguồn Với `rustfmt`
+Một buổi duyệt code (Pull Request Review) lành mạnh và có giá trị cao **tuyệt đối không nên lãng phí thời gian vào những tiểu tiết định dạng** như: *“Dòng này thiếu dấu cách”* hay *“Xuống dòng ở đây chưa hợp lý”*.
+
+Hãy để máy móc xử lý việc định dạng, dành toàn bộ tâm trí của các kỹ sư vào kiến trúc, tính toàn vẹn dữ liệu và độ tin cậy của phần mềm:
+
+```bash
+# Cài đặt rustfmt
+rustup component add rustfmt
+
+# Tự động định dạng toàn bộ dự án cục bộ
+cargo fmt
+
+# Bước kiểm tra trong CI: Thất bại nếu có file chưa định dạng chuẩn
+cargo fmt -- --check
+```
+
+---
+
+### 5. Kiểm Toán Lỗ Hổng Bảo Mật Với `cargo-audit`
+Khi sử dụng các thư viện từ [crates.io](https://crates.io), mỗi crate đều có thể tiềm ẩn những lỗ hổng bảo mật đã được công bố.
+
+Nhóm công tác Rust Secure Code duy trì một [Cơ sở dữ liệu Cảnh báo (Advisory Database)](https://github.com/RustSec/advisory-db). Công cụ `cargo-audit` giúp quét toàn bộ cây phụ thuộc của bạn:
+
+```bash
+cargo install cargo-audit
+cargo audit
+```
+
+<Callout type="info">
+  Trong môi trường doanh nghiệp, bạn nên chạy `cargo audit` không chỉ trên mỗi commit của PR, mà còn **đặt lịch chạy tự động hàng ngày (Daily Cron Job)**. Nhờ đó, bạn sẽ nhận được thông báo ngay khi một lỗ hổng bảo mật mới được công bố trên một thư viện của dự án đang chạy trên Production, kể cả khi dự án đó không có commit mới trong nhiều tuần.
+</Callout>
+
+---
+
+## III. Mẫu Cấu Hình CI Chuẩn Sẵn Dùng (GitHub Actions)
+
+Để bạn không phải tốn hàng giờ mày mò cú pháp YAML, đây là mẫu file cấu hình `.github/workflows/general.yml` đầy đủ các bước kiểm tra chất lượng chuẩn mực:
+
+```yaml
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Enforce formatting
+        run: cargo fmt --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Linting
+        run: cargo clippy -- -D warnings
+
+  coverage:
+    name: Code coverage
+    runs-on: ubuntu-latest
+    container:
+      image: xd009642/tarpaulin:latest
+      options: --security-opt seccomp=unconfined
+    steps:
+      - uses: actions/checkout@v3
+      - name: Generate code coverage
+        run: cargo tarpaulin --verbose --workspace
+```
+
+Bây giờ toàn bộ hệ thống công cụ và quy trình kiểm thử tự động đã sẵn sàng. Chúng ta sẽ bước sang **Chương 2** để định hình bài toán thực tế mà chúng ta sẽ giải quyết: **Hệ thống Email Newsletter**.

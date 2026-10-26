@@ -1,0 +1,145 @@
+---
+title: "Lời Nói Đầu (Preface)"
+description: "Lời nói đầu của tác giả Luca Palmieri: Cuốn sách nói về điều gì, các thách thức của ứng dụng Cloud-native và đối tượng độc giả mục tiêu."
+---
+
+# Lời Nói Đầu (Preface)
+
+Thế giới phát triển dịch vụ phụ trợ (Backend Development) là một đại dương **bao la và đa dạng**.
+
+Bối cảnh thực tế nơi bạn và tổ chức đang vận hành sẽ định hình sâu sắc những công cụ và phương pháp luận tối ưu nhất để giải quyết bài toán trước mắt.
+
+Chẳng hạn, phương pháp phát triển trên nhánh chính [**Trunk-based Development**](https://cloud.google.com/solutions/devops/devops-tech-trunk-based-development) phát huy hiệu quả [cực kỳ ấn tượng](https://services.google.com/fh/files/misc/state-of-devops-2019.pdf) khi xây dựng các phần mềm được triển khai liên tục trên môi trường Điện toán Đám mây (Cloud). Ngược lại, chính cách tiếp cận đó có thể hoàn toàn khập khiễng với mô hình kinh doanh của một đội ngũ chuyên bán phần mềm triển khai nội bộ tại chỗ (On-premise) cho các khách hàng doanh nghiệp truyền thống — nơi mô hình phân nhánh kiểu [**Gitflow**](https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow) lại mang lại nhiều lợi ích thực tế hơn. Còn nếu bạn chỉ đang làm một dự án cá nhân một mình? Cứ thoải mái `git push` thẳng lên nhánh `main`.
+
+Trong lĩnh vực phát triển phần mềm, hiếm có chân lý nào mang tính tuyệt đối. Tôi tin rằng việc làm rõ lăng kính và bối cảnh hoạt động là điều tối quan trọng trước khi cân nhắc ưu và nhược điểm của bất kỳ kỹ thuật hay công nghệ nào.
+
+<Callout type="info">
+  **Trọng tâm xuyên suốt của Zero To Production In Rust:**  
+  Cuốn sách này tập trung mổ xẻ những thách thức kỹ thuật khi xây dựng **ứng dụng Cloud-native** trong một đội ngũ gồm **bốn hoặc năm kỹ sư** với trình độ, thâm niên và mức độ thông thạo công nghệ khác nhau.
+</Callout>
+
+---
+
+## I. Cuốn Sách Này Nói Về Điều Gì?
+
+### 1. Ứng Dụng Chuẩn Điện Toán Đám Mây (Cloud-Native Applications)
+
+Việc định nghĩa rốt ráo một *ứng dụng Cloud-native* thực chất có thể tốn cả một cuốn sách chuyên biệt đồ sộ[^1]. Thay vì áp đặt một khuôn mẫu cứng nhắc xem ứng dụng Cloud-native phải *trông như thế nào*, chúng ta hoàn toàn có thể vạch ra những kỳ vọng cụ thể về việc chúng phải *làm được những gì*.
+
+Mượn lời đúc kết của chuyên gia kiến trúc Cornelia Davis, chúng ta kỳ vọng các ứng dụng Cloud-native:
+* Đạt được **tính sẵn sàng cao (High Availability)** ngay cả khi đang vận hành trên các môi trường hạ tầng luôn chực chờ sự cố lỗi (*fault-prone environments*);
+* Cho phép đội ngũ kỹ sư **phát hành liên tục các phiên bản mới mà không gây gián đoạn dịch vụ (Zero-downtime Deployment)**;
+* Khả năng thích ứng linh hoạt trước **khối lượng công việc và lưu lượng truy cập biến động liên tục (Dynamic Workloads)**.
+
+Những kỳ vọng cốt lõi này tác động trực tiếp và sâu sắc đến không gian giải pháp kiến trúc của phần mềm:
+
+```text
+                  ┌───────────────────────────────────────────────┐
+                  │          KỲ VỌNG CLOUD-NATIVE                 │
+                  └───────────────────────┬───────────────────────┘
+                                          │
+            ┌─────────────────────────────┼─────────────────────────────┐
+            ▼                             ▼                             ▼
+┌───────────────────────┐   ┌───────────────────────────┐   ┌───────────────────────┐
+│ Tính Sẵn Sàng Cao     │   │ Zero-downtime Release     │   │ Xử Lý Tải Biến Động   │
+│ (High Availability)   │   │ (Triển khai không dừng)   │   │ (Dynamic Workloads)   │
+└───────────┬───────────┘   └─────────────┬─────────────┘   └───────────┬───────────┘
+            │                             │                             │
+            ▼                             ▼                             ▼
+┌───────────────────────┐   ┌───────────────────────────┐   ┌───────────────────────┐
+│ Kiến trúc Phân tán    │   │ Tự động hóa Pipeline CI/CD│   │ Hạ tầng Co giãn       │
+│ Đa Instance / Replica │   │ Kiểm thử Hộp đen Tự động  │   │ Giám sát Telemetry    │
+└───────────┬───────────┘   └───────────────────────────┘   └───────────┬───────────┘
+            │                                                           │
+            └─────────────────────────────┬─────────────────────────────┘
+                                          │
+                                          ▼
+                            ┌───────────────────────────┐
+                            │ Tách biệt Tầng Lưu trữ    │
+                            │ (Stateless App + RDBMS)   │
+                            └───────────────────────────┘
+```
+
+1. **Kiến Trúc Phân Tán (Distributed Architecture)**: Để đạt tính sẵn sàng cao, ứng dụng phải phục vụ người dùng trơn tru ngay cả khi một hoặc nhiều máy chủ đột ngột ngừng hoạt động — một kịch bản xảy ra như cơm bữa trên hạ tầng đám mây[^2]. Điều này bắt buộc ứng dụng phải là một hệ thống phân tán, với nhiều bản sao (*instances*) cùng chạy đồng thời trên các node phần cứng độc lập.
+2. **Khả Năng Co Giãn (Elasticity)**: Để ứng phó với lưu lượng biến động, hệ thống phải liên tục **đo lường** tình trạng tải và bổ sung năng lực tính toán bằng cách tự động nhân rộng các instance mới, đồng thời tự động thu hẹp khi tải giảm để tối ưu hóa chi phí.
+3. **Tách Biệt Dữ Liệu Khỏi Hệ Thống File Cục Bộ (State Persistence)**: Việc nhân bản nhiều instance khiến ứng dụng không thể lưu trữ trạng thái quan trọng vào hệ thống file cục bộ (*local filesystem*). Mọi dữ liệu cần lưu trữ bền vững đều phải ủy thác cho các hệ quản trị cơ sở dữ liệu chuyên biệt.
+
+Chính vì vậy, *Zero To Production* sẽ đào sâu vào nhiều chủ đề tưởng chừng như nằm ngoài ranh giới của việc lập trình backend thuần túy. Ứng dụng Cloud-native gắn liền mật thiết với văn hóa **DevOps**, do đó chúng ta sẽ dành nhiều thời gian cho các bài toán thuộc về nghệ thuật **vận hành hệ thống**:
+
+* Cách thiết lập hệ thống quan sát (*Observability*): thu thập logs có cấu trúc (*structured logs*), truy vết phân tán (*distributed traces*) và chỉ số hiệu năng (*metrics*) bằng Rust.
+* Cách quản lý và tiến hóa lược đồ cơ sở dữ liệu (*database schema*) an toàn qua các bản di chuyển (*migrations*).
+* Cung cấp toàn diện tri thức giúp bạn làm chủ Rust để giải quyết cả bài toán **Day 1** (khởi tạo, chạy được) lẫn **Day 2** (vận hành, mở rộng, giám sát) của một API Cloud-native.
+
+---
+
+### 2. Làm Việc Trong Một Đội Ngũ Kỹ Sư (Working In A Team)
+
+Những yêu cầu khắt khe của Cloud-native không chỉ tác động đến đặc tính kỹ thuật của hệ thống, mà còn định hình cách chúng ta **tổ chức và xây dựng phần mềm**.
+
+Để tự tin phát hành phiên bản mới nhanh chóng tới tay người dùng, bạn cần một sự đảm bảo chắc chắn rằng ứng dụng vẫn hoạt động hoàn hảo:
+* Nếu làm việc một mình trong dự án cá nhân, bạn có thể dựa vào sự thấu hiểu toàn diện của bản thân: bạn tự viết ra mọi dòng code, hệ thống đủ nhỏ gọn để bạn ghi nhớ toàn bộ trong đầu tại bất kỳ thời điểm nào[^3].
+* Nhưng khi làm việc trong một đội ngũ phát triển sản phẩm thương mại, bạn sẽ thường xuyên phải tiếp xúc và sửa đổi những đoạn code mà bản thân **chưa từng viết ra, thậm chí chưa từng tham gia duyệt (review)**. Tệ hơn nữa, những tác giả ban đầu có thể đã chuyển sang công ty khác từ lâu.
+
+Nếu chỉ dựa vào trí nhớ hạn hẹp để đảm bảo code không bị lỗi khi sửa đổi, bạn sẽ sớm rơi vào trạng thái tê liệt vì sợ hãi mỗi khi cần thay đổi tính năng.
+
+**Liều thuốc giải duy nhất là hệ thống kiểm thử tự động (Automated Tests).**  
+Chạy tự động trên từng commit. Trên mọi nhánh tính năng. Giữ cho nhánh `main` luôn luôn khỏe mạnh.
+
+```text
+               CHIẾN LƯỢC PHÁT TRIỂN PHẦN MỀM DOANH NGHIỆP
+┌────────────────────────────────────────────────────────────────────────┐
+│  1. Kiểm thử Tự động (Automated Testing)                               │
+│     Chạy trên từng commit, giữ nhánh main luôn ở trạng thái triển khai │
+│                                                                        │
+│  2. Khai thác Hệ thống Kiểu Dữ liệu (Type System)                      │
+│     Biến các trạng thái không hợp lệ thành bất khả thi trong code      │
+│                                                                        │
+│  3. Domain-Driven Design & Type-Driven Design                          │
+│     Mô hình hóa đúng đắn miền nghiệp vụ (Parse, don't validate)        │
+│                                                                        │
+│  4. Triết lý "Boring & Correct"                                        │
+│     Ưu tiên giải pháp chuẩn xác, dễ đọc; tối ưu hiệu năng sau         │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+Chúng ta sẽ khai thác tối đa hệ thống kiểu dữ liệu (*Type System*) của Rust để **biến các trạng thái không hợp lệ thành điều không thể biểu diễn trong code** (*make undesirable states impossible to represent*). Chúng ta muốn trao quyền cho mọi thành viên trong nhóm — dù họ chưa dày dạn kinh nghiệm bằng bạn hay chưa nắm rõ toàn bộ codebase — vẫn có thể tự tin đóng góp và cải tiến phần mềm mà không sợ làm sập hệ thống.
+
+Do đó, *Zero To Production* đặt trọng tâm lớn vào phương pháp **Phát triển Hướng Kiểm thử (Test-Driven Development - TDD)** và **Tích hợp Liên tục (Continuous Integration - CI)** ngay từ ngày đầu tiên — chúng ta sẽ dựng xong đường ống CI trước cả khi viết dòng code đầu tiên cho web server!
+
+Chúng ta cũng sẽ mượn các thuật ngữ và tư duy từ trường phái **Domain-Driven Design (DDD)** kết hợp cùng kỹ thuật **Type-Driven Design** (*Parse, don't validate*) nhằm đảm bảo tính toàn vẹn của dữ liệu và logic nghiệp vụ.
+
+> **Đích đến của chúng ta là phần mềm doanh nghiệp (Enterprise Software):**  
+> Mã nguồn chuẩn xác, có tính biểu cảm cao để mô hình hóa trọn vẹn nghiệp vụ, và đủ linh hoạt để tiến hóa bền bỉ theo năm tháng.
+
+Chúng ta sẽ ưu tiên những giải pháp kỹ thuật đơn giản, "nhàm chán" nhưng chuẩn xác (*boring and correct solutions*), ngay cả khi chúng có thể phát sinh chút chi phí tài nguyên nhỏ so với những giải pháp tối ưu quá mức nhưng phức tạp. Hãy đưa ứng dụng chạy đúng trước, rồi hẵng tối ưu hóa khi thực sự có nhu cầu đo đạc thực tế.
+
+---
+
+## II. Cuốn Sách Này Dành Cho Ai?
+
+Hệ sinh thái Rust đã làm nên những điều phi thường trong việc phá vỡ rào cản tiếp cận ngôn ngữ, với các tài liệu tuyệt vời dành cho người mới nhập môn và sự trau chuốt tỉ mỉ trong các thông báo lỗi của trình biên dịch. 
+
+Tuy nhiên, nỗ lực cố gắng *chiều lòng tất cả mọi người* đôi khi mang lại một tác dụng phụ: những tài liệu chuyên sâu dành cho nhóm lập trình viên trung cấp và nâng cao lại thường bị bỏ ngỏ.
+
+Bản thân tôi từng trải qua cảm giác bế tắc tột độ khi bắt đầu làm quen với `async/await` trong Rust. Có một hố sâu ngăn cách rất lớn giữa những kiến thức tôi cần để làm việc hiệu quả với các kiến thức nền tảng trong cuốn *The Rust Book*. Tôi từng khao khát tìm kiếm một câu trả lời dứt khoát cho câu hỏi:
+
+> **"Liệu Rust có thực sự là một ngôn ngữ hiệu quả để phát triển các hệ thống API không?"**
+
+Câu trả lời ngắn gọn là: **CÓ**.  
+Nhưng để tự mình mò mẫm ra *cách làm như thế nào* thì lại tốn rất nhiều thời gian và công sức. Đó chính là lý do tôi viết cuốn sách này.
+
+Tôi viết cuốn sách này:
+* Dành cho **những kỹ sư backend dày dạn kinh nghiệm** đã đọc xong *The Rust Book* và đang cố gắng chuyển dịch các hệ thống dịch vụ thực tế sang Rust.
+* Dành cho **những kỹ sư mới gia nhập đội ngũ của tôi**, đóng vai trò như một tấm bản đồ chỉ đường giúp họ nhanh chóng nắm bắt các codebase lớn mà họ sẽ đóng góp trong thời gian tới.
+* Dành cho **một ngách độc giả kỹ thuật** mà tôi tin rằng nhu cầu học tập của họ đang chưa được đáp ứng thỏa đáng bởi các bài viết rời rạc trên mạng.
+* Và dành cho **chính bản thân tôi của một năm trước**: Để hệ thống hóa toàn bộ tri thức tích lũy được sau hành trình — Hộp công cụ chuẩn cho một Rust Backend Developer gồm những gì? Các mẫu thiết kế kiến trúc chuẩn là gì? Đâu là những cạm bẫy cần tránh?
+
+Nếu bạn chưa hội tụ đủ các yếu tố trên nhưng đang nỗ lực hướng tới mục tiêu đó, tôi sẽ làm hết sức mình để đồng hành cùng bạn: Mặc dù cuốn sách không nhắc lại toàn bộ các tính năng cú pháp cơ bản của Rust, tôi sẽ liên tục dẫn kèm các tài liệu tham khảo để bạn dễ dàng tra cứu và củng cố kiến thức trên từng chặng đường.
+
+Chúng ta cùng bắt đầu thôi!
+
+---
+
+[^1]: Một tác phẩm kinh điển rất đáng đọc là cuốn [*Cloud-native Patterns*](https://www.manning.com/books/cloud-native-patterns) của tác giả Cornelia Davis.
+[^2]: Chẳng hạn, rất nhiều doanh nghiệp chạy ứng dụng trên [AWS Spot Instances](https://aws.amazon.com/ec2/spot/) để cắt giảm hóa đơn hạ tầng (rẻ hơn tới 90% so với giá On Demand). Bù lại, AWS có quyền thu hồi các máy ảo Spot này bất kỳ lúc nào chỉ với một thông báo trước 2 phút. Phần mềm của bạn **bắt buộc** phải có khả năng chịu lỗi phân tán để khai thác cơ hội tiết kiệm này.
+[^3]: Giả định rằng bạn mới viết đoạn mã đó gần đây. Bản thân bạn của một năm trước về bản chất chẳng khác gì một người xa lạ trong giới phần mềm. Hãy cầu nguyện rằng "bạn trong quá khứ" đã để lại những dòng chú thích rõ ràng cho "bạn ở hiện tại" mỗi khi phải mở lại một dự án cũ!

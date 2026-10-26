@@ -1,0 +1,253 @@
+---
+title: "Yêu Cầu Nghiệp Vụ & Lỗ Hổng Của Validation Truyền Thống"
+description: "Phân tích các ràng buộc nghiệp vụ và bảo mật cho tên độc giả, thử nghiệm cài đặt ban đầu và bài học kiến trúc sâu sắc: Validation Is A Leaky Cauldron."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+API newsletter của chúng ta hiện đã được triển khai lên máy chủ Cloud, có hệ thống giám sát viễn trắc (telemetry) để theo dõi luồng xử lý và cung cấp endpoint `POST /subscriptions` cho người dùng đăng ký nhận tin.
+
+Thế nhưng, endpoint `POST /subscriptions` hiện tại lại đang xử lý dữ liệu cực kỳ lỏng lẻo. Toàn bộ logic validation hiện tại mới dừng ở mức xác định xem hai trường `name` và `email` có xuất hiện trong payload gửi lên hay không.
+
+Chúng ta có thể kiểm chứng ngay lỗ hổng này bằng một integration test mô phỏng các trường hợp người dùng cố tình gửi dữ liệu "có vấn đề":
+
+```rust
+//! tests/health_check.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_returns_a_200_when_fields_are_present_but_empty() {
+    // Arrange
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+    let test_cases = vec![
+        ("name=&email=ursula_le_guin%40gmail.com", "empty name"),
+        ("name=Ursula&email=", "empty email"),
+        ("name=Ursula&email=definitely-not-an-email", "invalid email"),
+    ];
+
+    for (body, description) in test_cases {
+        // Act
+        let response = client
+            .post(&format!("{}/subscriptions", &app.address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+
+        // Assert
+        assert_eq!(
+            200,
+            response.status().as_u16(),
+            "The API did not return a 200 OK when the payload was {}.",
+            description 
+        );
+    }
+}
+```
+
+Thật không may, bài test mới này lại chạy **thành công (pass)**!
+
+Mặc dù tất cả các payload trên đều không hợp lệ về mặt ngữ nghĩa, API của chúng ta vẫn vui vẻ tiếp nhận chúng và trả về mã trạng thái `200 OK`. Những thông tin độc giả lỗi này được ghi thẳng vào cơ sở dữ liệu PostgreSQL, sẵn sàng phát nổ thành các sự cố nghiêm trọng sau này khi hệ thống bước vào giai đoạn gửi bản tin newsletter thực tế.
+
+Khi người dùng đăng ký, chúng ta yêu cầu hai thông tin: tên (`name`) và địa chỉ thư điện tử (`email`). Trong bài học này, chúng ta sẽ tập trung phân tích việc kiểm tra tính hợp lệ của trường `name`: chúng ta cần để tâm đến những yếu tố nào?
+
+---
+
+## I. Yêu Cầu Nghiệp Vụ (Requirements)
+
+### 1. Ràng Buộc Nghiệp Vụ (Domain Constraints)
+
+Thực tế đã chứng minh rằng: **xử lý tên người là một bài toán vô cùng phức tạp**. Nếu bạn từng đọc bài viết kinh điển *"Falsehoods programmers believe about names"* của Patrick McKenzie (patio11), bạn sẽ nhận ra việc cố gắng định nghĩa thế nào là một cái tên "hợp lệ" trên phạm vi toàn cầu là một nỗ lực vô vọng. Tên người có thể có hoặc không có họ, có thể chỉ gồm một chữ cái, có thể chứa dấu gạch ngang, dấu nháy đơn, ký tự tượng hình hoặc thậm chí là các ký tự Unicode hiếm gặp tùy theo từng nền văn hóa và khu vực địa lý.
+
+Hãy nhớ lại mục đích thu thập tên của chúng ta: chúng ta chỉ dùng tên để đặt vào dòng chào mở đầu trong các email gửi đi (ví dụ: *"Chào Ursula,"*). Chúng ta hoàn toàn không cần tên đó phải khớp 100% với danh tính pháp lý trên giấy tờ tùy thân của độc giả. Sẽ thật vô lý và phản cảm nếu chúng ta áp đặt những quy tắc kiểm tra hà khắc hoặc sai lệch lên người dùng, khiến họ không thể đăng ký chỉ vì hệ thống từ chối cấu trúc tên thật của họ.
+
+Vì lý do đó, xét về mặt nghiệp vụ thuần túy, chúng ta chỉ cần đặt ra một yêu cầu tối thiểu duy nhất: **trường tên không được rỗng** (nghĩa là nó bắt buộc phải chứa ít nhất một ký tự không phải khoảng trắng - non-whitespace character).
+
+---
+
+### 2. Ràng Buộc Bảo Mật (Security Constraints)
+
+Tuy nhiên, không phải tất cả người dùng trên Internet đều mang thiện chí. Khi dịch vụ newsletter của chúng ta phát triển và có lượng người dùng lớn, chắc chắn nó sẽ lọt vào tầm ngắm của những kẻ tấn công có mưu đồ xấu.
+
+Các biểu mẫu (forms) và dữ liệu đầu vào từ người dùng luôn là mục tiêu tấn công hàng đầu. Nếu dữ liệu không được khử trùng (sanitise) đúng cách, kẻ tấn công có thể tiêm mã độc vào cơ sở dữ liệu (SQL injection), thực thi mã từ xa trên máy chủ, làm sập ứng dụng (DoS) hoặc nhiều kịch bản nguy hiểm khác.
+
+Trong bối cảnh một ứng dụng gửi newsletter qua email, những mối đe dọa thực tế mà chúng ta phải đối mặt là gì?
+- **Từ chối dịch vụ (Denial of Service - DoS)**: Cố tình gửi các payload khổng lồ làm cạn kiệt tài nguyên bộ nhớ hoặc đĩa cứng của máy chủ, khiến người dùng khác không thể đăng ký.
+- **Đánh cắp dữ liệu (Data theft)**: Thu thập hoặc chiếm quyền truy cập danh sách hàng nghìn địa chỉ email độc giả.
+- **Lừa đảo (Phishing)**: Lợi dụng hệ thống newsletter uy tín của chúng ta để gửi email chứa các đoạn mã độc hoặc liên kết lừa đảo đến nạn nhân, đánh lừa họ nhấp vào liên kết.
+
+Liệu chúng ta có nên cố gắng giải quyết tất cả các mối đe dọa trên ngay tại tầng logic validation đầu vào hay không? Chắc chắn là không! Nhưng thực hành kỹ thuật phần mềm tốt luôn đòi hỏi một chiến lược **phòng thủ theo chiều sâu (Defense in Depth)**.
+
+<Callout type="info" title="Nguyên Lý Defense in Depth (Phòng Thủ Theo Chiều Sâu)">
+Bằng cách triển khai các biện pháp giảm thiểu rủi ro ở nhiều tầng khác nhau trong toàn bộ hệ thống (kiểm tra đầu vào ở HTTP handler, sử dụng truy vấn tham số hóa `parameterized queries` ở tầng database để ngăn ngừa SQL injection, escape ký tự đặc biệt khi render HTML trong email), chúng ta sẽ hạn chế tối đa nguy cơ bị tổn thương nếu một trong những chốt chặn vô tình bị lỗi hoặc bị vô hiệu hóa trong tương lai.
+</Callout>
+
+Phần mềm là một thực thể sống liên tục thay đổi. Bức tranh toàn cảnh về kiến trúc hệ thống là thứ đầu tiên bị xói mòn theo thời gian. Khi bạn viết mã lần đầu, toàn bộ hệ thống nằm trọn vẹn trong đầu bạn. Nhưng người đồng nghiệp tiếp theo tiếp quản mã nguồn sẽ không có được bức tranh ấy ngay từ đầu. Hoàn toàn có khả năng một bước kiểm tra cốt tử nào đó ở một góc khuất của ứng dụng (chẳng hạn như việc escape thẻ HTML) vô tình bị xóa bỏ trong một đợt tái cấu trúc, khiến hệ thống lập tức phơi nhiễm trước các cuộc tấn công phishing. **Sự dự phòng có chủ đích (redundancy) giúp triệt tiêu rủi ro.**
+
+Xuất phát từ các nguy cơ trên, chúng ta bổ sung hai ràng buộc bảo mật cụ thể cho trường tên:
+1. **Áp đặt độ dài tối đa**: Trong PostgreSQL, kiểu dữ liệu `TEXT` gần như không có giới hạn dung lượng (chỉ bị giới hạn bởi dung lượng đĩa cứng). Tên người dùng có thể muôn hình muôn vẻ, nhưng **256 ký tự** là con số quá đủ cho đại đa số người dùng trên thế giới. Nếu ai đó có một cái tên dài hơn, chúng ta sẽ lịch sự đề nghị họ sử dụng một biệt danh (nickname).
+2. **Từ chối các ký tự đặc biệt nguy hiểm**: Tập hợp các ký tự `['/', '(', ')', '"', '<', '>', '\\', '{', '}']` xuất hiện rất phổ biến trong các URL, câu lệnh SQL và các đoạn mã HTML/JavaScript, nhưng hầu như không bao giờ là thành phần hợp lệ của tên người. Việc cấm triệt để các ký tự này sẽ nâng cao rào cản kỹ thuật đối với mọi mưu đồ SQL injection hay phishing.
+
+---
+
+## II. Cài Đặt Ban Đầu (First Implementation)
+
+Hãy nhìn lại HTTP handler tiếp nhận đăng ký hiện tại của chúng ta:
+
+```rust
+//! src/routes/subscriptions.rs
+use actix_web::{web, HttpResponse};
+use chrono::Utc;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    email: String,
+    name: String,
+}
+
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, pool),
+    fields(
+        subscriber_email = %form.email,
+        subscriber_name = %form.name
+    )
+)]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    match insert_subscriber(&pool, &form).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+```
+
+Bây giờ, chúng ta sẽ đặt đoạn mã kiểm tra tính hợp lệ của trường `name` ở đâu?
+
+Cách tiếp cận tự nhiên và trực diện nhất mà hầu hết các lập trình viên thường nghĩ đến là viết một hàm kiểm tra `is_valid_name`:
+
+```rust
+//! src/routes/subscriptions.rs
+
+// Extension trait cung cấp phương thức `graphemes` cho `String` và `&str`
+use unicode_segmentation::UnicodeSegmentation;
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    if !is_valid_name(&form.name) {
+        return HttpResponse::BadRequest().finish();
+    }
+    match insert_subscriber(&pool, &form).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+/// Trả về `true` nếu chuỗi đầu vào thỏa mãn tất cả các ràng buộc kiểm tra
+/// đối với tên độc giả, ngược lại trả về `false`.
+pub fn is_valid_name(s: &str) -> bool {
+    // `.trim()` trả về một view trên chuỗi `s` đã loại bỏ các khoảng trắng ở đầu và cuối.
+    // `.is_empty()` kiểm tra xem view này có chứa ký tự nào không.
+    let is_empty_or_whitespace = s.trim().is_empty();
+
+    // Một grapheme được chuẩn Unicode định nghĩa là một ký tự mà "người dùng cảm nhận được":
+    // Ví dụ ký tự `å` là một grapheme đơn lẻ, nhưng thực chất được tạo nên từ 2 codepoint (`a` và `̊`).
+    //
+    // `graphemes` trả về một iterator duyệt qua các grapheme trong chuỗi `s`.
+    // Tham số `true` chỉ định sử dụng tập định nghĩa grapheme mở rộng (extended grapheme definition set).
+    let is_too_long = s.graphemes(true).count() > 256;
+
+    // Duyệt qua toàn bộ ký tự trong chuỗi `s` để kiểm tra xem có ký tự nào
+    // nằm trong danh sách các ký tự bị cấm hay không.
+    let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
+    let contains_forbidden_characters = s
+        .chars()
+        .any(|g| forbidden_characters.contains(&g));
+
+    // Trả về `false` nếu bất kỳ điều kiện nào bên trên bị vi phạm
+    !(is_empty_or_whitespace || is_too_long || contains_forbidden_characters)
+}
+```
+
+Để biên dịch thành công đoạn mã trên, chúng ta cần khai báo thêm crate `unicode-segmentation` vào file cấu hình dự án:
+
+```toml
+# Cargo.toml
+# [...]
+[dependencies]
+unicode-segmentation = "1"
+# [...]
+```
+
+<Callout type="info" title="Tại Sao Phải Dùng Graphemes Thay Vì len() Hay chars().count() Trong Rust?">
+Trong Rust, phương thức `s.len()` trả về **số lượng byte** (theo mã hóa UTF-8), không phải số lượng ký tự. Một ký tự tiếng Việt (như `ệ`) hoặc ký tự tiếng Nhật/Trung có thể tốn từ 2 đến 4 bytes. Phương thức `s.chars().count()` đếm số lượng Unicode Scalar Values, nhưng vẫn có thể tính tách rời các dấu thanh (combining characters). Chỉ có `unicode-segmentation` với thuật toán đếm **extended grapheme clusters** mới phản ánh chính xác số ký tự hiển thị trên màn hình người dùng!
+</Callout>
+
+Thoạt nhìn, hàm `is_valid_name` có vẻ là một giải pháp hoàn hảo (miễn là chúng ta viết đủ unit test để bao phủ các trường hợp). Thế nhưng, các hàm dạng `is_valid_...` như thế này thực chất lại đang mang đến cho lập trình viên một **ảo tưởng nguy hiểm về sự an toàn**.
+
+---
+
+## III. Bài Học "Validation Is A Leaky Cauldron" (Nồi Súp Rỉ Nước)
+
+Hãy hướng sự chú ý của bạn xuống hàm lưu dữ liệu vào database: `insert_subscriber`.
+
+```rust
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    form: &FormData,
+) -> Result<(), sqlx::Error> {
+    // [...]
+}
+```
+
+Hãy thử tưởng tượng trong giây lát: giả sử hàm `insert_subscriber` yêu cầu bắt buộc trường `form.name` không được rỗng, nếu rỗng thì một sự cố kinh hoàng sẽ xảy ra (ví dụ: máy chủ bị `panic!`).
+
+Liệu bản thân hàm `insert_subscriber` có thể an tâm giả định rằng `form.name` chắc chắn không rỗng hay không?
+
+**Chỉ bằng cách nhìn vào kiểu dữ liệu của nó, câu trả lời dứt khoát là: KHÔNG THỂ!**
+
+Trường `form.name` chỉ là một kiểu chuỗi thô: `String`. Bản thân kiểu `String` không mang theo bất kỳ một bảo đảm cấu trúc nào về nội dung bên trong của nó. Nó có thể là chuỗi rỗng `""`, một chuỗi khoảng trắng `"   "`, một đoạn script độc hại hoặc bất cứ thứ gì.
+
+Nếu nhìn vào toàn bộ chương trình, bạn có thể biện minh rằng: *"Chúng ta đã kiểm tra nó ở ngay cửa ngõ tiếp nhận (tại HTTP handler `subscribe`), do đó ta có thể an tâm rằng mỗi khi `insert_subscriber` được gọi, `form.name` chắc chắn đã hợp lệ."*
+
+Thế nhưng, khi lập luận như vậy, bạn vừa phải chuyển từ **tư duy cục bộ (local reasoning)** sang **tư duy toàn cục (global reasoning)**:
+- **Tư duy cục bộ**: Bạn chỉ cần đọc chữ ký hàm (function signature) và các tham số của hàm đó để hiểu và tin tưởng vào các ràng buộc của nó.
+- **Tư duy toàn cục**: Bạn buộc phải lùng sục khắp toàn bộ codebase dự án, kiểm tra tất cả các vị trí gọi hàm (`call sites`) của `insert_subscriber` để tin rằng bước validation đã được thực hiện chu đáo từ trước.
+
+Trong một dự án nhỏ vài trăm dòng code, bạn có thể dễ dàng kiểm soát điều đó. Nhưng khi dự án lớn dần lên với hàng chục lập trình viên cùng tham gia, việc rà soát toàn bộ các nơi gọi một hàm để chắc chắn rằng dữ liệu đã được validate trước đó nhanh chóng trở thành một nhiệm vụ bất khả thi.
+
+Nếu chúng ta tiếp tục trung thành với cách làm của `is_valid_name`, cách duy nhất để `insert_subscriber` tự bảo vệ mình là **phải tự validate lại `form.name` một lần nữa bên trong thân hàm của nó** — và mọi hàm phụ trợ khác cần đến ràng buộc này cũng sẽ phải lặp lại bước validation tương tự!
+
+```
+Kiểu String thô
+   │
+   ▼
+[HTTP Handler]  ───(is_valid_name)───► Hợp lệ?
+   │                                      │
+   ▼ (Vẫn là String thô!)                 ▼
+[Service Logic] ───(is_valid_name)───► Kiểm tra lại lần 2?
+   │                                      │
+   ▼ (Vẫn là String thô!)                 ▼
+[DB Repository] ───(is_valid_name)───► Kiểm tra lại lần 3?
+```
+
+Điều gì sẽ xảy ra nếu `insert_subscriber` phình to và chúng ta phải phân tách nó thành 3 hoặc 4 hàm con nhỏ hơn? Nếu các hàm con đó đều cần đến tính bất biến (invariant) rằng "tên không rỗng", mỗi hàm con lại phải tự thực hiện việc kiểm tra. Cách tiếp cận này hoàn toàn không thể mở rộng (does not scale): nó dẫn đến một codebase lộn xộn, ngập tràn những khối mã kiểm tra lặp đi lặp lại một cách thừa thãi và ồn ào.
+
+<Callout type="error" title="Bản Chất Vấn Đề Của Validation Truyền Thống">
+Vấn đề cốt lõi ở đây là: `is_valid_name` chỉ là một **hàm kiểm tra (validation function)**. Nó chỉ cho chúng ta biết rằng, tại đúng một thời điểm trong luồng thực thi của chương trình, một tập hợp các điều kiện đã được thỏa mãn. 
+
+Nhưng thông tin về cấu trúc bổ sung của dữ liệu này **hoàn toàn không được lưu trữ ở bất kỳ đâu**! Nó lập tức bốc hơi ngay sau khi câu lệnh `if !is_valid_name(...)` kết thúc. Các thành phần khác trong chương trình không thể tái sử dụng kết quả đó, và bị ép buộc phải kiểm tra lại tại chỗ. Đó chính là lý do tác giả gọi validation truyền thống là một **"nồi súp rỉ nước" (Leaky Cauldron)**!
+</Callout>
+
+Thứ chúng ta thực sự cần không phải là một hàm kiểm tra, mà là một **hàm phân tích cú pháp (parsing function)**: một hàm nhận dữ liệu đầu vào chưa có cấu trúc, kiểm tra các điều kiện ràng buộc, và nếu hợp lệ, nó sẽ trả về một **giá trị đầu ra có cấu trúc chặt chẽ hơn** — một giá trị mà ngay trong cấu trúc kiểu dữ liệu của nó đã bảo đảm rằng các ràng buộc nghiệp vụ (**invariants**) luôn luôn được giữ vững kể từ thời điểm đó trở đi!
+
+Làm thế nào để đạt được điều này? Câu trả lời chính là: **Dùng hệ thống kiểu dữ liệu (Types)!**

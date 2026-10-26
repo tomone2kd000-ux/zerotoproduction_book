@@ -1,0 +1,10 @@
+{
+  "title": "Chương 6: Kiểm Tra Hợp Lệ #1 (Type-Driven)",
+  "pages": [
+    "index",
+    "01-yeu-cau-nghiep-vu-va-lo-hong-validation",
+    "02-type-driven-development-va-invariants",
+    "03-xu-ly-result-va-claims-assertions",
+    "04-subscriber-email-va-property-based-testing"
+  ]
+}

@@ -1,0 +1,93 @@
+---
+title: "Lời Tựa (Foreword)"
+description: "Lời tựa cuốn sách Zero To Production In Rust do Florian Gilcher (Đồng sáng lập Rust Foundation, Giám đốc Điều hành Ferrous Systems) chắp bút."
+---
+
+# Lời Tựa (Foreword)
+
+*Bởi **Florian Gilcher** — Giám đốc Điều hành Ferrous Systems, Đồng sáng lập Rust Foundation.*
+
+---
+
+Khi bạn đọc những dòng này, Rust đã hoàn thành mục tiêu lớn nhất của mình: **đưa ra một lời đề nghị thuyết phục tới cộng đồng lập trình viên để xây dựng các hệ thống vận hành thực tế (Production) bằng một ngôn ngữ hoàn toàn khác biệt.**
+
+Sau khi đọc xong cuốn sách này, lựa chọn bước tiếp trên con đường đó hay không hoàn toàn tùy thuộc ở bạn, nhưng bạn sẽ có trong tay mọi hành trang cần thiết để nghiêm túc cân nhắc lời đề nghị ấy.
+
+Tôi từng có cơ hội đồng hành cùng sự phát triển của hai ngôn ngữ lập trình có triết lý vô cùng khác biệt: **Ruby** và **Rust** — không chỉ dưới vai trò một lập trình viên trực tiếp viết mã, mà còn thông qua việc tổ chức các hội thảo cộng đồng, tham gia điều hành dự án và xây dựng các doanh nghiệp xoay quanh chúng. Nhờ những cơ duyên đó, tôi có vinh dự được kết nối sâu sắc với nhiều nhà sáng lập của các ngôn ngữ này và xem họ như những người bạn thân thiết. Rust là cơ hội một lần trong đời giúp tôi chứng kiến và trực tiếp thúc đẩy một ngôn ngữ đi lên từ giai đoạn thử nghiệm ban đầu cho đến khi được đón nhận rộng rãi trong toàn ngành công nghiệp phần mềm.
+
+---
+
+## I. Ngôn Ngữ Lập Trình Không Được Tiếp Nhận Chỉ Nhờ Bảng Danh Sách Tính Năng
+
+Tôi muốn chia sẻ với bạn một bí mật mà bản thân đã chiêm nghiệm được trên hành trình ấy: **Một ngôn ngữ lập trình không được cả ngành công nghiệp đón nhận chỉ đơn giản nhờ vào một danh sách các tính năng kỹ thuật hấp dẫn.**
+
+Đó luôn là một sự tương tác phức tạp và tinh tế giữa ba yếu tố:
+1. Một nền tảng công nghệ thực sự xuất sắc;
+2. Khả năng truyền đạt và lan tỏa tri thức về nó một cách dễ hiểu;
+3. Tìm kiếm đủ số lượng người sẵn sàng **đặt cược dài hạn** vào tương lai của nó.
+
+<Callout type="info">
+  Hơn 5.000 cá nhân đã cùng nhau đóng góp cho dự án mã nguồn mở Rust — phần lớn là tự nguyện, cống hiến thời gian rảnh rỗi của mình — chỉ vì một niềm tin sâu sắc vào canh bạc dài hạn đó.
+</Callout>
+
+Nhưng để đóng góp cho Rust, bạn không nhất thiết phải viết code cho trình biên dịch (`rustc`) hay có tên hiển thị trong lịch sử Git commit của dự án cốt lõi. Cuốn sách này của Luca chính là một đóng góp to lớn và quý giá: nó mang đến cho những người mới bắt đầu một lăng kính thực chiến chuẩn xác về Rust, đồng thời tôn vinh công sức lao động bền bỉ của hàng ngàn con người phía sau.
+
+---
+
+## II. Rust Sinh Ra Từ Thực Tế, Không Phải Một Phòng Thí Nghiệm Hàn Lâm
+
+Rust chưa bao giờ được định hình như một nền tảng nghiên cứu học thuật thuần túy. Ngay từ những ngày đầu, sứ mệnh của nó luôn là một ngôn ngữ lập trình sinh ra để **giải quyết các vấn đề gai góc, có thật và nhức nhối trong những hệ thống mã nguồn khổng lồ**.
+
+Không có gì ngạc nhiên khi Rust được ươm mầm từ **Mozilla** — tổ chức chịu trách nhiệm bảo trì một trong những codebase lớn và phức tạp bậc nhất hành tinh: trình duyệt web Firefox. Khi tôi mới gia nhập cộng đồng Rust, đó đơn thuần chỉ là một tham vọng lớn: tham vọng *công nghiệp hóa các nghiên cứu khoa học máy tính* để tạo nên những phần mềm tương lai tốt hơn.
+
+Dù hàm chứa bên dưới vô vàn khái niệm lý thuyết trừu tượng cao cấp — như *Hệ thống kiểu tuyến tính (Linear Typing)* hay *Quản lý bộ nhớ dựa trên vùng phạm vi (Region-based Memory Management)* — ngôn ngữ này luôn hướng tới việc phục vụ cho đại chúng lập trình viên. 
+
+Điều đó thể hiện rõ nét qua chính thuật ngữ đời thường mà Rust sử dụng:
+* Thay vì nói về cơ chế lý thuyết khô khan, Rust sử dụng những cái tên trực quan, dễ liên tưởng như **Quyền sở hữu (Ownership)** và **Mượn (Borrowing)**.
+* **Rust là một ngôn ngữ công nghiệp, từ trong cốt lõi cho đến từng chi tiết bề mặt.**
+
+```text
+Lý thuyết Khoa học Máy tính           Triết lý Ngôn ngữ Rust (Đời thường & Thực tế)
+┌───────────────────────────────┐     ┌───────────────────────────────────────────┐
+│ Linear Typing                 │ ──> │ Ownership (Quyền sở hữu duy nhất)        │
+│ Region-based Mem Management   │ ──> │ Borrowing & Lifetimes (Mượn dữ liệu)     │
+│ Data-race Freedom by Model    │ ──> │ Send & Sync Traits (Đa luồng không sợ hãi)│
+└───────────────────────────────┘     └───────────────────────────────────────────┘
+```
+
+---
+
+## III. Người Dẫn Đường Thực Thụ: Luca Palmieri
+
+Triết lý thực tế ấy phản ánh trọn vẹn ở những người ủng hộ Rust tiêu biểu. Tôi đã biết Luca nhiều năm qua như một thành viên kỳ cựu trong cộng đồng, một người nắm vững tường tận từng ngóc ngách của Rust. 
+
+Nhưng đam mê sâu sắc nhất của Luca không nằm ở việc trình diễn kỹ thuật trừu tượng, mà là **thuyết phục mọi người rằng Rust hoàn toàn xứng đáng để trao gửi niềm tin, thông qua việc giải quyết trực tiếp và rốt ráo những nhu cầu thực tế của họ.**
+
+Tiêu đề và cấu trúc của cuốn sách này phản ánh một trong những giá trị cốt lõi nhất của Rust:
+> Tìm thấy giá trị thực sự của ngôn ngữ trong việc tạo ra phần mềm môi trường Production: vững chắc, tin cậy và luôn hoàn thành nhiệm vụ được giao.
+
+Sức mạnh của Rust thể hiện rõ qua sự cẩn trọng và khối lượng tri thức khổng lồ được tích lũy bên trong nó, nhằm giúp chúng ta xây dựng phần mềm ổn định với năng suất cao. Một trải nghiệm giá trị như thế sẽ trở nên tuyệt vời nhất khi bạn có một người dẫn đường dày dạn kinh nghiệm. Và **Luca Palmieri chính là một trong những người dẫn đường xuất sắc nhất mà bạn có thể tìm thấy trong thế giới Rust.**
+
+---
+
+## IV. Viết Mã An Toàn Để Dám Chấp Nhận Những Rủi Ro Lớn Hơn
+
+Rust không giải quyết mọi vấn đề trên đời, nhưng nó đã thực hiện một nỗ lực phi thường để **triệt tiêu hoàn toàn nhiều phân loại lỗi kinh điển** từng hành hạ các thế hệ lập trình viên suốt hàng thập kỷ qua.
+
+Đâu đó ngoài kia vẫn tồn tại định kiến cho rằng: các tính năng an toàn trong ngôn ngữ lập trình được dựng lên vì sự kém cỏi của lập trình viên. Tôi hoàn toàn phản đối quan điểm hẹp hòi đó.
+
+Như **Emily Dunham** từng đúc kết xuất sắc trong bài phát biểu khai mạc tại *RustConf 2017*:
+
+> **"Safe code allows you to take better risks."**  
+> *(Mã nguồn an toàn cho phép bạn dám chấp nhận những rủi ro có tính toán lớn hơn).*
+
+Phần lớn phép màu của cộng đồng Rust bắt nguồn từ chính cái nhìn tích cực, đầy tin tưởng đối với người dùng của mình: Dù bạn là một lập trình viên mới bước chân vào nghề hay một kỹ sư kỳ cựu, **chúng tôi luôn tin tưởng vào kinh nghiệm, khả năng phán đoán và quyết định kiến trúc của bạn.**
+
+Trong cuốn sách này, Luca sẽ mang đến cho bạn một lượng tri thức thực chiến phong phú — những kiến thức giá trị mà bạn hoàn toàn có thể ứng dụng ngay cả ngoài phạm vi ngôn ngữ Rust — được diễn giải mạch lạc và sâu sắc trong bối cảnh phát triển phần mềm thường nhật.
+
+Chúc bạn có những giờ phút đọc sách thú vị, thu nạp nhiều kiến thức quý giá và chiêm nghiệm được những góc nhìn mới mẻ!
+
+<div className="mt-8 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-right font-serif">
+  <p className="font-semibold text-lg text-zinc-900 dark:text-zinc-100">Florian Gilcher</p>
+  <p className="text-sm text-zinc-600 dark:text-zinc-400 italic">Giám đốc Điều hành Ferrous Systems & Đồng sáng lập Rust Foundation</p>
+</div>

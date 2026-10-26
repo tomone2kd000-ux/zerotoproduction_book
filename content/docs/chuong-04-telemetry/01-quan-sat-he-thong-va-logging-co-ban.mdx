@@ -1,0 +1,271 @@
+---
+title: "Quan Sát Hệ Thống & Logging Cơ Bản"
+description: "Tìm hiểu Unknown Unknowns, định nghĩa Observability, crate log, middleware Logger của actix-web và kiến trúc Facade Pattern"
+---
+
+# Quan Sát Hệ Thống & Logging Cơ Bản
+
+Ở giai đoạn này, ứng dụng của chúng ta đã có một số bài kiểm thử tự động. Kiểm thử là điều tuyệt vời — chúng gia tăng mức độ tự tin vào tính đúng đắn của phần mềm. Tuy nhiên, một bộ test suite không bao giờ là *bằng chứng tuyệt đối* chứng minh ứng dụng không có lỗi. Để thực sự chứng minh toán học một hệ thống không có khiếm khuyết, chúng ta sẽ phải viện đến các phương pháp kiểm chứng hình thức (formal methods) vô cùng tốn kém.
+
+Khi ứng dụng chạy trong môi trường thực tế (runtime), nó chắc chắn sẽ đối mặt với những kịch bản mà chúng ta chưa từng viết test, thậm chí chưa từng nghĩ tới khi thiết kế hệ thống.
+
+---
+
+## 4.1. Unknown Unknowns: Những Điều Chưa Biết Về Những Điều Chưa Biết
+
+Dựa trên kinh nghiệm thực tế, chúng ta có thể điểm qua ngay một vài "điểm mù" trong mã nguồn hiện tại:
+
+- **Mất kết nối cơ sở dữ liệu**: Điều gì xảy ra nếu đường truyền tới PostgreSQL bị ngắt? Liệu `sqlx::PgPool` có tự động phục hồi kết nối hay mọi truy vấn từ thời điểm đó sẽ sập hoàn toàn cho đến khi khởi động lại ứng dụng?
+- **Tải trọng độc hại (Malicious Payloads)**: Điều gì xảy ra nếu kẻ tấn công gửi một payload khổng lồ hoặc cố tình tấn công SQL Injection vào body của endpoint `POST /subscriptions`?
+
+Những vấn đề này được gọi là **Known Unknowns** (những điều ta biết là mình chưa biết): đó là những thiếu sót mà ta đã lường trước được nhưng chưa có thời gian điều tra sâu, hoặc tạm thời gác lại vì chưa đủ độ ưu tiên. Với đủ thời gian và nỗ lực kỹ thuật, ta hoàn toàn có thể giải quyết hầu hết các *known unknowns*.
+
+Thế nhưng, nguy cơ lớn nhất đánh sập hệ thống production lại đến từ những điều ta chưa từng thấy và hoàn toàn không ngờ tới: **Unknown Unknowns**.
+
+```text
+               ┌───────────────────────────────┐
+               │         TRI THỨC HỆ THỐNG     │
+               └───────────────┬───────────────┘
+                               │
+            ┌──────────────────┴──────────────────┐
+            ▼                                     ▼
+┌───────────────────────┐             ┌───────────────────────┐
+│     KNOWN UNKNOWNS    │             │   UNKNOWN UNKNOWNS    │
+├───────────────────────┤             ├───────────────────────┤
+│ • Đã lường trước được │             │ • Không lường trước   │
+│ • Rớt mạng CSDL       │             │ • Tương tác kỳ dị giữa│
+│ • Tấn công SQLi       │             │   nhiều service/phần cứng│
+│ • Có thể viết test bù │             │ • Chỉ lộ diện khi chạy│
+│   đắp theo thời gian  │             │   thực tế (Production)│
+└───────────────────────┘             └───────────────────────┘
+```
+
+Đôi khi, kinh nghiệm thực chiến sẽ biến một *unknown unknown* thành một *known unknown*. Ví dụ: nếu chưa từng làm việc với cơ sở dữ liệu phân tán, bạn có thể không nghĩ đến tình huống failover; nhưng khi đã nếm trải một lần sự cố, bạn sẽ luôn đưa kịch bản đó vào danh sách cần đề phòng.
+
+Tuy nhiên, phần lớn các *unknown unknowns* là các chế độ lỗi đặc thù phát sinh từ chính hệ thống cụ thể bạn đang xây dựng. Chúng nằm ở điểm giao thoa giữa:
+- Các thành phần phần mềm nội bộ;
+- Hệ điều hành và phần cứng bên dưới;
+- Đặc thù quy trình triển khai;
+- Và nguồn nhiễu loạn khổng lồ mang tên "thế giới bên ngoài".
+
+Chúng thường chỉ bùng phát khi:
+1. Hệ thống bị đẩy ra ngoài điều kiện vận hành bình thường (ví dụ: lượng truy cập đột biến bất thường);
+2. Nhiều thành phần cùng gặp sự cố một lúc (ví dụ: một transaction SQL bị treo đúng lúc cụm database đang thực hiện chuyển đổi master-replica failover);
+3. Một thay đổi nhỏ làm lệch điểm cân bằng của hệ thống (ví dụ: tinh chỉnh lại retry policy khiến dịch vụ phía sau bị nghẽn do bão request);
+4. Hệ thống không hề thay đổi trong thời gian dài (ví dụ: ứng dụng chạy liên tục nhiều tuần không restart và bắt đầu rò rỉ bộ nhớ âm ỉ).
+
+Điểm chung chí mạng của các kịch bản trên: **chúng gần như không thể tái lập (reproduce) trong môi trường phát triển cục bộ**. Vậy ta cần chuẩn bị gì để ứng phó khi sự cố xảy ra ngoài production?
+
+---
+
+## 4.2. Khả Năng Quan Sát (Observability)
+
+Chúng ta phải chấp nhận một thực tế: lập trình viên sẽ không có mặt đúng lúc sự cố bất ngờ nổ ra. Nó có thể xảy ra lúc nửa đêm, vào ngày lễ, hoặc khi bạn đang tập trung làm một tính năng khác. 
+
+Ngay cả khi bạn đang ngồi trước màn hình đúng khoảnh khắc hệ thống chập chờn, việc gắn một trình gỡ lỗi (debugger) vào một tiến trình đang chạy trên production gần như là bất khả thi (hoặc cực kỳ nguy hiểm, chưa kể bạn còn chẳng biết tiến trình nào trong hàng chục container đang gặp lỗi).
+
+Vũ khí duy nhất giúp ta hiểu và chẩn đoán các *unknown unknowns* chính là **dữ liệu giám sát từ xa (telemetry data)**: thông tin về ứng dụng đang chạy được thu thập tự động, giúp ta truy vấn lại trạng thái của hệ thống tại một thời điểm cụ thể trong quá khứ.
+
+Nhưng ta cần hỏi những câu hỏi gì? Đối với *unknown unknowns*, ta **hoàn toàn không biết trước** mình sẽ phải hỏi những gì để khoanh vùng nguyên nhân gốc rễ (root cause). Mục tiêu tối thượng là xây dựng một **hệ thống có khả năng quan sát (observable application)**.
+
+Trích dẫn định nghĩa kinh điển từ tài liệu hướng dẫn Observability của [Honeycomb](https://www.honeycomb.io/what-is-observability/):
+
+> "Observability là khả năng đặt ra bất kỳ câu hỏi tùy ý nào về môi trường của bạn mà không cần — và đây là điểm mấu chốt — phải biết trước mình muốn hỏi điều gì."
+
+Để xây dựng một hệ thống có khả năng quan sát, ta cần hai trụ cột:
+1. **Instrument ứng dụng**: Gắn các cảm biến đo đạc vào mã nguồn để phát sinh dữ liệu telemetry chất lượng cao;
+2. **Hệ thống phân tích**: Sử dụng các công cụ mạnh mẽ để cắt lát, lọc, tổng hợp và phân tích dữ liệu nhằm tìm ra câu trả lời.
+
+---
+
+## 4.3. Logging Truyền Thống Trong Rust
+
+Logs là dạng dữ liệu telemetry phổ biến và quen thuộc nhất. Ngay cả lập trình viên chưa từng nghe đến khái niệm Observability cũng hiểu trực giác giá trị của log: log là thứ đầu tiên ta mở ra xem khi mọi thứ đổ vỡ, vừa đọc vừa thầm cầu nguyện rằng mình đã ghi lại đủ thông tin hữu ích.
+
+Một bản ghi log (**log record**) thường là một khối văn bản ngắn, phân tách với bản ghi tiếp theo bằng ký tự xuống dòng:
+
+```text
+The application is starting on port 8080
+Handling a request to /index
+Handling a request to /index
+Returned a 200 OK
+```
+
+Trong hệ sinh thái Rust, công cụ ghi log chuẩn mực nhất từ trước đến nay là crate [`log`](https://docs.rs/log).
+
+### 4.3.1. Crate `log` Và Các Mức Độ Log
+
+Crate `log` cung cấp 5 macro cốt lõi tương ứng với 5 mức độ nghiêm trọng (**log level**):
+- `trace!`: Mức chi tiết nhất, chứa thông tin rất vụn vặt với tỷ lệ tín hiệu/nhiễu (signal-to-noise ratio) thấp (ví dụ: log mỗi khi một gói tin TCP được nhận).
+- `debug!`: Thông tin hữu ích phục vụ quá trình debug trong môi trường dev.
+- `info!`: Thông tin hoạt động bình thường của hệ thống ở tầng nghiệp vụ cấp cao.
+- `warn!`: Cảnh báo các sự kiện bất thường nhưng ứng dụng vẫn có thể tự xử lý hoặc tiếp tục hoạt động.
+- `error!`: Thông báo các lỗi nghiêm trọng ảnh hưởng trực tiếp tới người dùng (ví dụ: truy vấn CSDL bị timeout hoặc xử lý request thất bại).
+
+Ví dụ cách sử dụng thông thường:
+
+```rust
+fn fallible_operation() -> Result<String, String> {
+    // ...
+}
+
+pub fn main() {
+    match fallible_operation() {
+        Ok(success) => {
+            log::info!("Thao tác thành công: {}", success);
+        }
+        Err(err) => {
+            log::error!("Thao tác thất bại: {}", err);
+        }
+    }
+}
+```
+
+Các macro của `log` hỗ trợ cú pháp nội suy chuỗi tương tự như `println!` trong thư viện chuẩn `std`. 
+
+Việc quyết định ghi lại thông tin gì trong một hàm cụ thể là một **quyết định mang tính cục bộ (local decision)**: chỉ cần nhìn vào logic của hàm đó là đủ để quyết định chi tiết nào đáng ghi nhận. Nhờ vậy, các thư viện (crates) bên thứ ba có thể chủ động gắn sẵn các macro log mà không cần quan tâm ứng dụng cuối cùng sẽ sử dụng chúng ra sao.
+
+---
+
+### 4.3.2. Middleware `Logger` Của `actix-web`
+
+Khung làm việc `actix-web` tích hợp sẵn middleware [`Logger`](https://docs.rs/actix-web/4.0.1/actix_web/middleware/struct.Logger.html) giúp tự động xuất một bản ghi log cho mỗi HTTP request gửi tới máy chủ. 
+
+Hãy mở file `src/startup.rs` và thêm middleware này vào ứng dụng:
+
+```rust
+//! src/startup.rs
+use crate::routes::{health_check, subscribe};
+use actix_web::dev::Server;
+use actix_web::middleware::Logger;
+use actix_web::web::Data;
+use actix_web::{web, App, HttpServer};
+use sqlx::PgPool;
+use std::net::TcpListener;
+
+pub fn run(
+    listener: TcpListener, 
+    db_pool: PgPool
+) -> Result<Server, std::io::Error> {
+    let db_pool = Data::new(db_pool);
+    let server = HttpServer::new(move || {
+        App::new()
+            // Thêm middleware bằng phương thức `wrap` trên `App`
+            .wrap(Logger::default())
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(db_pool.clone())
+    })
+    .listen(listener)?
+    .run();
+    Ok(server)
+}
+```
+
+Bây giờ hãy thử khởi động server bằng lệnh `cargo run` và gửi một request kiểm tra:
+
+```bash
+curl http://127.0.0.1:8000/health_check -v
+```
+
+Phản hồi trả về `HTTP/1.1 200 OK`. Thế nhưng, nhìn lại terminal nơi vừa chạy `cargo run`: **hoàn toàn trống trơn**. Không có một dòng log nào xuất hiện. Tại sao lại như vậy?
+
+---
+
+### 4.3.3. Kiến Trúc Facade Pattern Của Crate `log`
+
+Nếu như việc quyết định *ghi lại thông tin gì* là một quyết định mang tính cục bộ (local decision), thì việc *làm gì với các bản ghi log đó* lại là một **quyết định mang tính toàn cục (global decision)** mà chỉ có ứng dụng chính (binary application) mới có quyền quyết định:
+- Nên ghi log ra file?
+- Nên in trực tiếp ra terminal (`stdout`)?
+- Hay nên gửi qua mạng tới một hệ thống phân tích tập trung như ElasticSearch/Logstash?
+
+Để phân tách rạch ròi hai trách nhiệm này, crate `log` áp dụng **Facade Pattern**. Bản thân `log` chỉ cung cấp giao diện phát sinh log (các macro) chứ không chứa logic ghi log thực tế. Thay vào đó, nó định nghĩa một trait có tên là `Log`:
+
+```rust
+//! Trích xuất từ mã nguồn của crate `log` - src/lib.rs
+
+/// Trait đóng gói các hành vi bắt buộc của một logger backend.
+pub trait Log: Sync + Send {
+    /// Xác định xem một message kèm metadata có thỏa mãn bộ lọc log hay không.
+    fn enabled(&self, metadata: &Metadata) -> bool;
+
+    /// Ghi nhận bản ghi `Record`.
+    fn log(&self, record: &Record);
+
+    /// Xả sạch bộ đệm (flush buffer) nếu có.
+    fn flush(&self);
+}
+```
+
+Tại hàm `main`, ứng dụng có thể gọi hàm `log::set_logger` và truyền vào một đối tượng hiện thực trait `Log`. Mỗi khi một macro như `info!` hay `error!` được kích hoạt, `log::log` sẽ được gọi trên instance logger mà bạn đã đăng ký.
+
+<Callout type="warn">
+  Nếu ứng dụng không gọi hàm `set_logger`, toàn bộ các bản ghi log phát sinh từ ứng dụng và các thư viện phụ thuộc sẽ **bị âm thầm loại bỏ hoàn toàn**! Đó chính là lý do terminal của chúng ta không hiển thị bất kỳ dòng log nào khi gọi `curl`.
+</Callout>
+
+Để hiển thị log ra terminal trong quá trình phát triển, cộng đồng Rust thường sử dụng crate [`env_logger`](https://docs.rs/env_logger). Hãy thêm dependency này vào `Cargo.toml`:
+
+```toml
+#! Cargo.toml
+[dependencies]
+env_logger = "0.9"
+```
+
+`env_logger` sẽ in các bản ghi ra màn hình console theo định dạng tiêu chuẩn:
+
+```text
+[<timestamp> <level> <module path>] <log message>
+```
+
+Đặc biệt, nó đọc biến môi trường `RUST_LOG` để lọc log theo nhu cầu:
+- `RUST_LOG=debug cargo run`: Hiển thị toàn bộ log từ mức `debug` trở lên của cả ứng dụng lẫn toàn bộ thư viện dependencies.
+- `RUST_LOG=zero2prod cargo run`: Chỉ hiển thị log phát sinh từ chính crate `zero2prod` của chúng ta, lọc bỏ toàn bộ log của thư viện ngoài.
+
+Hãy khởi tạo logger trong `src/main.rs`:
+
+```rust
+//! src/main.rs
+use env_logger::Env;
+use sqlx::PgPool;
+use std::net::TcpListener;
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::run;
+
+#[tokio::main]
+async fn main() -> Result<(), std::io::Error> {
+    // Khởi tạo logger từ biến môi trường RUST_LOG.
+    // Nếu biến môi trường chưa được đặt, mặc định lấy mức `info`.
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
+    let configuration = get_configuration().expect("Không thể đọc cấu hình.");
+    let connection_pool = PgPool::connect(&configuration.database.connection_string())
+        .await
+        .expect("Không thể kết nối tới cơ sở dữ liệu PostgreSQL.");
+    let address = format!("127.0.0.1:{}", configuration.application_port);
+    let listener = TcpListener::bind(address)?;
+    run(listener, connection_pool)?.await
+}
+```
+
+Bây giờ hãy chạy lại ứng dụng bằng lệnh `cargo run`. Trên terminal, bạn sẽ thấy ngay các dòng log khởi động:
+
+```text
+[2026-10-26T11:28:40Z INFO  actix_server::builder] Starting 12 workers
+[2026-10-26T11:28:40Z INFO  actix_server::builder] Starting "actix-web-service-127.0.0.1:8000" service on 127.0.0.1:8000
+```
+
+Khi gửi request qua curl:
+
+```bash
+curl http://127.0.0.1:8000/health_check
+```
+
+Middleware `Logger` của `actix-web` lập tức ghi nhận chi tiết:
+
+```text
+[2026-10-26T11:28:43Z INFO  actix_web::middleware::logger] 127.0.0.1:47244 "GET /health_check HTTP/1.1" 200 0 "-" "curl/7.61.0" 0.000225
+```
+
+<Callout type="info">
+  **Khám phá hệ thống ngầm với `RUST_LOG=trace`**: Bạn có thể thử đặt `RUST_LOG=trace cargo run`. Terminal sẽ tuôn trào hàng loạt log chi tiết từ crate `mio` (thư viện I/O bất đồng bộ cấp thấp) cho thấy cơ chế đăng ký socket với event poller của hệ điều hành, cùng tiến trình tạo worker thread cho từng CPU core. Khả năng quan sát giúp ta nhìn xuyên thấu cơ chế vận hành bên dưới (under the hood) của toàn bộ framework.
+</Callout>

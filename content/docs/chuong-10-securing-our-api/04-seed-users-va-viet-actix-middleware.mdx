@@ -1,0 +1,214 @@
+---
+title: "10.8 - 10.10 Khởi Tạo Seed Users, Đổi Mật Khẩu & Actix Middleware"
+description: "Thiết lập người dùng quản trị ban đầu với SQLx Migration, xây dựng luồng đổi mật khẩu và đăng xuất, cùng kỹ thuật viết Middleware chuẩn mực với actix_web_lab from_fn."
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+# 10.8 - 10.10 Khởi Tạo Seed Users, Đổi Mật Khẩu & Actix Middleware
+
+Chúng ta đã xây dựng toàn bộ cơ chế bảo mật tinh vi: từ băm mật khẩu Argon2id, form đăng nhập, đến session store trên Redis. Nhưng hiện tại, nếu chạy ứng dụng thực tế trên trình duyệt, bạn **chưa thể đăng nhập được** vì trong cơ sở dữ liệu chưa có bất kỳ tài khoản người dùng nào!
+
+Đã đến lúc đưa hệ thống vào thực tiễn bằng cách tạo tài khoản quản trị đầu tiên (**Seed User**).
+
+---
+
+## I. Khởi Tạo Seed User Bằng Database Migration
+
+Thay vì chèn dữ liệu thủ công hay xây dựng một trang đăng ký admin công khai (vốn tiềm ẩn nguy cơ bảo mật cực lớn), phương pháp chuẩn mực trong phát triển phần mềm là sử dụng **Database Migration**:
+
+Tạo một migration mới bằng `sqlx`:
+
+```bash
+sqlx migrate add seed_user
+```
+
+File migration được sinh ra: `migrations/<timestamp>_seed_user.sql`. Chúng ta sẽ chèn một người dùng quản trị mặc định:
+- `username`: `admin`
+- `password`: `everythinghastostartsomewhere` (một mật khẩu khởi tạo tạm thời)
+
+Mã băm PHC String tương ứng được sinh ra bởi Argon2id:
+
+```sql
+-- migrations/<timestamp>_seed_user.sql
+INSERT INTO users (user_id, username, password_hash)
+VALUES (
+    'ddf8994f-d522-4659-8d02-c1d479057be6',
+    'admin',
+    '$argon2id$v=19$m=15000,t=2,p=1$OEx/rcq+3ts//WUDzGNl2g$Am8UFBA4w5NJEmAtquGvBmAlu92q/VQcaoL5AyJPfc8'
+);
+```
+
+Chạy migration:
+
+```bash
+sqlx migrate run
+```
+
+Bây giờ bạn có thể khởi chạy ứng dụng với `cargo run`, mở trình duyệt truy cập `http://localhost:8000/login`, nhập `admin` / `everythinghastostartsomewhere`, và thưởng thức màn hình chào đón *"Welcome admin!"* tại `/admin/dashboard`!
+
+---
+
+## II. Đổi Mật Khẩu & Đăng Xuất An Toàn
+
+Tài khoản quản trị khởi tạo bằng mật khẩu mặc định là một hiểm họa tiềm tàng nếu bị quên lãng. Vì vậy, việc đầu tiên người quản trị phải làm là **Đổi mật khẩu (Password Change)**.
+
+Chúng ta thiết kế hai endpoint trong module `src/routes/admin/password/`:
+- `GET /admin/password`: Phục vụ form HTML yêu cầu nhập: Mật khẩu hiện tại, Mật khẩu mới, Xác nhận mật khẩu mới.
+- `POST /admin/password`: Xử lý cập nhật mật khẩu.
+
+```rust
+//! src/routes/admin/password/post.rs
+use crate::authentication::{validate_credentials, AuthError, Credentials};
+use crate::session_state::TypedSession;
+use crate::utils::{e500, see_other};
+
+pub async fn change_password(
+    form: web::Form<FormData>,
+    session: TypedSession,
+    pool: web::Data<PgPool>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let user_id = session.get_user_id().map_err(e500)?.ok_or_else(|| see_other("/login"))?;
+
+    // 1. Kiểm tra hai ô mật khẩu mới có khớp nhau hay không
+    if form.new_password.expose_secret() != form.new_password_check.expose_secret() {
+        return Ok(see_other("/admin/password"));
+    }
+
+    // 2. Xác minh lại mật khẩu cũ qua Argon2id
+    let username = get_username(user_id, &pool).await.map_err(e500)?;
+    let credentials = Credentials {
+        username,
+        password: form.0.current_password,
+    };
+    if let Err(e) = validate_credentials(credentials, &pool).await {
+        return Ok(see_other("/admin/password"));
+    }
+
+    // 3. Băm mật khẩu mới bằng Argon2id (trong spawn_blocking) và cập nhật Database
+    crate::authentication::change_password(user_id, form.0.new_password, &pool)
+        .await
+        .map_err(e500)?;
+
+    Ok(see_other("/admin/password"))
+}
+```
+
+### Xử lý Đăng xuất (Logout)
+
+Để đăng xuất, ta xóa sạch dữ liệu phiên trên Redis và hủy cookie trên trình duyệt bằng phương thức `session.purge()`:
+
+```rust
+//! src/routes/admin/logout.rs
+use actix_web::HttpResponse;
+use crate::session_state::TypedSession;
+use crate::utils::see_other;
+
+pub async fn log_out(session: TypedSession) -> Result<HttpResponse, actix_web::Error> {
+    session.purge();
+    Ok(see_other("/login"))
+}
+```
+
+---
+
+## III. Tái Cấu Trúc: Viết Middleware Chuẩn Mực Trong Actix-web
+
+Khi số lượng trang trong khu vực `/admin/*` ngày càng nhiều (`/admin/dashboard`, `/admin/password`, `/admin/newsletters`), đoạn code kiểm tra đăng nhập bắt đầu bị sao chép lặp đi lặp lại ở đầu mọi handler:
+
+```rust
+let user_id = session.get_user_id().map_err(e500)?;
+if user_id.is_none() {
+    return Ok(see_other("/login"));
+}
+let user_id = user_id.unwrap();
+```
+
+Đây là vi phạm nguyên tắc **DRY (Don't Repeat Yourself)**. Cách xử lý chuyên nghiệp nhất là bọc toàn bộ khu vực admin bên trong một **Authentication Middleware**.
+
+### Kỹ thuật `actix_web_lab::middleware::from_fn`
+
+Thay vì phải tự mình triển khai các trait phức tạp mức thấp của Actix-web như `Transform` và `Service`, hệ sinh thái Actix cung cấp crate tiện ích [`actix-web-lab`](https://crates.io/crates/actix-web-lab) với hàm `from_fn`:
+
+```toml
+#! Cargo.toml
+[dependencies]
+actix-web-lab = "0.18"
+```
+
+Hàm `from_fn` cho phép biến một hàm async bất kỳ thành Middleware nếu nó tuân thủ chữ ký:
+
+```rust
+//! src/authentication/middleware.rs
+use actix_web::body::MessageBody;
+use actix_web::dev::{ServiceRequest, ServiceResponse};
+use actix_web::error::InternalError;
+use actix_web::FromRequest;
+use actix_web_lab::middleware::Next;
+use crate::session_state::TypedSession;
+use crate::utils::{e500, see_other};
+
+#[derive(Copy, Clone, Debug)]
+pub struct UserId(pub uuid::Uuid);
+
+pub async fn reject_anonymous_users(
+    mut req: ServiceRequest,
+    next: Next<impl MessageBody>,
+) -> Result<ServiceResponse<impl MessageBody>, actix_web::Error> {
+    let session = {
+        let (http_request, payload) = req.parts_mut();
+        TypedSession::from_request(http_request, payload).await
+    }?;
+
+    match session.get_user_id().map_err(e500)? {
+        Some(user_id) => {
+            // Đính kèm UserId vào Request Extensions để handler bên trong dùng lại!
+            req.extensions_mut().insert(UserId(user_id));
+            next.call(req).await
+        }
+        None => {
+            let response = see_other("/login");
+            let e = anyhow::anyhow!("Người dùng chưa đăng nhập.");
+            Err(InternalError::from_response(e, response).into())
+        }
+    }
+}
+```
+
+### Đăng ký Middleware cho Scope `/admin`
+
+Trong `src/startup.rs`, chúng ta gom tất cả các endpoint quản trị vào một `web::scope("/admin")` và gắn middleware bảo vệ:
+
+```rust
+//! src/startup.rs
+use actix_web_lab::middleware::from_fn;
+use crate::authentication::reject_anonymous_users;
+
+App::new()
+    // [...]
+    .service(
+        web::scope("/admin")
+            .wrap(from_fn(reject_anonymous_users))
+            .route("/dashboard", web::get().to(admin_dashboard))
+            .route("/password", web::get().to(change_password_form))
+            .route("/password", web::post().to(change_password))
+            .route("/logout", web::post().to(log_out))
+            // Di chuyển endpoint gửi bản tin vào khu vực an toàn!
+            .route("/newsletters", web::post().to(publish_newsletter)),
+    )
+```
+
+Giờ đây, trong các handler nội bộ (như `admin_dashboard` hay `publish_newsletter`), chúng ta không cần chạm tới session nữa! Chỉ cần khai báo tham số `user_id: web::ReqData<UserId>`, Actix-web sẽ tự động trích xuất từ Request Extensions một cách thanh lịch và an toàn tuyệt đối.
+
+---
+
+## IV. Tổng Kết Chương 10
+
+Chương 10 đã trang bị cho chúng ta một bộ giáp bảo mật hoàn chỉnh cho dịch vụ Web trong Rust:
+1. **Mật mã học thực chiến**: Hiểu rõ sự khác biệt giữa hàm băm nhanh (SHA) và hàm băm tốn kém bộ nhớ (**Argon2id**), loại bỏ Rainbow Tables bằng **Salting**.
+2. **Kỷ luật Async Rust**: Bảo vệ Tokio runtime khỏi hiện tượng tê liệt luồng (Thread Starvation) bằng cách cô lập các tác vụ nặng vào `spawn_blocking`.
+3. **Phòng vệ chiều sâu**: Ngăn ngừa Timing Attack, mã hóa dữ liệu với TLS, chống XSS bằng HTML Escaping, chống giả mạo thông điệp với chữ ký **HMAC-SHA256**.
+4. **Hệ thống phiên chuẩn mực**: Sử dụng Cookie `HttpOnly`, `SameSite`, `Secure` kết hợp **Redis Session Store** phân tán.
+5. **Kiến trúc Middleware hiện đại**: Tận dụng `actix_web_lab::from_fn` để xây dựng ranh giới xác thực phân tầng sắc nét.
+
+Hệ thống của chúng ta giờ đây đã được bảo vệ vững chắc. Bước tiếp theo là giải quyết bài toán lớn nhất của hệ thống phân tán: **Làm sao để luồng phát hành bản tin không bao giờ bị mất mát dữ liệu hoặc gửi trùng lặp khi xảy ra sự cố mạng (Chương 11)**.

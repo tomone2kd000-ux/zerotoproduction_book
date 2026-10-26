@@ -1,0 +1,10 @@
+{
+  "title": "Chương 4: Giám Sát Từ Xa (Telemetry)",
+  "pages": [
+    "index",
+    "01-quan-sat-he-thong-va-logging-co-ban",
+    "02-instrument-post-subscriptions",
+    "03-structured-logging-tracing-crate",
+    "04-bao-mat-secrets-va-request-id"
+  ]
+}
