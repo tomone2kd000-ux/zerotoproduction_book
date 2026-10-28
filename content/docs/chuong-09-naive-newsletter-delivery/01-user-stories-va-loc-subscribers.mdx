@@ -110,7 +110,11 @@ async fn create_unconfirmed_subscriber(app: &TestApp) {
 }
 ```
 
-Khi chạy `cargo test`, test sẽ thất bại với mã lỗi `404 Not Found` vì endpoint `POST /newsletters` chưa hề tồn tại trong router.
+Khi chạy `cargo test`, test sẽ thất bại vì chưa có handler cho `POST /newsletters`; Actix trả `404 Not Found` thay vì `200 OK`. Đây là lỗi đầu tiên có chủ đích trong chu trình TDD: test mô tả hành vi mong muốn trước khi endpoint được triển khai.
+
+### Vì sao chuẩn bị trạng thái bằng API?
+
+Mỗi test gọi `spawn_app().await` để chạy một ứng dụng mới trên database trống. Test cần một subscriber ở trạng thái `unconfirmed`, nên helper dùng API client của `TestApp` để POST `/subscriptions`, thay vì thao tác trực tiếp với database. Đây là cách giữ kiểm thử black-box: test thiết lập trạng thái qua giao diện công khai mà người dùng thật cũng sử dụng.
 
 ---
 
@@ -147,6 +151,10 @@ let _mock_guard = Mock::given(path("/email"))
 - Với `mount_as_scoped`, WireMock trả về một đối tượng bảo vệ có tên là `MockGuard`.
 
 `MockGuard` cài đặt trait `Drop`. Ngay khi biến `_mock_guard` ra khỏi phạm vi thực thi của hàm trợ giúp `create_unconfirmed_subscriber`, WireMock sẽ tự động hủy kích hoạt mock này. Hành vi trả về mã 200 cho endpoint `/email` **chỉ tồn tại cục bộ** bên trong hàm trợ giúp đó!
+
+Điều này quan trọng vì mock trong test chính cũng khớp với `POST /email`. Nếu dùng `mount` ở helper, mock chấp nhận email xác nhận vẫn tồn tại khi test gửi newsletter, khiến hai mock chồng lấn và khó biết request nào được match. Scoped mock khoanh vùng hành vi lẫn kỳ vọng `expect(1)` vào đúng helper.
+
+Khi guard bị drop, WireMock kiểm tra ngay mock đã nhận đủ một request hay chưa. Các helper test thường sống lâu và được tái sử dụng; nếu ứng dụng ngừng gửi email xác nhận mà mock thừa vẫn còn, kiểm tra eager này làm test helper báo lỗi tại chỗ thay vì âm thầm giữ cấu hình không còn cần thiết.
 
 Hơn nữa, khi `MockGuard` bị drop, nó sẽ **ngay lập tức kiểm tra (eagerly check)** xem kỳ vọng (`expect(1)`) đã được thỏa mãn hay chưa. Cơ chế này giúp giữ cho các hàm helper luôn sạch sẽ và cập nhật kịp thời khi ứng dụng thay đổi.
 

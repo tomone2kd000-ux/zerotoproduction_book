@@ -5,7 +5,7 @@ description: "Biểu diễn lỗi như giá trị với enum Result, viết asse
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Ở bài trước, chúng ta đã chứng kiến việc dùng `panic!` để xử lý lỗi validation làm sập worker thread của `actix-web`. Trong thế giới lập trình phần mềm thực chiến, các lỗi xuất phát từ dữ liệu đầu vào của người dùng (input validation failure) thuộc nhóm **lỗi có thể phục hồi (recoverable errors)**. Trong Rust, cơ chế số một để xử lý nhóm lỗi này là mô hình **"Lỗi như một giá trị" (Errors as Values)** với kiểu dữ liệu `Result`.
+Ở bài trước, chúng ta đã chứng kiến việc dùng `panic!` để xử lý lỗi validation khiến `actix-web` hủy worker đang xử lý request đó. Trong thế giới lập trình phần mềm thực chiến, các lỗi xuất phát từ dữ liệu đầu vào của người dùng (input validation failure) thuộc nhóm **lỗi có thể phục hồi (recoverable errors)**. Trong Rust, cơ chế số một để xử lý nhóm lỗi này là mô hình **"Lỗi như một giá trị" (Errors as Values)** với kiểu dữ liệu `Result`.
 
 ---
 
@@ -41,10 +41,9 @@ Chữ ký trên thông báo dứt khoát rằng: việc thêm một độc giả
 <Callout type="info" title="Sự Khác Biệt Giữa Result Và Exception">
 Nếu bạn chuyển sang Rust từ các ngôn ngữ dùng ngoại lệ (Exception-based) như Java, C# hay Python, đây sẽ là một bước ngoặt thay đổi tư duy lập trình:
 - Bạn **không cần phải đào xới tài liệu** của một thư viện bên thứ ba để đoán xem một hàm có thể ném ra (throw) những ngoại lệ bí ẩn nào.
-- Bạn **không bao giờ bị giật mình tại runtime** bởi một Exception chưa từng được bắt.
 - Bạn **không phải nhét các khối `try/catch` bừa bãi** theo kiểu cầu may "bắt hết cho chắc".
 
-Mọi kịch bản thất bại đều được phơi bày minh bạch và bắt buộc ngay trên chữ ký hàm! Trình biên dịch Rust sẽ cưỡng chế bạn phải đối mặt và xử lý nhánh lỗi trước khi cho phép mã nguồn được biên dịch.
+Các lỗi được biểu diễn rõ ràng trong chữ ký hàm thông qua `Result`, và trình biên dịch buộc bên gọi phải xử lý giá trị `Result` theo các quy tắc của Rust. Điều này không có nghĩa là mọi lỗi runtime đều được liệt kê ở chữ ký hàm như checked exceptions.
 </Callout>
 
 ---
@@ -77,7 +76,9 @@ impl SubscriberName {
 
 Trong lần tái cấu trúc này, để giữ mọi thứ đơn giản nhất, chúng ta chọn `String` làm kiểu dữ liệu đại diện cho lỗi ở biến thể `Err`.
 
-Nếu chạy `cargo check` ngay lúc này, trình biên dịch sẽ chỉ ra một điểm nghẽn duy nhất trong request handler `subscribe`:
+Khi mới đổi kiểu trả về thành `Result<SubscriberName, String>` mà chưa sửa thân hàm, `cargo check` báo thêm lỗi trong `parse`: nhánh thành công vẫn trả về `SubscriberName`, trong khi kiểu trả về yêu cầu `Result`. Trình biên dịch gợi ý bọc giá trị bằng `Ok(Self(s))`. Sau khi sửa nhánh này nhưng vẫn giữ `panic!` ở nhánh lỗi, còn lại lỗi tại request handler `subscribe`: chỗ gán kết quả `parse` vào `NewSubscriber.name` nhận `Result` thay vì `SubscriberName`.
+
+Nếu chạy `cargo check` sau bước đó, trình biên dịch chỉ ra điểm nghẽn trong request handler `subscribe`:
 
 ```text
 error[E0308]: mismatched types
@@ -228,7 +229,7 @@ pub struct SubscriberName(String);
 ```
 </Callout>
 
-Chạy `cargo test domain`, toàn bộ 6 unit test cho `SubscriberName` đều **vượt qua thành công (pass)**!
+Sau khi thêm `#[derive(Debug)]`, chạy `cargo test`: hai happy-path test pass, nhưng bốn test unhappy-path thất bại vì `parse` vẫn panic khi validation không đạt. Thay `panic!` bằng `Err(format!("{} is not a valid subscriber name.", s))` và giữ `Ok(Self(s))` ở nhánh hợp lệ sẽ khiến cả 6 unit test của `SubscriberName` pass.
 
 ---
 
@@ -274,14 +275,14 @@ pub async fn insert_subscriber(/* */) -> Result<(), sqlx::Error> {
 
 Toán tử `?` (Question Mark Operator) là cú pháp đường (syntactic sugar) cực kỳ tiện lợi được Rust giới thiệu từ phiên bản `1.13`. Nó giúp loại bỏ hoàn toàn các đoạn code kiểm tra lỗi rườm rà khi bạn muốn chuyển tiếp lỗi (bubble up error) lên hàm gọi phía trên.
 
-Khối mã sau:
+Trong một hàm trả về `Result`, khối mã sau:
 ```rust
 insert_subscriber(&pool, &new_subscriber)
     .await
     .map_err(|_| HttpResponse::InternalServerError().finish())?;
 ```
 
-Hoàn toàn tương đương về mặt logic với khối rẽ nhánh dài dòng:
+có luồng điều khiển tương đương với khối rẽ nhánh dài dòng:
 ```rust
 if let Err(error) = insert_subscriber(&pool, &new_subscriber)
     .await

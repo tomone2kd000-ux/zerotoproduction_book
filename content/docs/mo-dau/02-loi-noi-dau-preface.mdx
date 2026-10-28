@@ -61,14 +61,14 @@ Những kỳ vọng cốt lõi này tác động trực tiếp và sâu sắc đ
 ```
 
 1. **Kiến Trúc Phân Tán (Distributed Architecture)**: Để đạt tính sẵn sàng cao, ứng dụng phải phục vụ người dùng trơn tru ngay cả khi một hoặc nhiều máy chủ đột ngột ngừng hoạt động — một kịch bản xảy ra như cơm bữa trên hạ tầng đám mây[^2]. Điều này bắt buộc ứng dụng phải là một hệ thống phân tán, với nhiều bản sao (*instances*) cùng chạy đồng thời trên các node phần cứng độc lập.
-2. **Khả Năng Co Giãn (Elasticity)**: Để ứng phó với lưu lượng biến động, hệ thống phải liên tục **đo lường** tình trạng tải và bổ sung năng lực tính toán bằng cách tự động nhân rộng các instance mới, đồng thời tự động thu hẹp khi tải giảm để tối ưu hóa chi phí.
-3. **Tách Biệt Dữ Liệu Khỏi Hệ Thống File Cục Bộ (State Persistence)**: Việc nhân bản nhiều instance khiến ứng dụng không thể lưu trữ trạng thái quan trọng vào hệ thống file cục bộ (*local filesystem*). Mọi dữ liệu cần lưu trữ bền vững đều phải ủy thác cho các hệ quản trị cơ sở dữ liệu chuyên biệt.
+2. **Khả năng xử lý tải biến động**: Hệ thống cần đo lường tải và có thể bổ sung năng lực tính toán bằng cách khởi chạy thêm các instance. Hạ tầng cũng cần co giãn để tránh cấp phát thừa tài nguyên và phát sinh chi phí.
+3. **Lưu trữ dữ liệu**: Khi ứng dụng chạy nhiều bản sao, không nên dựa vào filesystem cục bộ làm nơi lưu trữ chính; thay vào đó, ta sẽ dùng cơ sở dữ liệu cho nhu cầu lưu trữ.
 
-Chính vì vậy, *Zero To Production* sẽ đào sâu vào nhiều chủ đề tưởng chừng như nằm ngoài ranh giới của việc lập trình backend thuần túy. Ứng dụng Cloud-native gắn liền mật thiết với văn hóa **DevOps**, do đó chúng ta sẽ dành nhiều thời gian cho các bài toán thuộc về nghệ thuật **vận hành hệ thống**:
+Chính vì vậy, *Zero To Production* sẽ đào sâu vào nhiều chủ đề tưởng chừng như nằm ngoài ranh giới của việc lập trình backend thuần túy. Phần mềm Cloud-native gắn liền với DevOps và những chủ đề thường được xếp vào lĩnh vực **vận hành hệ thống** — một phần không thể thiếu trong quá trình xây dựng và vận hành các hệ thống này:
 
-* Cách thiết lập hệ thống quan sát (*Observability*): thu thập logs có cấu trúc (*structured logs*), truy vết phân tán (*distributed traces*) và chỉ số hiệu năng (*metrics*) bằng Rust.
-* Cách quản lý và tiến hóa lược đồ cơ sở dữ liệu (*database schema*) an toàn qua các bản di chuyển (*migrations*).
-* Cung cấp toàn diện tri thức giúp bạn làm chủ Rust để giải quyết cả bài toán **Day 1** (khởi tạo, chạy được) lẫn **Day 2** (vận hành, mở rộng, giám sát) của một API Cloud-native.
+* Cách **instrument** ứng dụng Rust để thu thập logs, traces và metrics, qua đó **observe** hệ thống.
+* Cách thiết lập và tiến hóa schema cơ sở dữ liệu thông qua migrations.
+* Toàn bộ kiến thức cần thiết để dùng Rust giải quyết cả các mối quan tâm **Day 1** và **Day 2** của một API Cloud-native.
 
 ---
 
@@ -106,7 +106,9 @@ Chúng ta sẽ khai thác tối đa hệ thống kiểu dữ liệu (*Type Syste
 
 Do đó, *Zero To Production* đặt trọng tâm lớn vào phương pháp **Phát triển Hướng Kiểm thử (Test-Driven Development - TDD)** và **Tích hợp Liên tục (Continuous Integration - CI)** ngay từ ngày đầu tiên — chúng ta sẽ dựng xong đường ống CI trước cả khi viết dòng code đầu tiên cho web server!
 
-Chúng ta cũng sẽ mượn các thuật ngữ và tư duy từ trường phái **Domain-Driven Design (DDD)** kết hợp cùng kỹ thuật **Type-Driven Design** (*Parse, don't validate*) nhằm đảm bảo tính toàn vẹn của dữ liệu và logic nghiệp vụ.
+Chúng ta sẽ tìm hiểu các kỹ thuật như kiểm thử hộp đen (black-box testing) cho API và HTTP mocking — những kỹ thuật chưa phổ biến rộng rãi hoặc được tài liệu hóa đầy đủ trong cộng đồng Rust, nhưng rất mạnh mẽ.
+
+Chúng ta cũng sẽ mượn thuật ngữ và kỹ thuật từ thế giới **Domain-Driven Design (DDD)**, kết hợp với **Type-Driven Design** (*Parse, don't validate*) để bảo đảm tính đúng đắn của hệ thống.
 
 > **Đích đến của chúng ta là phần mềm doanh nghiệp (Enterprise Software):**  
 > Mã nguồn chuẩn xác, có tính biểu cảm cao để mô hình hóa trọn vẹn nghiệp vụ, và đủ linh hoạt để tiến hóa bền bỉ theo năm tháng.
@@ -141,5 +143,5 @@ Chúng ta cùng bắt đầu thôi!
 ---
 
 [^1]: Một tác phẩm kinh điển rất đáng đọc là cuốn [*Cloud-native Patterns*](https://www.manning.com/books/cloud-native-patterns) của tác giả Cornelia Davis.
-[^2]: Chẳng hạn, rất nhiều doanh nghiệp chạy ứng dụng trên [AWS Spot Instances](https://aws.amazon.com/ec2/spot/) để cắt giảm hóa đơn hạ tầng (rẻ hơn tới 90% so với giá On Demand). Bù lại, AWS có quyền thu hồi các máy ảo Spot này bất kỳ lúc nào chỉ với một thông báo trước 2 phút. Phần mềm của bạn **bắt buộc** phải có khả năng chịu lỗi phân tán để khai thác cơ hội tiết kiệm này.
+[^2]: Chẳng hạn, nhiều công ty chạy phần mềm trên [AWS Spot Instances](https://aws.amazon.com/ec2/spot/) để giảm chi phí hạ tầng. Giá Spot được xác định qua một phiên đấu giá liên tục và có thể rẻ hơn đáng kể so với giá On-Demand (tới 90%). Đổi lại, AWS có thể thu hồi Spot instance bất cứ lúc nào. Muốn tận dụng cơ hội này, phần mềm **phải** có khả năng chịu lỗi.
 [^3]: Giả định rằng bạn mới viết đoạn mã đó gần đây. Bản thân bạn của một năm trước về bản chất chẳng khác gì một người xa lạ trong giới phần mềm. Hãy cầu nguyện rằng "bạn trong quá khứ" đã để lại những dòng chú thích rõ ràng cho "bạn ở hiện tại" mỗi khi phải mở lại một dự án cũ!

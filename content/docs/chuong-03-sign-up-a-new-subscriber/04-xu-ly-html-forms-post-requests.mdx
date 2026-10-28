@@ -320,14 +320,17 @@ Tại sao cả hệ sinh thái Rust đều sử dụng `serde`?
 
 Nhờ sự phân tách này, bạn chỉ cần implement `Deserialize` một lần duy nhất cho `FormData`. Sau đó, bạn có thể giải mã struct này từ JSON, YAML, URL-encoded hay bất kỳ định dạng nào khác trên `crates.io` mà không cần viết lại một dòng code!
 
-### 2. Tính Hiệu Quả Tuyệt Đối (Efficiently & Zero-Cost Abstraction)
+### 2. Tính Hiệu Quả (Efficiently)
 
-Các ngôn ngữ như Java, C# hay Python dựa vào **Runtime Reflection** (soi chiếu thời gian chạy) để quét tên trường và kiểu dữ liệu của class khi parse dữ liệu. Reflection gây hao tổn CPU và phân bổ bộ nhớ không cần thiết.
+Generic không khiến `serde` chậm hơn. Nhờ **Monomorphization (đơn hình hóa)**, trình biên dịch tạo một phiên bản hàm generic cho từng tổ hợp kiểu cụ thể, rồi tối ưu phiên bản đó. Kết quả không khác việc viết riêng từng hàm mà không dùng generic hay trait: ta không phải trả chi phí runtime chỉ vì dùng generic. Đây là một ví dụ về **zero-cost abstraction**: cách viết cấp cao, dễ đọc vẫn có thể tạo ra machine code như cách cài đặt thủ công.
 
-Rust hoàn toàn không có runtime reflection. `serde` đạt được tốc độ vượt trội nhờ cơ chế **Monomorphization (Đơn hình hóa)**:
-- Tại thời điểm biên dịch, trình biên dịch Rust sẽ sinh ra một bản sao mã máy chuyên biệt cho từng cặp kiểu dữ liệu cụ thể.
-- Hai macro `#[derive(Serialize)]` và `#[derive(Deserialize)]` tự động phân tích cú pháp struct của bạn tại compile-time và sinh ra mã nguồn giải mã tối ưu tương đương với mã viết tay thủ công.
-- Kết quả: bạn có được sự tiện lợi của lập trình cấp cao mà không phải đánh đổi bất kỳ một chu kỳ CPU lãng phí nào ở runtime!
+`serde` cũng chú ý đến mức dùng bộ nhớ: data model trung gian được định nghĩa ngầm qua các phương thức trait, chứ không phải một struct đã serialize thực sự. Josh McGuigan có bài viết chuyên sâu [Understanding Serde](https://www.joshmcguigan.com/blog/understanding-serde/).
+
+Thông tin cần để serialize hoặc deserialize một kiểu cụ thể theo một định dạng cụ thể đều có ở compile-time, không cần runtime reflection để dò tên các trường. Rust không cung cấp runtime reflection.
+
+### 3. Tính Tiện Dụng (Conveniently)
+
+Tự viết cách serialize hoặc deserialize cho từng kiểu dữ liệu vừa tốn công vừa dễ lỗi. Các procedural macro `#[derive(Serialize)]` và `#[derive(Deserialize)]`, được bật qua feature `derive` của `serde`, phân tích định nghĩa kiểu và sinh các implementation tương ứng.
 
 ---
 

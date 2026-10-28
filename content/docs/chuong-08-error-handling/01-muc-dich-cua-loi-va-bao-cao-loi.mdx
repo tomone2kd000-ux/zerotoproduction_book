@@ -43,12 +43,12 @@ pub async fn store_token(
 }
 ```
 
-Ở đây, hàm thực hiện chèn một bản ghi vào bảng `subscription_tokens` để liên kết token vừa sinh với `subscriber_id`. Thao tác `execute` này tiềm ẩn nguy cơ thất bại: đường truyền mạng tới cơ sở dữ liệu bị ngắt quãng, dữ liệu vi phạm ràng buộc toàn vẹn (primary key đã tồn tại), hoặc cơ sở dữ liệu bị khóa tạm thời.
+Ở đây, hàm thực hiện chèn một bản ghi vào bảng `subscription_tokens` để liên kết token vừa sinh với `subscriber_id`. Thao tác `execute` này có thể thất bại, chẳng hạn do sự cố mạng khi giao tiếp với database hoặc dữ liệu vi phạm ràng buộc của bảng như trùng primary key.
 
 ### 1. Lỗi nội bộ (Internal Errors)
 
 #### Cho phép bên gọi phản ứng lại (Enable The Caller To React)
-Bên gọi hàm `execute` cần biết liệu thao tác có thành công hay không để **đưa ra hành động phản ứng phù hợp**: ví dụ thử lại truy vấn (retry), rollback giao dịch, hoặc tiếp tục chuyển tiếp lỗi lên tầng trên bằng toán tử `?`.
+Bên gọi hàm `execute` cần biết liệu thao tác có thành công hay không để **đưa ra hành động phản ứng phù hợp**: chẳng hạn thử lại truy vấn hoặc chuyển tiếp lỗi lên tầng trên bằng toán tử `?`.
 
 Rust sử dụng hệ thống kiểu dữ liệu tĩnh để thể hiện một tác vụ có khả năng thất bại: giá trị trả về của `execute` là enum `Result`:
 
@@ -59,7 +59,7 @@ pub enum Result<Success, Error> {
 }
 ```
 
-Trình biên dịch buộc bên gọi phải tường minh xử lý cả hai kịch bản: thành công (`Ok`) và thất bại (`Err`). Nếu mục tiêu duy nhất chỉ là thông báo có lỗi xảy ra, chúng ta hoàn toàn có thể dùng một kiểu đơn giản hơn:
+Kiểu trả về cho biết rõ cả hai kết quả có thể xảy ra, để bên gọi quyết định cách xử lý thành công (`Ok`) và thất bại (`Err`). Nếu mục tiêu duy nhất chỉ là thông báo có lỗi xảy ra, chúng ta hoàn toàn có thể dùng một kiểu đơn giản hơn:
 
 ```rust
 pub enum ResultSignal<Success> {
@@ -92,7 +92,7 @@ pub enum Error {
 }
 ```
 
-Việc `sqlx::Error` là một enum cho phép lập trình viên dùng `match` để phân nhánh xử lý: nếu gặp `PoolTimedOut`, ta có thể thử kết nối lại; nhưng nếu gặp `ColumnNotFound`, thử lại là vô nghĩa và cần dừng chương trình ngay.
+Việc `sqlx::Error` là một enum cho phép lập trình viên dùng `match` để phân nhánh xử lý: chẳng hạn, có thể cân nhắc thử lại khi gặp `PoolTimedOut`, trong khi `ColumnNotFound` có thể khiến ta từ bỏ thao tác.
 
 #### Hỗ trợ Operator điều tra sự cố (Help An Operator To Troubleshoot)
 Nếu một thao tác chỉ có đúng một kiểu lỗi duy nhất, liệu ta có nên trả về kiểu đơn giản `Result<T, ()>` không?
@@ -141,7 +141,7 @@ Khi `store_token` thất bại, client nhận được một phản hồi HTTP v
 
 Status code ở đây đóng vai trò giống như kiểu lỗi đối với máy tính: trình duyệt hoặc HTTP client có thể đọc mã 500 để quyết định xem có nên thử lại (retry) hay không. Nhưng đối với người dùng ngồi trước màn hình, họ không nhận được thông tin gì thêm. 
 
-**Và đó lại là một thiết kế đúng đắn**: Người dùng không cần và không nên biết cấu trúc cơ sở dữ liệu nội bộ hay câu lệnh SQL nào bị lỗi. Việc cố tình **giấu đi (omitting)** các chi tiết kỹ thuật nội bộ là yêu cầu bảo mật bắt buộc.
+**Và đó lại là một thiết kế đúng đắn**: Người dùng không cần và không nên biết cấu trúc cơ sở dữ liệu nội bộ hay câu lệnh SQL nào bị lỗi. Ta chủ động không đưa những chi tiết nội bộ đó vào response; operator là người cần điều tra nguyên nhân.
 
 Ngược lại, ở bước xác thực dữ liệu đầu vào (Input Validation):
 
@@ -181,8 +181,10 @@ Tổng kết lại, lỗi phục vụ hai mục đích chính:
 2. **Reporting (Báo cáo sự cố)**: Phục vụ con người điều tra nguyên nhân.
 
 Đồng thời, lỗi xuất hiện ở hai vị trí:
-1. **Internal (Nội bộ)**: Giữa các module, hàm trong codebase.
-2. **At the edge (Tại biên)**: Phản hồi giữa API và client bên ngoài.
+1. **Internal (Nội bộ)**: Một hàm gọi hàm khác bên trong ứng dụng.
+2. **At the edge (Tại biên)**: Request API mà ứng dụng không thể xử lý thành công.
+
+Control flow cần dữ liệu máy có thể đọc để quyết định hành động: kiểu, biến thể enum, method và field ở nội bộ; status code ở biên. Reporting chủ yếu dành cho con người: operator cần nhiều context về lỗi, còn user chỉ cần thông tin đủ để điều chỉnh hành vi của họ, chẳng hạn sửa input sai định dạng. Ranh giới giữa user và operator đôi khi không rõ—ví dụ người dùng tự chạy phần mềm cũng có thể phải điều tra sự cố; trong trường hợp đó, cấu hình như `--verbose` có thể giúp thể hiện rõ mức độ chi tiết mong muốn.
 
 ```text
 ┌──────────────────┬─────────────────────────────┬────────────────────────────┐
@@ -414,7 +416,7 @@ Trait này đóng vai trò quan trọng:
 
 Phương thức `source` trả về kiểu `Option<&(dyn Error + 'static)>`. 
 
-Ở đây, `dyn Error` là một **Trait Object**. Chúng ta không cần biết kiểu cụ thể bên dưới là gì (có thể là `sqlx::Error`, `io::Error` hay `reqwest::Error`), ta chỉ cần biết nó thỏa mãn trait `Error`. Trait object cho phép lập trình viên truy cập vào các phương thức `Debug`, `Display` và `source` tiếp theo của lỗi tầng dưới mà vẫn giữ cho kiểu gốc có tính **mờ đục (opaque)**, không làm rò rỉ phụ thuộc kiểu cụ thể ra ngoài.
+Ở đây, `dyn Error` là một **Trait Object**: ta chỉ biết kiểu cụ thể bên dưới triển khai `Error`. Cả generic type lẫn trait object đều cho phép đa hình; generic được phân giải tại compile time (static dispatch), còn trait object dùng dynamic dispatch khi chạy. Trait object cho phép truy cập các phương thức của `Error` như `Debug`, `Display` và `source` tiếp theo mà không cần biết kiểu nguyên nhân cụ thể. Nếu biết kiểu cần tìm, `downcast_ref` vẫn có thể khôi phục kiểu cụ thể; thông thường, chuỗi `source` cho phép duyệt nguyên nhân mà không phụ thuộc kiểu đó.
 
 ### 2. Cài đặt `source()` và hàm định dạng chuỗi lỗi `error_chain_fmt`
 
@@ -478,4 +480,4 @@ Nhật ký log giờ đây hiển thị rõ ràng và mạch lạc:
     http.status_code=500
 ```
 
-Toàn bộ nguyên nhân gốc rễ và chuỗi sự kiện dẫn đến thất bại được bảo toàn trọn vẹn, không một chi tiết nào bị thất thoát.
+Nhật ký giúp thấy thông điệp của lỗi và nguyên nhân bên dưới theo chuỗi `source`.

@@ -15,11 +15,9 @@ Chúng ta đã áp dụng phương pháp phát triển hướng kiểm thử (TD
 
 ### 1. Tại Sao Chúng Ta Viết Test?
 
-Một bộ kiểm thử tự động (automated test suite) chất lượng trước hết là một **biện pháp giảm thiểu rủi ro (risk-mitigation measure)**. 
+Một bộ test tốt trước hết giúp **giảm thiểu rủi ro** khi thay đổi code: CI có thể bắt được nhiều lỗi hồi quy trước khi chúng tới người dùng, nhờ đó đội ngũ tự tin lặp lại và phát hành thường xuyên hơn.
 
-Mỗi khi bạn sửa đổi mã nguồn hoặc tái cấu trúc kiến trúc, hệ thống CI (Continuous Integration) sẽ chạy toàn bộ các bài test để bảo đảm không có lỗi hồi quy (regressions) nào lọt ra môi trường production. Nhờ đó, cả đội ngũ kỹ sư có thể tự tin phát hành phiên bản mới nhiều lần mỗi ngày mà không nơm nớp lo sợ làm sập hệ thống.
-
-Hơn thế nữa, các bài test còn đóng vai trò như một **tài liệu sống (living documentation)**. Khi một kỹ sư mới gia nhập đội ngũ, nơi tốt nhất để họ tìm hiểu cách hệ thống vận hành thực tế không phải là những trang wiki đã lỗi thời, mà chính là các bài test tích hợp: chúng mô tả chính xác những kịch bản nghiệp vụ mà hệ thống cam kết hỗ trợ.
+Test suite còn là tài liệu về cách code được kỳ vọng vận hành và những tình huống được xem là quan trọng. Khi tìm hiểu codebase chưa quen, test thường là điểm bắt đầu hữu ích cho contributor mới. Tính module và khả năng tách rời cũng có thể là tác dụng tích cực của test, dù khó định lượng và chưa có đồng thuận chung về định nghĩa “code tốt”.
 
 ---
 
@@ -42,8 +40,8 @@ Mặc dù ai cũng hiểu lợi ích của kiểm thử, nhưng thực tế tạ
 
 Hiện tượng này xảy ra do **sự ma sát (friction)**: Khi mã nguồn ứng dụng phát triển nhưng mã nguồn test không được đầu tư tái cấu trúc, việc viết một bài test mới trở nên ngày càng cồng kềnh, mệt mỏi và tốn kém thời gian.
 
-<Callout type="warn" title="Quy Tắc Vàng: Test Code Is Still Code">
-**Mã nguồn kiểm thử cũng chính là mã nguồn của sản phẩm!** Nó đòi hỏi tính module, tính trừu tượng, cấu trúc rõ ràng và phải được bảo trì định kỳ với chuẩn mực kỹ thuật y hệt như mã nguồn production. Nếu bạn bỏ bê nó, bộ test sẽ mục ruỗng từ bên trong và sớm muộn sẽ bị chính các kỹ sư khai trừ.
+<Callout type="warn" title="Test code cũng là code">
+Test code cần có cấu trúc, module hóa và bảo trì. Nếu không thường xuyên đầu tư vào test suite, ma sát khi thêm test sẽ tăng, coverage giảm dần và những luồng quan trọng có thể không còn được kiểm thử.
 </Callout>
 
 ---
@@ -56,21 +54,14 @@ File này vừa chứa mã khởi tạo logging (`tracing`), vừa chứa hàm `
 
 Ý nghĩ đầu tiên xuất hiện trong đầu bạn có thể là: *"Hãy tách mỗi bài test ra một file riêng trong thư mục `tests/`: `tests/health_check.rs`, `tests/subscriptions.rs`, `tests/confirm.rs`..."*
 
-**Khoan đã! Hãy cẩn trọng với cơ chế Test Discovery của Cargo!**
+Cargo xem mỗi file `.rs` nằm trực tiếp trong `tests/` là một integration-test crate riêng. Có thể kiểm chứng bằng `cargo build --tests` rồi xem các executable trong `target/debug/deps`. Tách test theo file giúp tổ chức rõ hơn, nhưng cũng tạo nhiều executable; các crate có thể được biên dịch song song, còn giai đoạn linking diễn ra tuần tự. Vì vậy, nhiều file có thể làm tăng thời gian build, nhất là ở test suite lớn; mức ảnh hưởng nên được đo trên codebase cụ thể.
 
-Trong Rust, Cargo quy định rằng: **mỗi file `.rs` nằm trực tiếp dưới thư mục `tests/` sẽ được xem như một integration test crate hoàn toàn độc lập!**
-
-```
+```text
 tests/
-  ├── health_check.rs   ──► Crate riêng (Biên dịch thành binary tests/health_check-XXXX)
-  ├── subscriptions.rs  ──► Crate riêng (Biên dịch thành binary tests/subscriptions-XXXX)
-  └── confirm.rs        ──► Crate riêng (Biên dịch thành binary tests/confirm-XXXX)
+  health_check.rs   ──► executable test riêng
+  subscriptions.rs  ──► executable test riêng
+  confirm.rs        ──► executable test riêng
 ```
-
-Điều này dẫn đến hệ quả nghiêm trọng gì?
-- Nếu bạn có 10 file trong `tests/`, Cargo sẽ phải biên dịch và liên kết (link) **10 file binary khác nhau**!
-- Mỗi crate kiểm thử đó lại phải tải và biên dịch lại toàn bộ các dependency chung (`actix-web`, `sqlx`, `reqwest`, `tokio`...).
-- **Thời gian biên dịch (compile time) của dự án sẽ tăng vọt theo cấp số nhân**, khiến vòng lặp phát triển của lập trình viên trở nên vô cùng chậm chạp.
 
 ### Giải Pháp: Cấu Trúc Module Lồng Nhau (Nested Modules)
 
@@ -97,7 +88,7 @@ mod subscriptions;
 mod subscriptions_confirm;
 ```
 
-Bằng cách này, Cargo chỉ biên dịch **duy nhất một file binary kiểm thử** cho toàn bộ thư mục `tests/api/`, giúp thời gian chạy lệnh `cargo test` nhanh hơn rõ rệt!
+Bằng cách này, Cargo biên dịch một test executable cho `tests/api/`, trong đó các file con là các module. Việc gom test có thể giảm chi phí linking; hiệu quả cụ thể cần được kiểm chứng trên codebase thực tế.
 
 ---
 

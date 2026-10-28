@@ -19,15 +19,10 @@ Tôi từng có cơ hội đồng hành cùng sự phát triển của hai ngôn
 
 ## I. Ngôn Ngữ Lập Trình Không Được Tiếp Nhận Chỉ Nhờ Bảng Danh Sách Tính Năng
 
-Tôi muốn chia sẻ với bạn một bí mật mà bản thân đã chiêm nghiệm được trên hành trình ấy: **Một ngôn ngữ lập trình không được cả ngành công nghiệp đón nhận chỉ đơn giản nhờ vào một danh sách các tính năng kỹ thuật hấp dẫn.**
-
-Đó luôn là một sự tương tác phức tạp và tinh tế giữa ba yếu tố:
-1. Một nền tảng công nghệ thực sự xuất sắc;
-2. Khả năng truyền đạt và lan tỏa tri thức về nó một cách dễ hiểu;
-3. Tìm kiếm đủ số lượng người sẵn sàng **đặt cược dài hạn** vào tương lai của nó.
+Tôi muốn chia sẻ một điều đã học được trên hành trình ấy: ngôn ngữ lập trình không được đón nhận chỉ nhờ một danh sách tính năng. Đó là kết quả của sự tương tác phức tạp giữa công nghệ tốt, khả năng truyền đạt về công nghệ ấy và việc tìm đủ người sẵn sàng **đặt cược dài hạn** vào nó.
 
 <Callout type="info">
-  Hơn 5.000 cá nhân đã cùng nhau đóng góp cho dự án mã nguồn mở Rust — phần lớn là tự nguyện, cống hiến thời gian rảnh rỗi của mình — chỉ vì một niềm tin sâu sắc vào canh bạc dài hạn đó.
+  Tại thời điểm Florian Gilcher viết những dòng này, hơn 5.000 người đã đóng góp cho dự án Rust, thường là tình nguyện và trong thời gian rảnh — bởi họ tin vào canh bạc dài hạn đó.
 </Callout>
 
 Nhưng để đóng góp cho Rust, bạn không nhất thiết phải viết code cho trình biên dịch (`rustc`) hay có tên hiển thị trong lịch sử Git commit của dự án cốt lõi. Cuốn sách này của Luca chính là một đóng góp to lớn và quý giá: nó mang đến cho những người mới bắt đầu một lăng kính thực chiến chuẩn xác về Rust, đồng thời tôn vinh công sức lao động bền bỉ của hàng ngàn con người phía sau.
@@ -36,15 +31,9 @@ Nhưng để đóng góp cho Rust, bạn không nhất thiết phải viết cod
 
 ## II. Rust Sinh Ra Từ Thực Tế, Không Phải Một Phòng Thí Nghiệm Hàn Lâm
 
-Rust chưa bao giờ được định hình như một nền tảng nghiên cứu học thuật thuần túy. Ngay từ những ngày đầu, sứ mệnh của nó luôn là một ngôn ngữ lập trình sinh ra để **giải quyết các vấn đề gai góc, có thật và nhức nhối trong những hệ thống mã nguồn khổng lồ**.
+Rust chưa bao giờ được định hướng như một nền tảng nghiên cứu; ngay từ đầu, nó đã được tạo ra để giải quyết những vấn đề thực tế trong các codebase lớn. Điều đó không có gì lạ khi Rust bắt nguồn từ Mozilla, tổ chức duy trì một codebase rất lớn và phức tạp: Firefox. Khi tôi tham gia Rust, đó mới chỉ là một tham vọng — đưa các nghiên cứu vào ứng dụng công nghiệp để cải thiện phần mềm của tương lai.
 
-Không có gì ngạc nhiên khi Rust được ươm mầm từ **Mozilla** — tổ chức chịu trách nhiệm bảo trì một trong những codebase lớn và phức tạp bậc nhất hành tinh: trình duyệt web Firefox. Khi tôi mới gia nhập cộng đồng Rust, đó đơn thuần chỉ là một tham vọng lớn: tham vọng *công nghiệp hóa các nghiên cứu khoa học máy tính* để tạo nên những phần mềm tương lai tốt hơn.
-
-Dù hàm chứa bên dưới vô vàn khái niệm lý thuyết trừu tượng cao cấp — như *Hệ thống kiểu tuyến tính (Linear Typing)* hay *Quản lý bộ nhớ dựa trên vùng phạm vi (Region-based Memory Management)* — ngôn ngữ này luôn hướng tới việc phục vụ cho đại chúng lập trình viên. 
-
-Điều đó thể hiện rõ nét qua chính thuật ngữ đời thường mà Rust sử dụng:
-* Thay vì nói về cơ chế lý thuyết khô khan, Rust sử dụng những cái tên trực quan, dễ liên tưởng như **Quyền sở hữu (Ownership)** và **Mượn (Borrowing)**.
-* **Rust là một ngôn ngữ công nghiệp, từ trong cốt lõi cho đến từng chi tiết bề mặt.**
+Dù bao hàm những khái niệm lý thuyết như *linear typing* và quản lý bộ nhớ theo vùng (*region-based memory management*), Rust vẫn được thiết kế cho mọi người. Điều đó thể hiện qua cách gọi dễ tiếp cận như **Ownership** và **Borrowing**. Rust là một ngôn ngữ công nghiệp từ trong ra ngoài.
 
 ```text
 Lý thuyết Khoa học Máy tính           Triết lý Ngôn ngữ Rust (Đời thường & Thực tế)
@@ -72,7 +61,7 @@ Sức mạnh của Rust thể hiện rõ qua sự cẩn trọng và khối lư�
 
 ## IV. Viết Mã An Toàn Để Dám Chấp Nhận Những Rủi Ro Lớn Hơn
 
-Rust không giải quyết mọi vấn đề trên đời, nhưng nó đã thực hiện một nỗ lực phi thường để **triệt tiêu hoàn toàn nhiều phân loại lỗi kinh điển** từng hành hạ các thế hệ lập trình viên suốt hàng thập kỷ qua.
+Rust không giải quyết mọi vấn đề trên đời, nhưng đã nỗ lực loại bỏ toàn bộ những nhóm lỗi nhất định.
 
 Đâu đó ngoài kia vẫn tồn tại định kiến cho rằng: các tính năng an toàn trong ngôn ngữ lập trình được dựng lên vì sự kém cỏi của lập trình viên. Tôi hoàn toàn phản đối quan điểm hẹp hòi đó.
 

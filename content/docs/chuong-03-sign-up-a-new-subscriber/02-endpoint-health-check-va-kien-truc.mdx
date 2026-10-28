@@ -29,9 +29,9 @@ HTTP Client (Pingdom / K8s Probe / Developer)
         "Hệ thống đang hoạt động tốt!"
 ```
 
-Tại sao một endpoint không có bất kỳ logic nghiệp vụ nào lại quan trọng đến vậy trong môi trường thực tế?
-- **Giám sát uptime (Uptime Monitoring):** Kết hợp `/health_check` với các dịch vụ SaaS như Pingdom hay Datadog giúp bạn ngay lập tức nhận được cảnh báo (qua SMS, Slack hoặc PagerDuty) khi hệ thống gặp sự cố mất kết nối hoặc tê liệt hoàn toàn.
-- **Tích hợp với Container Orchestrator:** Nếu bạn triển khai ứng dụng trên Kubernetes hoặc HashiCorp Nomad, orchestrator sẽ định kỳ gọi vào `/health_check` (Liveness và Readiness Probes). Nếu API bị deadlock hoặc không phản hồi kịp thời, orchestrator sẽ tự động tiêu hủy container bị lỗi và khởi động một instance mới để tự phục hồi dịch vụ.
+Endpoint health check còn hữu ích ngoài việc kiểm tra thủ công:
+- **Giám sát uptime:** Kết hợp `/health_check` với dịch vụ SaaS như [Pingdom](https://www.pingdom.com/) để nhận cảnh báo khi API ngừng hoạt động.
+- **Container orchestrator:** Kubernetes hoặc Nomad có thể gọi endpoint này để phát hiện API không còn phản hồi và kích hoạt khởi động lại ứng dụng.
 
 ---
 
@@ -170,11 +170,12 @@ Kiến trúc của `actix-web` được xây dựng dựa trên sự phân tách
 
 ### 1. Máy Chủ Tầng Vận Chuyển: `HttpServer`
 
-`HttpServer` đóng vai trò là "bộ xương sống" chịu tải cho toàn bộ ứng dụng. Nó đảm nhiệm toàn bộ các mối quan tâm ở **tầng transport**:
-- Lắng nghe các kết nối TCP mới ở đâu? (TCP socket ví dụ `127.0.0.1:8000` hay Unix domain socket);
-- Số lượng kết nối đồng thời tối đa là bao nhiêu? Tốc độ chấp nhận kết nối mới mỗi giây;
-- Có cấu hình mã hóa bảo mật tầng truyền tải (TLS) hay không;
-- Khởi tạo và điều phối các worker thread để tận dụng toàn bộ số nhân CPU máy chủ.
+`HttpServer` là nền tảng của ứng dụng và xử lý các mối quan tâm ở **tầng transport**:
+- Địa chỉ nào sẽ nhận request: TCP socket (chẳng hạn `127.0.0.1:8000`) hay Unix domain socket;
+- Giới hạn số kết nối đồng thời và tốc độ nhận kết nối mới;
+- Có bật transport layer security (TLS) hay không.
+
+Nói cách khác, `HttpServer` xử lý các mối quan tâm ở tầng transport. Khi nó đã thiết lập kết nối với client và cần bắt đầu xử lý request, `App` đảm nhận phần việc tiếp theo.
 
 Sau khi đã thiết lập xong kết nối TCP với client, `HttpServer` làm gì tiếp theo để xử lý yêu cầu HTTP thực tế? Đó là lúc `App` bước vào sân khấu.
 

@@ -210,11 +210,9 @@ Nếu chạy với `RUST_LOG=trace`, bạn sẽ thấy log thể hiện chính x
 
 ## 4.5.5. Trait `Subscriber` Và Hệ Sinh Thái `tracing-subscriber`
 
-Dù đã chuyển sang dùng Span, nếu nhìn lại terminal, bạn sẽ thấy `request_id` vẫn chỉ xuất hiện ở dòng log đầu tiên chứ chưa tự động lan sang các log con. Lý do là chúng ta vẫn đang dùng `env_logger` — một logger backend chỉ hiểu văn bản thô chứ không hề biết tới cấu trúc dữ liệu của Span!
+Dù đã chuyển sang dùng Span, `request_id` vẫn chỉ xuất hiện ở dòng log đầu tiên có gắn nó tường minh vào context. Lý do là chúng ta vẫn dùng `env_logger`, vốn chỉ xử lý log qua trait `log::Log` và không hiểu cấu trúc Span của `tracing`. Feature tương thích `log` giúp các logger cũ nhận event do `tracing` phát ra, nhưng không khiến chúng hiểu hay kế thừa context của Span.
 
-Tương tự như trait `Log` của crate `log`, `tracing` định nghĩa trait [`Subscriber`](https://docs.rs/tracing/0.1.19/tracing/trait.Subscriber.html) quản lý toàn bộ vòng đời của Span (`new_span`, `enter`, `exit`, `clone_span`).
-
-Để xây dựng một pipeline xử lý log đa tầng linh hoạt, cộng đồng sử dụng crate [`tracing-subscriber`](https://docs.rs/tracing-subscriber):
+Tương tự trait `Log` của crate `log`, `tracing` định nghĩa trait [`Subscriber`](https://docs.rs/tracing/0.1.19/tracing/trait.Subscriber.html), quản lý vòng đời của Span như tạo mới, enter/exit và đóng Span. Subscriber không được cung cấp sẵn trong crate `tracing`; ta cần crate [`tracing-subscriber`](https://docs.rs/tracing-subscriber) để ghép pipeline xử lý.
 
 ```toml
 #! Cargo.toml
@@ -240,9 +238,12 @@ Chúng ta sẽ sử dụng crate [`tracing-bunyan-formatter`](https://docs.rs/tr
 tracing-bunyan-formatter = "0.3"
 ```
 
-Crate này cung cấp 2 Layer cốt lõi:
-1. `JsonStorageLayer`: Trích xuất và lưu trữ metadata của các Span dưới dạng JSON, đồng thời **tự động lan truyền toàn bộ context từ Span cha xuống các Span con**.
-2. `BunyanFormattingLayer`: Xuất log record ra màn hình console (`stdout`) theo chuẩn JSON tương thích với Bunyan.
+Chúng ta kết hợp ba layer:
+1. `EnvFilter`: Lọc Span theo level và nguồn phát, tương tự cách `env_logger` dùng biến `RUST_LOG`.
+2. `JsonStorageLayer`: Lưu metadata Span theo cấu trúc JSON để các layer phía sau sử dụng; đặc biệt, nó truyền context từ Span cha xuống các Span con.
+3. `BunyanFormattingLayer`: Dựa trên `JsonStorageLayer`, xuất log record dưới dạng JSON tương thích với [Bunyan](https://github.com/trentm/node-bunyan).
+
+Dùng `tracing-bunyan-formatter` thay vì formatting layer sẵn có của `tracing-subscriber` vì layer sau không kế thừa metadata, nên không đáp ứng yêu cầu truyền context.
 
 Kết hợp toàn bộ pipeline trong `src/main.rs`:
 

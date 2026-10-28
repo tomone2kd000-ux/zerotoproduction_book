@@ -43,13 +43,15 @@ docker build --tag zero2prod --file Dockerfile .
 
 Ký tự dấu chấm `.` ở cuối câu lệnh đại diện cho **Build Context**.
 
+Dockerfile là một recipe cho môi trường ứng dụng: bắt đầu từ một base image (thường là hệ điều hành có sẵn toolchain ngôn ngữ), rồi lần lượt chạy các chỉ thị như `COPY` và `RUN` để dựng môi trường cần thiết. Cấu trúc dự án khi thêm Dockerfile ở thư mục gốc sẽ gồm, chẳng hạn, `.github/`, `migrations/`, `scripts/`, `src/`, `tests/`, `.gitignore`, `Cargo.lock`, `Cargo.toml`, `configuration.yaml` và `Dockerfile`.
+
 ---
 
 ## 5.3.2. Build Context Là Gì?
 
 Khi chạy `docker build`, Docker daemon xem image đang build như một môi trường cô lập hoàn toàn. Điểm tiếp xúc duy nhất giữa môi trường của bạn và image là các lệnh như `COPY` hoặc `ADD`.
 
-**Build Context** xác định những file nào trên máy chủ của bạn được phép "nhìn thấy" bởi các lệnh `COPY`. Dấu chấm `.` chỉ định thư mục hiện tại làm build context. Do đó, `COPY . .` sẽ sao chép toàn bộ mã nguồn từ thư mục hiện tại vào thư mục `/app` bên trong container.
+**Build Context** xác định những file nào trên máy chủ của bạn được phép "nhìn thấy" bởi các lệnh `COPY` và `ADD`. Dấu chấm `.` chỉ định thư mục hiện tại làm build context. Do đó, `COPY . .` sẽ sao chép toàn bộ mã nguồn từ thư mục hiện tại vào thư mục `/app` bên trong container. Vì context là thư mục hiện tại nên Docker không cho phép `COPY` lấy file từ thư mục cha hay các đường dẫn tùy ý khác trên máy. Tùy nhu cầu, build context cũng có thể là một đường dẫn khác hoặc thậm chí là URL.
 
 ---
 
@@ -72,7 +74,7 @@ Cannot assign requested address (os error 99)
 Tuy nhiên, khi chạy `cargo build` bên trong Docker, tiến trình này không thể kết nối tới cơ sở dữ liệu PostgreSQL đang chạy ở máy host bên ngoài!
 
 ### Giải Pháp: Chế Độ Biên Dịch Ngoại Tuyến (Offline Mode)
-Chúng ta không nên mở mạng (`--network`) nối container build tới database local vì điều này làm mất tính tái lập (reproducibility) của bản build và gây lỗi trên các OS khác nhau (như macOS).
+Có thể dùng cờ `--network` để image kết nối database local trong lúc build. CI cũng dùng cách này vì cần database để chạy integration test. Tuy nhiên, cách này khá phiền trên Docker do khác biệt networking giữa các hệ điều hành (chẳng hạn macOS), đồng thời làm giảm tính tái lập của build.
 
 Thay vào đó, ta sử dụng **Offline Mode** của `sqlx-cli`. Chạy lệnh sau tại thư mục gốc dự án:
 
@@ -106,6 +108,8 @@ ENTRYPOINT ["./target/release/zero2prod"]
 
 Bây giờ lệnh `docker build --tag zero2prod --file Dockerfile .` sẽ biên dịch thành công 100%!
 
+Ta cũng cần bảo đảm metadata trong `.sqlx` không bị lỗi thời khi schema database đổi hoặc có query mới. Dùng cờ `--check` trong CI để xác nhận metadata vẫn cập nhật; có thể tham khảo định nghĩa pipeline mới trong repository GitHub của cuốn sách.
+
 ---
 
 ## 5.3.4. Khởi Chạy Container & Lazy Connection
@@ -116,13 +120,13 @@ Hãy thử chạy image vừa build bằng lệnh:
 docker run zero2prod
 ```
 
-Ứng dụng lập tức bị sập (panic):
+Tag `zero2prod` gắn lúc build dùng để tham chiếu image trong các lệnh khác, chẳng hạn `docker run zero2prod`. `docker run` thực thi lệnh đã khai báo trong `ENTRYPOINT` — ở đây là binary, tức khởi chạy API. Ứng dụng lập tức bị sập (panic):
 
 ```text
 thread 'main' panicked at 'Failed to connect to Postgres: Io(Os { code: 99, kind: AddrNotAvailable, message: "Cannot assign requested address" })'
 ```
 
-Lỗi này phát sinh do trong hàm `main`, chúng ta gọi `PgPool::connect(&...).await` ngay khi ứng dụng vừa khởi động. 
+Lỗi này phát sinh do trong hàm `main`, chúng ta gọi `PgPool::connect(&...).await` ngay khi ứng dụng vừa khởi động. Cụ thể, pool cố kết nối database ngay lập tức theo connection string lấy từ cấu hình, nhưng môi trường container hiện không thể truy cập database đó.
 
 Để ứng dụng không bị sập ngay khi container boot (đặc biệt khi database cloud cần vài chục giây để sẵn sàng), ta chuyển sang phương thức **khởi tạo lười biếng (lazy initialization)** với `PgPool::connect_lazy`:
 
@@ -174,7 +178,7 @@ let address = format!("127.0.0.1:{}", configuration.application_port);
 
 Để chấp nhận kết nối từ mọi giao diện mạng (network interfaces), ứng dụng phải bind vào địa chỉ `0.0.0.0`.
 
-Tuy nhiên, việc bind `0.0.0.0` trên máy dev cá nhân tiềm ẩn rủi ro bảo mật (mở cổng dịch vụ ra toàn bộ mạng Wi-Fi nội bộ). Giải pháp chuẩn mực của một Senior Backend là: **Tách biệt cấu hình theo môi trường (Hierarchical Configuration)**.
+Tuy nhiên, việc bind `0.0.0.0` trên máy dev cá nhân tiềm ẩn rủi ro bảo mật (mở cổng dịch vụ ra toàn bộ mạng Wi-Fi nội bộ). Giải pháp chuẩn mực là làm phần host có thể cấu hình: giữ `127.0.0.1` khi phát triển local và đặt `0.0.0.0` trong Docker image production. **Tách biệt cấu hình theo môi trường (Hierarchical Configuration)** sẽ giúp thực hiện điều đó.
 
 ---
 
@@ -297,7 +301,17 @@ Build lại và chạy, bây giờ lệnh `curl http://127.0.0.1:8000/health_che
 
 ---
 
-## 5.3.7. Tối Ưu Hóa Kích Thước Docker Image (Từ 3.65 GB Xuống 125 MB)
+## 5.3.7. Kết Nối Database
+
+Health check có thể hoạt động trong container mà chưa cần database, nhưng thử `POST /subscriptions` sẽ trả về lỗi 500. Log cho thấy thao tác lưu subscriber không kết nối được tới Postgres. Đây là điều dễ hiểu: ta đã đổi sang `connect_lazy` để tránh kết nối ngay lúc khởi động.
+
+Có vài cách dựng môi trường local chạy cả hai container: chạy application container với `--network=host` (như hiện đang làm với Postgres), dùng `docker-compose`, hoặc tạo user-defined network. Tuy nhiên, một môi trường local chạy được vẫn chưa giải quyết được việc kết nối database sau khi deploy lên DigitalOcean, nên ta tạm để phần này lại.
+
+---
+
+## 5.3.8. Tối Ưu Hóa Kích Thước Docker Image (Từ 3.65 GB Xuống 125 MB)
+
+Image hoạt động như kỳ vọng, nhưng trước khi deploy, ta cần tối ưu thêm hai điểm: giảm dung lượng để tải image nhanh hơn, và tận dụng Docker layer caching để build nhanh hơn.
 
 Hãy kiểm tra kích thước của image vừa tạo:
 
@@ -338,6 +352,19 @@ ENV SQLX_OFFLINE true
 RUN cargo build --release
 
 # ----------------- TẦNG THỰC THI (RUNTIME) ------------------
+FROM rust:1.72.0 AS runtime
+WORKDIR /app
+COPY --from=builder /app/target/release/zero2prod zero2prod
+COPY configuration configuration
+ENV APP_ENVIRONMENT production
+ENTRYPOINT ["./zero2prod"]
+```
+
+Ở cách này, `runtime` là image cuối cùng; `builder` chỉ là bước trung gian và không làm tăng kích thước cuối, ngoại trừ binary được sao chép sang. Với image Rust đầy đủ, kết quả khoảng 1.78 GB — chỉ lớn hơn base image khoảng 10 MB. Đổi runtime sang `rust:1.72.0-slim` giảm còn khoảng 1.13 GB, nhỏ hơn khoảng ba lần so với ban đầu.
+
+Để giảm thêm, dùng hệ điều hành thuần `debian:bookworm-slim`, không cần giữ `rustc`, `cargo` hay toolchain trong runtime:
+
+```dockerfile
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
@@ -367,9 +394,11 @@ docker images zero2prod
 
 Dung lượng image giảm ngoạn mục từ **3.65 GB** xuống chỉ còn **125 MB** — nhỏ hơn gần 30 lần!
 
+Rust compiler liên kết tĩnh toàn bộ mã Rust, nhưng nếu dùng standard library thì vẫn liên kết động `libc` từ hệ điều hành. Muốn binary liên kết tĩnh hoàn toàn có thể build target `linux-musl`; việc cross-compile sang target này nằm ngoài phạm vi hiện tại. Có thể tham khảo `rust-musl-builder` để tạo image rất nhỏ. Một hướng khác là strip symbol khỏi binary để giảm dung lượng.
+
 ---
 
-## 5.3.8. Tăng Tốc Build Docker Bằng Bộ Nhớ Đệm Với `cargo-chef`
+## 5.3.9. Tăng Tốc Build Docker Bằng Bộ Nhớ Đệm Với `cargo-chef`
 
 Rust mang lại hiệu năng đỉnh cao khi chạy, nhưng thời gian biên dịch bản tối ưu `--release` có thể tốn từ **15 đến 20 phút** trên các máy chủ CI/CD tài nguyên giới hạn.
 

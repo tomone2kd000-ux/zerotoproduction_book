@@ -41,7 +41,7 @@ Phương pháp này đảo ngược hoàn toàn trật tự sư phạm truyền 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Tuy nhiên, cạm bẫy lớn nhất của phương pháp này nằm ở việc **chọn lựa bài toán ví dụ**. Một bài toán ví dụ lý tưởng phải thỏa mãn cùng lúc ba tiêu chí khắt khe:
+Tuy nhiên, điểm khó nằm ở chi tiết: lộ trình học dựa trên vấn đề có thể rất thú vị, nhưng cũng rất dễ đánh giá sai mức độ khó của từng bước. Vì vậy, bài toán ví dụ lý tưởng phải thỏa mãn cùng lúc ba tiêu chí khắt khe:
 1. **Đủ nhỏ gọn**: Để chúng ta có thể mổ xẻ cặn kẽ mọi ngóc ngách trong khuôn khổ cuốn sách mà không phải đi tắt đón đầu (*no cutting corners*).
 2. **Đủ phức tạp**: Để làm lộ diện hầu hết các chủ đề hóc búa thường gặp trong các hệ thống phần mềm doanh nghiệp lớn.
 3. **Đủ lôi cuốn**: Giúp bạn duy trì động lực và sự hứng khởi trong suốt hành trình chinh phục.
@@ -52,12 +52,11 @@ Và bài toán được lựa chọn cho chúng ta chính là: **Xây dựng d�
 
 ## II. Định Hình Chức Năng Dịch Vụ Newsletter
 
-Trong thế giới thực, có hàng trăm công ty công nghệ cung cấp các giải pháp quản lý danh sách email và gửi tin hàng loạt (như Mailchimp, ConvertKit, Sendgrid, Mailgun, v.v.).
+Trong thế giới thực, có hàng chục công ty cung cấp các dịch vụ bao gồm hoặc tập trung vào việc quản lý danh sách email.
 
-Mặc dù tất cả các nền tảng này đều chia sẻ chung một chức năng cốt lõi (gửi email tới người dùng), dịch vụ của họ được may đo cho từng tệp khách hàng rất khác biệt:
-* Giao diện người dùng, chiến lược tiếp thị và cấu trúc giá thành của một sản phẩm dành cho tập đoàn đa quốc gia (quản lý hàng triệu địa chỉ với các tiêu chuẩn an toàn bảo mật và tuân thủ pháp lý cực kỳ nghiêm ngặt) sẽ khác xa so với một dịch vụ SaaS gọn nhẹ hướng tới các tác giả blog cá nhân hay cửa hàng trực tuyến nhỏ[^1].
+Mặc dù tất cả các nền tảng này đều chia sẻ chung một chức năng cốt lõi (gửi email tới người dùng), dịch vụ của họ được may đo cho từng trường hợp sử dụng cụ thể. Giao diện, thông điệp tiếp thị và cách định giá sẽ khác biệt đáng kể giữa sản phẩm dành cho các công ty lớn quản lý hàng trăm nghìn địa chỉ, với yêu cầu nghiêm ngặt về bảo mật và tuân thủ, và dịch vụ SaaS hướng tới các nhà sáng tạo nội dung độc lập viết blog hoặc các cửa hàng trực tuyến nhỏ[^1].
 
-Chúng ta không có tham vọng xây dựng lại một Mailchimp hay ConvertKit tiếp theo — quy mô của những hệ thống như vậy là quá đồ sộ và sẽ đòi hỏi chúng ta phải áp dụng đi áp dụng lại cùng một nhóm kỹ thuật nhiều lần, gây nhàm chán không cần thiết.
+Chúng ta không có tham vọng xây dựng lại một Mailchimp hay ConvertKit tiếp theo — phạm vi của dự án sẽ quá rộng để bao quát trong một cuốn sách. Hơn nữa, nhiều tính năng sẽ đòi hỏi phải áp dụng đi áp dụng lại cùng những khái niệm và kỹ thuật, khiến việc đọc trở nên nhàm chán.
 
 <Callout type="info">
   Mục tiêu của chúng ta là xây dựng một **dịch vụ Email Newsletter backend tinh gọn**, cung cấp đầy đủ những gì bạn cần để nhúng một biểu mẫu đăng ký nhận tin vào trang blog cá nhân của chính bạn.
@@ -79,7 +78,7 @@ Tôi muốn [Thực hiện hành động gì],
 
 Cấu trúc này giúp đội ngũ kỹ sư luôn ghi nhớ rõ: Chúng ta đang xây dựng tính năng cho ai (*As a*), họ cần làm thao tác gì (*Want to*), và động cơ thực sự đằng sau hành động đó là gì (*So that*).
 
-Hệ thống của chúng ta sẽ tập trung đáp ứng trọn vẹn **hai User Stories cốt lõi**:
+Hệ thống của chúng ta sẽ tập trung đáp ứng **hai User Stories cốt lõi**:
 
 ```text
  ┌─────────────────────────────────────────────────────────────┐

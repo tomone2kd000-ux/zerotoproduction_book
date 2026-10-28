@@ -1,191 +1,267 @@
 ---
-title: "10.7 Quản Lý Phiên (Session-based Auth) Với Redis & actix-session"
-description: "Cơ chế quản lý phiên làm việc trong ứng dụng web phân tán, so sánh các giải pháp Session Store, tích hợp Redis với actix-session và xây dựng Admin Dashboard bảo mật."
+title: "10.7 Sessions: Session Store, actix-session và Admin Dashboard"
+description: "Triển khai session-based authentication với Redis và actix-session, kiểm thử chuyển hướng đăng nhập, lưu user_id trong session và bảo vệ dashboard."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-# 10.7 Quản Lý Phiên (Session-based Auth) Với Redis & actix-session
+# 10.7 Sessions
 
-Sau khi người dùng đăng nhập thành công qua form ở trang `/login`, chúng ta không thể bắt họ phải tiếp tục nhập lại username và mật khẩu mỗi khi chuyển sang trang khác. 
+Sau khi hoàn tất phần xử lý đăng nhập thất bại, ta chuyển sang trường hợp đăng nhập thành công. Mục tiêu trước mắt là chuyển người dùng tới `/admin/dashboard` để hiển thị lời chào `Welcome <username>!`; nếu người chưa đăng nhập truy cập thẳng dashboard, ứng dụng chuyển họ về form đăng nhập. Để giữ trạng thái đăng nhập giữa nhiều request, ta cần **session**.
 
-Giao thức HTTP là một giao thức **Phi trạng thái (Stateless)**: mỗi request gửi lên máy chủ là một thực thể hoàn toàn độc lập, không hề mang theo ký ức về những gì đã diễn ra trước đó. Để duy trì trạng thái đăng nhập xuyên suốt hành trình lướt web, chúng ta cần tới **Quản lý phiên (Session Management)**.
+## I. Session-based Authentication
 
----
+Người dùng đăng nhập một lần qua form. Nếu thông tin hợp lệ, server tạo một **authenticated session token** dùng một lần. Những request tiếp theo gửi token thay vì username/password. Token thường được lưu trong cookie để trình duyệt tự đính kèm vào request.
 
-## I. Cơ Chế Xác Thực Dựa Trên Phiên (Session-based Authentication)
+Session token có quyền lực tương đương thông tin xác thực gốc: ai lấy được token có thể hành động như người dùng. Vì vậy phải tránh để lộ token và tuân theo hướng dẫn bảo mật session của OWASP.
 
-Quy trình xác thực dựa trên phiên diễn ra như sau:
-1. Người dùng gửi thông tin đăng nhập (`username` & `password`) lên endpoint `POST /login`.
-2. Máy chủ xác minh mật khẩu qua Argon2id. Nếu hợp lệ, máy chủ sinh ra một chuỗi định danh ngẫu nhiên tuyệt đối không thể đoán trước (**Session Token / Session ID**) bằng bộ sinh số ngẫu nhiên chuẩn mật mã (CSPRNG).
-3. Máy chủ lưu trữ cặp khóa-giá trị: `Session ID -> Thông tin phiên (User ID, thời gian hết hạn)` vào một kho dữ liệu trung tâm (**Session Store**).
-4. Máy chủ gửi Session ID về trình duyệt qua header `Set-Cookie`.
-5. Trong mọi request tiếp theo (ví dụ `GET /admin/dashboard`), trình duyệt tự động đính kèm cookie chứa Session ID. Máy chủ chỉ việc tra cứu Session ID trong kho lưu trữ để biết danh tính người dùng mà không cần chạm tới mật khẩu nữa.
+## II. Session Store và lựa chọn nơi lưu
 
-```text
-┌───────────┐                                 ┌────────────┐               ┌─────────────┐
-│  Browser  │                                 │ Web Server │               │ Redis Store │
-└─────┬─────┘                                 └─────┬──────┘               └──────┬──────┘
-      │                                             │                             │
-      │ 1. POST /login (username, password)         │                             │
-      │────────────────────────────────────────────►│                             │
-      │                                             │ 2. Verify Argon2id          │
-      │                                             │ 3. Generate Session ID      │
-      │                                             │                             │
-      │                                             │ 4. SET session_id {user_id} │
-      │                                             │────────────────────────────►│
-      │                                             │◄────────────────────────────│
-      │ 5. HTTP 303 (Set-Cookie: session_id=xyz...) │                             │
-      │◄────────────────────────────────────────────│                             │
-      │                                             │                             │
-      │ 6. GET /admin/dashboard (Cookie: xyz...)    │                             │
-      │────────────────────────────────────────────►│                             │
-      │                                             │ 7. GET session_id           │
-      │                                             │────────────────────────────►│
-      │                                             │◄────────────────────────────│
-      │ 8. HTTP 200 OK (Welcome admin!)             │    Returns {user_id}        │
-      │◄────────────────────────────────────────────│                             │
-```
+Token cần không thể đoán được; OWASP khuyến nghị dùng **CSPRNG**. Token cũng cần duy nhất: gán cùng token cho hai người dùng có thể làm lẫn quyền hoặc làm lộ dữ liệu. Server phải ghi nhớ token đã phát hành và gắn dữ liệu trạng thái vào mỗi session; đó là vai trò của **session store**.
 
----
+Trong vòng đời session, ứng dụng cần tạo khi đăng nhập, đọc khi nhận request, cập nhật khi trạng thái thay đổi và xóa khi đăng xuất (CRUD). Session cũng cần hết hạn để dữ liệu cũ không tích tụ mãi.
 
-## II. Lựa Chọn Kho Lưu Trữ Phiên (Choosing A Session Store)
+### PostgreSQL
 
-Kho lưu trữ phiên phải đáp ứng các yêu cầu: Tạo mới (Create), Đọc (Read), Cập nhật (Update), Xóa (Delete) và đặc biệt là **Hết hạn tự động (TTL / Expiration)**.
+Có thể tạo bảng `sessions`, dùng token làm khóa chính để đảm bảo tính duy nhất. Trạng thái có thể được biểu diễn bằng các bảng quan hệ hoặc một cột `jsonb` chứa các cặp key-value. PostgreSQL không tự hết hạn từng row; cần cột `expires_at` và một công việc định kỳ để xóa session cũ.
 
-Hãy cùng phân tích các ứng viên:
+### Redis
 
-```text
-┌─────────────────┬───────────────────────────────────┬───────────────────────────────────┐
-│ Giải pháp       │ Ưu điểm                           │ Nhược điểm chí mạng               │
-├─────────────────┼───────────────────────────────────┼───────────────────────────────────┤
-│ 1. In-Memory    │ Tốc độ truy xuất micro-giây,      │ - Mất sạch phiên khi restart app. │
-│    HashMap      │ không cần hạ tầng phụ trợ.        │ - Không scale ngang được nhiều    │
-│                 │                                   │   server (thiếu session sharing). │
-├─────────────────┼───────────────────────────────────┼───────────────────────────────────┤
-│ 2. Client-side  │ Máy chủ không tốn tài nguyên      │ - Giới hạn kích thước Cookie 4KB. │
-│    Cookie Store │ lưu trữ (Stateless Server).       │ - Rất khó thu hồi (revoke) phiên  │
-│                 │                                   │   tức thời từ phía server.        │
-├─────────────────┼───────────────────────────────────┼───────────────────────────────────┤
-│ 3. PostgreSQL   │ Bền vững, tận dụng luôn database  │ Không có cơ chế TTL native.       │
-│                 │ sẵn có của hệ thống.              │ Phải viết cronjob dọn rác định kỳ,│
-│                 │                                   │ gây áp lực IO lên DB chính.       │
-├─────────────────┼───────────────────────────────────┼───────────────────────────────────┤
-│ 4. REDIS        │ Lưu trên RAM cực nhanh, hỗ trợ TTL│ Cần vận hành thêm một service     │
-│    (In-memory   │ tự hủy bản ghi, dễ dàng chia sẻ   │ hạ tầng Redis trong cụm máy chủ.  │
-│     K-V Store)  │ giữa hàng chục web nodes.         │ (Hoàn toàn xứng đáng đánh đổi!)   │
-└─────────────────┴───────────────────────────────────┴───────────────────────────────────┘
-```
+Redis là database trong bộ nhớ, phù hợp với dữ liệu key-value và ưu tiên tốc độ hơn độ bền lưu trữ. Ta dùng session token làm key, JSON của session state làm value; ứng dụng chịu trách nhiệm serialize/deserialize. Redis hỗ trợ TTL native để tự loại bỏ value hết hạn. Vì session vốn ngắn hạn, đây là lựa chọn phù hợp cho ứng dụng trong chương.
 
-**Quyết định kiến trúc**: **Redis** là lựa chọn tiêu chuẩn công nghiệp tối ưu nhất cho bài toán Session Management.
+## III. Tích hợp `actix-session`
 
----
-
-## III. Tích Hợp Redis Và `actix-session`
-
-Chúng ta sử dụng crate chính thức [`actix-session`](https://crates.io/crates/actix-session) với tính năng kết nối Redis:
+`SessionMiddleware` tải session từ request, theo dõi các thay đổi trong handler và lưu chúng khi response hoàn tất. Nó cần một storage backend và secret key để ký (hoặc mã hóa) cookie. Cách cấu hình secret key tương tự `FlashMessagesFramework`:
 
 ```toml
-#! Cargo.toml
+# Cargo.toml
+[dependencies]
+actix-session = "0.7"
+```
+
+```rust
+// src/startup.rs
+use actix_session::SessionMiddleware;
+
+let secret_key = Key::from(hmac_secret.expose_secret().as_bytes());
+let message_store = CookieMessageStore::builder(secret_key.clone()).build();
+
+let server = HttpServer::new(move || {
+    App::new()
+        .wrap(message_framework.clone())
+        .wrap(SessionMiddleware::new(todo!(), secret_key.clone()))
+        .wrap(TracingLogger::default())
+        // ...
+});
+```
+
+`todo!()` ở đây đánh dấu backend chưa được cấu hình. `actix-session` cho phép tự triển khai `SessionStore`, đồng thời cung cấp Redis store qua feature flag:
+
+```toml
+# Cargo.toml
 [dependencies]
 actix-session = { version = "0.7", features = ["redis-rs-tls-session"] }
 ```
 
-### Cấu hình SessionMiddleware trong `src/startup.rs`
-
-Để bảo vệ cookie khỏi bị giả mạo hoặc đọc trộm trên đường truyền, `actix-session` yêu cầu một khóa mã hóa bí mật (**Master Secret Key**):
+Thêm URI vào settings. Đây là secret vì URI có thể chứa password:
 
 ```rust
-//! src/startup.rs
-use actix_session::storage::RedisSessionStore;
-use actix_session::SessionMiddleware;
-use actix_web::cookie::Key;
-
-// Khởi tạo Redis Session Store
-let redis_store = RedisSessionStore::new(redis_uri.expose_secret()).await?;
-let secret_key = Key::from(hmac_secret.expose_secret().as_bytes());
-
-let server = HttpServer::new(move || {
-    App::new()
-        .wrap(TracingLogger::default())
-        // Đăng ký SessionMiddleware bọc ngoài toàn bộ ứng dụng
-        .wrap(
-            SessionMiddleware::builder(redis_store.clone(), secret_key.clone())
-                .cookie_name("zero2prod_session".into())
-                .cookie_secure(true) // Chỉ cho phép truyền qua HTTPS
-                .cookie_http_only(true) // Cấm truy cập qua JavaScript
-                .cookie_same_site(actix_web::cookie::SameSite::Lax)
-                .build(),
-        )
-        // [...]
-})
+// src/configuration.rs
+#[derive(serde::Deserialize, Clone)]
+pub struct Settings {
+    // ...
+    pub redis_uri: Secret<String>,
+}
 ```
 
----
+```yaml
+# configuration/base.yaml
+redis_uri: "redis://127.0.0.1:6379"
+```
 
-## IV. Ghi Nhận Phiên Khi Đăng Nhập & Chống Session Fixation
-
-Khi người dùng nhập đúng thông tin tài khoản tại `POST /login`, chúng ta trích xuất `TypedSession` (một wrapper bọc an toàn quanh `Session` của Actix-web) và lưu `user_id`:
+Do tạo `RedisSessionStore` cần kết nối bất đồng bộ, `Application::build` và `run` chuyển sang `async`, đồng thời trả `anyhow::Error`:
 
 ```rust
-//! src/routes/login/post.rs
-use crate::session_state::TypedSession;
+// src/startup.rs
+use actix_session::storage::RedisSessionStore;
 
-pub async fn login(
-    form: web::Form<FormData>,
-    pool: web::Data<PgPool>,
-    session: TypedSession,
-) -> Result<HttpResponse, InternalError<LoginError>> {
-    // [...]
-    match validate_credentials(credentials, &pool).await {
-        Ok(user_id) => {
-            // QUAN TRỌNG: Làm mới Session ID để chống tấn công Session Fixation!
-            session.renew();
-            
-            // Ghi user_id vào phiên
-            session.insert_user_id(user_id).map_err(e500)?;
-            
-            Ok(HttpResponse::SeeOther()
-                .insert_header((actix_web::http::header::LOCATION, "/admin/dashboard"))
-                .finish())
-        }
-        Err(e) => {
-            // [...]
-        }
+impl Application {
+    pub async fn build(configuration: Settings) -> Result<Self, anyhow::Error> {
+        // ...
+        let server = run(
+            // ...
+            configuration.redis_uri,
+        )
+        .await?;
+        // ...
+    }
+}
+
+async fn run(
+    // ...
+    redis_uri: Secret<String>,
+) -> Result<Server, anyhow::Error> {
+    // ...
+    let redis_store = RedisSessionStore::new(redis_uri.expose_secret()).await?;
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(message_framework.clone())
+            .wrap(SessionMiddleware::new(redis_store.clone(), secret_key.clone()))
+            .wrap(TracingLogger::default())
+            // ...
+    });
+    // ...
+}
+```
+
+`main` cũng trở thành async và dùng anyhow result:
+
+```rust
+// src/main.rs
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // ...
+}
+```
+
+### Redis trong môi trường phát triển
+
+CI cần chạy Redis cùng PostgreSQL (nguồn dẫn tới workflow đã cập nhật trong repository của sách). Trên máy phát triển, script sau khởi chạy Redis container ở cổng mặc định 6379 và dừng nếu đã có container tên `redis`:
+
+```bash
+# scripts/init_redis.sh
+#!/usr/bin/env bash
+set -x
+set -eo pipefail
+
+RUNNING_CONTAINER=$(docker ps --filter 'name=redis' --format '{{.ID}}')
+if [[ -n $RUNNING_CONTAINER ]]; then
+  echo >&2 "there is a redis container already running, kill it with"
+  echo >&2 "    docker kill ${RUNNING_CONTAINER}"
+  exit 1
+fi
+
+docker run \
+    -p "6379:6379" \
+    -d \
+    --name "redis_$(date '+%s')" \
+    redis:7
+
+>&2 echo "Redis is ready to go!"
+```
+
+Đánh dấu script executable rồi chạy đúng đường dẫn `scripts`:
+
+```bash
+chmod +x ./scripts/init_redis.sh
+./scripts/init_redis.sh
+```
+
+### Redis trên DigitalOcean
+
+Theo hướng dẫn của sách, DigitalOcean không tạo development Redis cluster qua `spec.yaml`; cần tạo cluster qua dashboard và chọn cùng datacenter với ứng dụng. Sau bước “Get started” (bao gồm trusted sources và eviction policy), lấy connection string. Vì string có username/password, đưa nó vào cấu hình môi trường dưới dạng secret `APP_REDIS_URI` trong Settings của application console.
+
+## IV. Admin Dashboard và luồng đăng nhập
+
+Bắt đầu bằng skeleton route `GET /admin/dashboard`, sau đó kiểm tra lần lượt hai yêu cầu: đăng nhập thành công phải redirect tới dashboard và dashboard phải chào đúng người dùng; truy cập dashboard khi chưa đăng nhập phải redirect về `/login`.
+
+### Kiểm thử redirect sau đăng nhập
+
+Test black-box trước tiên xác nhận redirect và nội dung trang sau đó:
+
+```rust
+// tests/api/login.rs
+#[tokio::test]
+async fn redirect_to_admin_dashboard_after_login_success() {
+    let app = spawn_app().await;
+
+    let login_body = serde_json::json!({
+        "username": &app.test_user.username,
+        "password": &app.test_user.password
+    });
+    let response = app.post_login(&login_body).await;
+    assert_is_redirect_to(&response, "/admin/dashboard");
+
+    let html_page = app.get_admin_dashboard_html().await;
+    assert!(html_page.contains(&format!("Welcome {}", app.test_user.username)));
+}
+```
+
+Helper dùng cùng `api_client`, nhờ vậy cookie phiên nhận từ response đăng nhập sẽ được gửi ở request dashboard:
+
+```rust
+// tests/api/helpers.rs
+impl TestApp {
+    pub async fn get_admin_dashboard_html(&self) -> String {
+        self.api_client
+            .get(&format!("{}/admin/dashboard", &self.address))
+            .send()
+            .await
+            .expect("Failed to execute request.")
+            .text()
+            .await
+            .unwrap()
     }
 }
 ```
 
-<Callout type="warn" title="Lỗ hổng Session Fixation Attack">
-Nếu bạn giữ nguyên Session ID cũ sau khi người dùng nâng cấp từ trạng thái vô danh (anonymous) sang đã xác thực (authenticated), kẻ tấn công có thể "bẫy" sẵn một Session ID vào trình duyệt của nạn nhân từ trước và chiếm đoạt phiên ngay sau khi họ đăng nhập. Lệnh `session.renew()` bắt buộc máy chủ phải sinh ra một Session ID hoàn toàn mới ngay thời điểm xác thực thành công.
-</Callout>
+Ban đầu test thất bại vì `Location` còn là `/`. Sửa response thành `303 See Other` tới `/admin/dashboard`; khi đó assertion redirect qua, nhưng assertion lời chào vẫn thất bại. Nguyên nhân là dashboard chưa nhận diện người dùng từ session.
 
----
+### `Session`: ghi và đọc trạng thái
 
-## V. Xây Dựng Trang Admin Dashboard Được Bảo Vệ
-
-Bây giờ ta xây dựng trang đích: `GET /admin/dashboard`. Trang này sẽ kiểm tra phiên làm việc:
-- Nếu **chưa đăng nhập** (không tìm thấy `user_id` trong session): Lập tức chuyển hướng về `/login`.
-- Nếu **đã đăng nhập**: Truy vấn tên người dùng từ cơ sở dữ liệu và hiển thị lời chào trân trọng.
+`SessionMiddleware` đọc cookie ở request đến; nếu có cookie thì tải state từ backend, nếu không thì tạo state rỗng. Handler thao tác state bằng extractor `Session`. Sau đăng nhập hợp lệ, lưu `user_id` rồi redirect:
 
 ```rust
-//! src/routes/admin/dashboard.rs
+// src/routes/login/post.rs
+use actix_session::Session;
+
+pub async fn login(
+    // ...
+    session: Session,
+) -> Result<HttpResponse, InternalError<LoginError>> {
+    match validate_credentials(/* ... */).await {
+        Ok(user_id) => {
+            session.insert("user_id", user_id)
+                .map_err(|e| login_redirect(LoginError::UnexpectedError(e.into())))?;
+            Ok(HttpResponse::SeeOther()
+                .insert_header((LOCATION, "/admin/dashboard"))
+                .finish())
+        }
+        // ...
+    }
+}
+```
+
+Giá trị session được serialize thành JSON, nên UUID cần bật feature `serde`:
+
+```toml
+# Cargo.toml
+uuid = { version = "1", features = ["v4", "serde"] }
+```
+
+Lỗi serialize từ `Session::insert` phải được xử lý. Trong ví dụ, lỗi được chuyển sang `LoginError::UnexpectedError` rồi redirect về `/login` bằng helper `login_redirect`, helper này cũng gửi flash message.
+
+Các thao tác `Session` chỉ cập nhật state trong bộ nhớ của request. Khi handler trả response, middleware phát hiện thay đổi, ghi state vào Redis và đặt session cookie nếu chưa có.
+
+Ở dashboard, đọc giá trị với kiểu cần deserialize (`Uuid`); cả việc lấy giá trị lẫn truy vấn username đều có thể lỗi:
+
+```rust
+// src/routes/admin/dashboard.rs
+use actix_session::Session;
 use actix_web::http::header::ContentType;
 use actix_web::{web, HttpResponse};
+use anyhow::Context;
 use sqlx::PgPool;
 use uuid::Uuid;
-use crate::session_state::TypedSession;
-use crate::utils::{e500, see_other};
 
 pub async fn admin_dashboard(
-    session: TypedSession,
+    session: Session,
     pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let username = if let Some(user_id) = session.get_user_id().map_err(e500)? {
+    let username = if let Some(user_id) = session.get::<Uuid>("user_id").map_err(e500)? {
         get_username(user_id, &pool).await.map_err(e500)?
     } else {
-        // Chưa đăng nhập: Đẩy về trang Login!
-        return Ok(see_other("/login"));
+        todo!()
     };
 
     Ok(HttpResponse::Ok()
@@ -198,35 +274,119 @@ pub async fn admin_dashboard(
     <title>Admin dashboard</title>
 </head>
 <body>
-    <p>Welcome {}!</p>
-    <p>Available actions:</p>
-    <ol>
-        <li><a href="/admin/password">Change password</a></li>
-        <li>
-            <form name="logoutForm" action="/admin/logout" method="post">
-                <input type="submit" value="Logout">
-            </form>
-        </li>
-    </ol>
+    <p>Welcome {username}!</p>
 </body>
-</html>"#,
-            username
+</html>"#
         )))
 }
 
+#[tracing::instrument(name = "Get username", skip(pool))]
 async fn get_username(user_id: Uuid, pool: &PgPool) -> Result<String, anyhow::Error> {
     let row = sqlx::query!(
-        r#"
-        SELECT username
-        FROM users
-        WHERE user_id = $1
-        "#,
+        "SELECT username FROM users WHERE user_id = $1",
         user_id,
     )
     .fetch_one(pool)
-    .await?;
+    .await
+    .context("Failed to perform a query to retrieve a username.")?;
     Ok(row.username)
 }
 ```
 
-Kiến trúc quản lý phiên với Redis đã vận hành trơn tru: hệ thống bảo vệ toàn diện các trang quản trị nội bộ trước các truy cập trái phép.
+Đoạn `todo!()` là mốc tiến hóa: ban đầu handler chưa xử lý người chưa đăng nhập. Test riêng cho truy cập trực tiếp dashboard yêu cầu redirect `/login`; thay `todo!()` bằng `HttpResponse::SeeOther` với `LOCATION` thì test đó qua.
+
+### Chống session fixation
+
+Một người dùng có thể đã có anonymous session trước khi đăng nhập. Nếu giữ token cũ khi chuyển sang trạng thái có quyền, kẻ tấn công đã biết token có thể lợi dụng sự chuyển đổi đó. Gọi `Session::renew` khi xác thực thành công để xoay session ID trước khi ghi `user_id`:
+
+```rust
+// src/routes/login/post.rs
+Ok(user_id) => {
+    session.renew();
+    session
+        .insert("user_id", user_id)
+        .map_err(|e| login_redirect(LoginError::UnexpectedError(e.into())))?;
+    // redirect to /admin/dashboard
+}
+```
+
+### Typed interface cho session
+
+API gốc dùng chuỗi key nên dễ sai chính tả hoặc dùng không nhất quán kiểu dữ liệu. Vì `Session` là type bên ngoài crate, dùng **extension trait pattern** bằng wrapper `TypedSession`, rồi triển khai extractor để handler không cần tự lấy `Session`:
+
+```rust
+// src/session_state.rs
+use actix_session::{Session, SessionGetError, SessionInsertError};
+use uuid::Uuid;
+
+pub struct TypedSession(Session);
+
+impl TypedSession {
+    const USER_ID_KEY: &'static str = "user_id";
+
+    pub fn renew(&self) {
+        self.0.renew();
+    }
+
+    pub fn insert_user_id(&self, user_id: Uuid) -> Result<(), SessionInsertError> {
+        self.0.insert(Self::USER_ID_KEY, user_id)
+    }
+
+    pub fn get_user_id(&self) -> Result<Option<Uuid>, SessionGetError> {
+        self.0.get(Self::USER_ID_KEY)
+    }
+}
+```
+
+```rust
+// src/session_state.rs
+use actix_session::SessionExt;
+use actix_web::dev::Payload;
+use actix_web::{FromRequest, HttpRequest};
+use std::future::{ready, Ready};
+
+impl FromRequest for TypedSession {
+    type Error = <Session as FromRequest>::Error;
+    type Future = Ready<Result<TypedSession, Self::Error>>;
+
+    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        ready(Ok(TypedSession(req.get_session())))
+    }
+}
+```
+
+Sau đó login dùng `TypedSession`, gọi `renew()` và `insert_user_id(user_id)`; dashboard gọi `get_user_id()`. Lỗi insert vẫn được xử lý như trước.
+
+## V. Chặn người chưa đăng nhập
+
+Test yêu cầu request trực tiếp tới dashboard phải redirect về form:
+
+```rust
+// tests/api/admin_dashboard.rs
+#[tokio::test]
+async fn you_must_be_logged_in_to_access_the_admin_dashboard() {
+    let app = spawn_app().await;
+    let response = app.get_admin_dashboard().await;
+    assert_is_redirect_to(&response, "/login");
+}
+```
+
+Helper trả response để kiểm tra header, còn helper HTML có thể gọi lại helper này. Triển khai nhánh chưa đăng nhập bằng redirect `303`:
+
+```rust
+// src/routes/admin/dashboard.rs
+use actix_web::http::header::LOCATION;
+
+// Trong admin_dashboard:
+let username = if let Some(user_id) = session.get_user_id().map_err(e500)? {
+    get_username(user_id, &pool).await.map_err(e500)?
+} else {
+    return Ok(HttpResponse::SeeOther()
+        .insert_header((LOCATION, "/login"))
+        .finish());
+};
+```
+
+<Callout type="warn" title="Phạm vi của phần này">
+Đây là tiến trình xây dựng trong chương: ban đầu handler tự đọc session và tự redirect. Việc chuyển kiểm tra đăng nhập thành middleware chỉ được thực hiện ở mục 10.9, không phải một tính năng đã có sẵn trong dashboard ở bước này.
+</Callout>

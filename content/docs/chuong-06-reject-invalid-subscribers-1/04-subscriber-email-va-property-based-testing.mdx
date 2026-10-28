@@ -16,7 +16,7 @@ Tất cả chúng ta đều đã quá quen thuộc với cấu trúc trực quan
 Lực lượng Chuyên trách Kỹ thuật Internet (IETF) đã ban hành hàng loạt văn bản RFC (Request for Comments) mô tả cấu trúc chuẩn của địa chỉ email: [RFC 6854](https://tools.ietf.org/html/rfc6854), [RFC 5322](https://tools.ietf.org/html/rfc5322), [RFC 2822](https://tools.ietf.org/html/rfc2822). Nếu muốn tự viết một hàm `is_valid_email`, bạn sẽ phải đọc hàng trăm trang tài liệu này, tiêu hóa hàng loạt quy tắc cú pháp kỳ dị (như cho phép dấu ngoặc đơn chứa chú thích, dấu ngoặc kép bọc chuỗi, địa chỉ IP trong ngoặc vuông...). Độ phức tạp của nó rối rắm đến mức ngay cả [đặc tả chuẩn HTML của tổ chức WHATWG cũng cố tình *không tuân thủ* hoàn toàn các chuẩn RFC](https://html.spec.whatwg.org/multipage/input.html#valid-e-mail-address).
 
 <Callout type="warn" title="Đừng Tự Viết Lại Bánh Xe Lãng Phí">
-Trừ khi bạn có một đam mê học thuật đặc biệt với những ngóc ngách kỳ quặc của định dạng email, lời khuyên chân thành của một Senior Developer là: **Đừng bao giờ tự viết Regex kiểm tra email!** Hãy tận dụng các thư viện đã được cộng đồng kiểm chứng và bảo trì lâu năm. Trong hệ sinh thái Rust, giải pháp hoàn hảo nhất chính là crate [`validator`](https://crates.io/crates/validator).
+Trừ khi bạn thực sự quan tâm đến những sắc thái phức tạp của định dạng email, hãy cân nhắc dùng một thư viện có sẵn thay vì tự viết hàm `is_valid_email`. Trong hệ sinh thái Rust, crate [`validator`](https://crates.io/crates/validator) là một lựa chọn phù hợp; crate này tuân theo đặc tả HTML khi kiểm tra email.
 </Callout>
 
 ---
@@ -173,7 +173,7 @@ flowchart LR
     Test -->|Có Ca Biên Thất Bại| Shrink[Tự Động Thu Hẹp: Shrink]
 ```
 
-Thay vì kiểm tra một vài giá trị cố định, chúng ta khẳng định một **thuộc tính tổng quát (invariant property)** của hệ thống: *"Mọi địa chỉ email hợp lệ đều không bao giờ bị hàm parse từ chối"*. Công cụ kiểm thử sẽ tự động sinh ra hàng trăm mẫu dữ liệu ngẫu nhiên khác nhau trên mỗi lần chạy để kiểm chứng thuộc tính đó!
+Thay vì kiểm tra một vài giá trị cố định, chúng ta khẳng định một **thuộc tính tổng quát (property)** của hệ thống: *"Không email hợp lệ nào bị hàm parse từ chối"*. Property-based testing mở rộng đáng kể phạm vi đầu vào được kiểm tra và tăng độ tin cậy, nhưng không chứng minh parser đúng vì không khảo sát toàn bộ không gian đầu vào (trừ những không gian rất nhỏ).
 
 ---
 
@@ -185,6 +185,8 @@ Thay vì kiểm tra một vài giá trị cố định, chúng ta khẳng địn
 # Cargo.toml
 # [...]
 [dev-dependencies]
+# Không dùng fake >= 2.4 ở thời điểm sách viết: phiên bản đó dùng rand 0.8,
+# chưa tương thích với quickcheck (vấn đề dự kiến được giải quyết ở quickcheck 1.0).
 fake = "~2.3"
 ```
 
@@ -207,11 +209,9 @@ Mỗi lần chạy `cargo test`, `SafeEmail().fake()` sẽ sinh ra một địa 
 
 ### 2. Lựa Chọn Framework: `quickcheck` vs `proptest`
 
-Trong hệ sinh thái Rust hiện tại có hai thư viện kiểm thử Property-based hàng đầu:
-- **`proptest`**: Lấy cảm hứng từ thư viện Hypothesis của Python, cực kỳ mạnh mẽ, hỗ trợ Regex strategies phức tạp nhưng sử dụng rất nhiều macro nặng nề.
-- **`quickcheck`**: Cổng chuyển đổi từ thư viện QuickCheck trứ danh của Haskell. Thiết kế gọn gàng, trực diện, ít macro rối mắt và tích hợp mượt mà với tính năng gợi ý code của các IDE (Rust Analyzer).
+Trong hệ sinh thái Rust có hai lựa chọn phổ biến cho Property-based Testing là [`quickcheck`](https://crates.io/crates/quickcheck) và [`proptest`](https://crates.io/crates/proptest). Phạm vi sử dụng của chúng có phần giao nhau, nhưng mỗi crate có thế mạnh riêng; có thể xem README của từng crate để biết chi tiết.
 
-Chúng ta sẽ chọn **`quickcheck`** cùng macro hỗ trợ `quickcheck_macros`:
+Trong dự án này, chúng ta chọn **`quickcheck`** vì tương đối dễ bắt đầu và không dùng quá nhiều macro, giúp trải nghiệm IDE dễ chịu hơn:
 
 ```toml
 # Cargo.toml
@@ -241,7 +241,7 @@ pub trait Arbitrary: Clone + Send + 'static {
 }
 ```
 
-Chúng ta định nghĩa một struct bọc dữ liệu phục vụ test mang tên `ValidEmailFixture`:
+Chúng ta định nghĩa một struct bọc dữ liệu phục vụ test mang tên `ValidEmailFixture`. Vì `Arbitrary` có triển khai mặc định cho `shrink` dùng `empty_shrinker`, fixture này chỉ cần tự cài đặt `arbitrary`; khi gặp lỗi, `quickcheck` sẽ không thu nhỏ fixture để tìm ví dụ lỗi đơn giản hơn:
 
 ```rust
 //! src/domain/subscriber_email.rs
@@ -278,7 +278,7 @@ Hãy chú ý cách `fake` và `quickcheck` bắt tay với nhau một cách di�
 - Nhờ việc toàn bộ cộng đồng Rust cùng thống nhất trên bộ trait lõi của `rand`, hai thư viện hoàn toàn độc lập này có thể truyền đối tượng sinh số ngẫu nhiên qua lại cho nhau mà **không cần biết gì về nhau**!
 </Callout>
 
-Chạy `cargo test domain`: 100 địa chỉ email hợp lệ ngẫu nhiên đã được kiểm chứng chớp nhoáng và vượt qua thành công!
+Chạy `cargo test domain`: `quickcheck` mặc định thử thuộc tính 100 lần, mỗi lần dùng một email được sinh qua `SafeEmail` và kiểm tra parser không từ chối. Nếu muốn xem dữ liệu ngẫu nhiên được tạo ra, thêm `dbg!(&valid_email.0);` vào test rồi chạy `cargo test valid_emails -- --nocapture`; terminal sẽ in ra nhiều email hợp lệ.
 
 ---
 
@@ -331,9 +331,9 @@ pub async fn insert_subscriber(
 
 ### Chuẩn Hóa Chuyển Đổi Dữ Liệu Bằng Trait `TryFrom` và `TryInto`
 
-Trong request handler `subscribe`, việc phân tích cú pháp từ dữ liệu thô của form (`FormData`) sang domain model (`NewSubscriber`) thực chất là một phép **chuyển đổi kiểu dữ liệu có thể thất bại**.
+Trong request handler `subscribe`, việc phân tích cú pháp từ dữ liệu thô của form (`FormData`) sang domain model (`NewSubscriber`) thực chất là một phép **chuyển đổi kiểu dữ liệu có thể thất bại**. Ta có thể tách riêng logic này thành hàm `parse_subscriber`, trả về `Result<NewSubscriber, String>`, để phân biệt việc chuyển đổi wire format thành domain model với việc tạo HTTP response.
 
-Thay vì viết các hàm tiện ích tự chế, thư viện chuẩn Rust cung cấp trait **[`TryFrom`](https://doc.rust-lang.org/std/convert/trait.TryFrom.html)** để chuẩn hóa hành vi này:
+Thư viện chuẩn Rust có trait **[`TryFrom`](https://doc.rust-lang.org/std/convert/trait.TryFrom.html)** dành cho kiểu chuyển đổi có thể thất bại và tiêu thụ giá trị đầu vào. Chữ ký của trait này tương ứng với hàm `parse_subscriber`:
 
 ```rust
 //! src/routes/subscriptions.rs
@@ -405,6 +405,4 @@ Chúng ta đã hoàn thành xuất sắc mục tiêu của Chương 6:
 - Nâng tầm chất lượng kiểm thử với `claims` và **Property-based Testing** (`fake` + `quickcheck`).
 - Chuẩn hóa ranh giới chuyển đổi dữ liệu bằng `TryFrom` / `TryInto`.
 
-Tuy nhiên, việc kiểm tra địa chỉ email thỏa mãn định dạng cú pháp vẫn chưa đủ: một địa chỉ email đúng chuẩn cú pháp chưa chắc có thật, và quan trọng hơn, chưa chắc người nhập form thực sự là chủ sở hữu của email đó! 
-
-Để giải quyết bài toán đồng thuận người dùng (Subscriber Consent) và ngăn chặn nạn spam, chúng ta cần triển khai **luồng gửi email xác nhận (Confirmation Emails)**. Đó chính là toàn bộ nội dung mà chúng ta sẽ cùng nhau chinh phục trong **Chương 7**!
+Việc kiểm tra email thỏa mãn định dạng cú pháp vẫn chưa đủ: ta chưa biết địa chỉ đó có tồn tại hay có thể nhận thư hay không. Cách duy nhất để biết là gửi email thực tế. Đây là chủ đề của chương tiếp theo.

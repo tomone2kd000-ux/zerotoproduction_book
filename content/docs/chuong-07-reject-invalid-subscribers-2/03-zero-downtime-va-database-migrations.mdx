@@ -9,7 +9,7 @@ Sau khi hoàn thành `EmailClient` và tái cấu trúc bộ test suite tích h�
 
 Để làm được điều đó, chúng ta cần bổ sung thêm một trường mới mang tên `status` vào bảng `subscriptions` (để phân biệt giữa `pending_confirmation` và `confirmed`), đồng thời tạo thêm một bảng mới để lưu trữ các mã xác thực (`subscription_tokens`).
 
-Thế nhưng, ứng dụng của chúng ta hiện **đã được triển khai lên môi trường production thực tế** (ở Chương 5). Chúng ta không thể đơn giản gõ lệnh `ALTER TABLE` một cách tùy tiện trên database đang chạy trực tiếp. Bất kỳ một bước đi bất cẩn nào cũng có thể làm sập toàn bộ dịch vụ đang phục vụ người dùng!
+Ứng dụng đã được triển khai lên cloud ở Chương 5 và hiện có thể nhận đăng ký. Vì phiên bản cũ và mới có thể cùng chạy trong lúc rollout, thay đổi schema cần được triển khai theo các bước tương thích với cả hai phiên bản.
 
 ---
 
@@ -21,10 +21,8 @@ Khi một ứng dụng bắt đầu phục vụ người dùng thực tế trên
 
 Trong các hợp đồng thương mại, độ tin cậy thường được cụ thể hóa bằng một cam kết pháp lý mang tên **SLA (Service Level Agreement)**. Ví dụ: dịch vụ của bạn cam kết độ khả dụng đạt **"bốn số 9" (99.99% availability)**.
 
-<Callout type="warn" title="Four Nines of Availability (99.99%) Nghĩa Là Gì?">
-Độ khả dụng 99.99% đồng nghĩa với việc: trong suốt 365 ngày của một năm, tổng thời gian hệ thống của bạn được phép ngừng hoạt động (downtime) **không được vượt quá 52 phút**! 
-
-Nếu bạn triển khai phần mềm theo kiểu cũ (mỗi lần cập nhật phiên bản mới là phải tắt máy chủ 5-10 phút), bạn sẽ làm cạn kiệt toàn bộ "ngân sách lỗi" (error budget) của cả năm chỉ sau vài lần phát hành bản vá!
+<Callout type="info" title="Bốn số 9 về availability">
+Availability 99.99% tương ứng tối đa khoảng 52 phút downtime mỗi năm, nếu giả định lượng request phân bố đều theo thời gian. Đạt được mức này đòi hỏi nỗ lực ở nhiều lớp, từ ứng dụng đến hạ tầng; không có một giải pháp đơn lẻ nào bảo đảm high availability.
 </Callout>
 
 Do đó, bất kỳ hệ thống hiện đại nào cũng bắt buộc phải làm chủ kỹ thuật **triển khai không gián đoạn (Zero Downtime Deployments)**: người dùng hoàn toàn có thể sử dụng dịch vụ bình thường trước, trong và sau thời điểm phiên bản mới được triển khai.
@@ -48,9 +46,11 @@ Trong khoảng thời gian chuyển giao giữa bước 1 và bước 2, **hoàn
 
 Mỗi bản sao ứng dụng được đăng ký với Load Balancer như một **backend**. Khi có request gửi đến từ Internet, Load Balancer sẽ điều phối request đó tới một trong những backend đang rảnh rỗi.
 
-Load Balancer liên tục giám sát sức khỏe của các backend thông qua cơ chế **Health Check**:
-- **Passive Health Check**: Load Balancer theo dõi tỷ lệ lỗi hoặc độ trễ phản hồi của từng backend.
-- **Active Health Check**: Load Balancer định kỳ gửi một HTTP request tới endpoint kiểm tra (chẳng hạn như `/health_check` mà chúng ta đã xây dựng). Nếu một backend không phản hồi hoặc trả về mã lỗi, Load Balancer sẽ lập tức gạch tên nó ra khỏi danh sách điều phối, giúp hệ thống đạt khả năng **tự chữa lành (self-healing)**.
+Load Balancer có thể giám sát sức khỏe backend theo hai cách:
+- **Passive Health Check**: dựa trên phân bố status code hoặc latency của từng backend.
+- **Active Health Check**: gửi request kiểm tra theo lịch. Nếu backend không trả về success trong một khoảng thời gian đủ lâu, nó bị đánh dấu unhealthy và bị loại khỏi danh sách backend.
+
+Đây là một phần quan trọng của khả năng **self-healing**; việc tự động tạo replica thay thế còn phụ thuộc vào năng lực của nền tảng.
 
 ---
 
@@ -69,11 +69,11 @@ Chúng ta bật một instance chạy phiên bản `B`. Khi instance này khởi
 ![Một instance phiên bản B hoạt động song song](/images/file3.png)
 
 **Bước 3: Tắt dần bản sao phiên bản cũ**  
-Load Balancer ngừng điều phối request tới một instance phiên bản `A`, đợi nó xử lý nốt các request đang dang dở rồi tắt bỏ (decommission):
+Sau khi instance `B` sẵn sàng, ta tắt một instance `A`. Lặp lại quy trình để thay dần các replica cũ:
 
 ![Instance phiên bản A được decommission](/images/file4.png)
 
-Quá trình này lặp lại tuần tự cho đến khi toàn bộ các instance phiên bản `A` được thay thế hoàn toàn bởi phiên bản `B`. Trong suốt quá trình này, luôn có ít nhất 3 instance khỏe mạnh phục vụ người dùng — **hoàn toàn không có một mili-giây downtime nào xảy ra!**
+Quá trình này lặp lại tuần tự cho đến khi mọi backend đã chạy phiên bản `B`. Đây là chiến lược **rolling update**: phiên bản cũ và mới chạy song song, cùng phục vụ lưu lượng thực tế. Trong điều kiện phiên bản `B` không có lỗi, luôn có ít nhất 3 backend khỏe mạnh nên người dùng không bị gián đoạn dịch vụ.
 
 ---
 
@@ -89,13 +89,11 @@ Thế nhưng, toàn bộ trạng thái của hệ thống lại được lưu tr
 [App vB (Mới)] ──┘
 ```
 
-<Callout type="error" title="Cạm Bẫy Chết Người Của Việc Thay Đổi Schema">
-Trong suốt quá trình Rolling Update diễn ra, **phiên bản ứng dụng cũ (vA) và phiên bản ứng dụng mới (vB) cùng lúc kết nối vào DUY NHẤT MỘT cơ sở dữ liệu!**
-- Nếu bạn chạy Migration cập nhật database **TRƯỚC**: Phiên bản ứng dụng cũ (vA) vẫn đang chạy có thể không hiểu cấu trúc bảng mới hoặc bị gãy các câu lệnh SQL, gây sập dịch vụ.
-- Nếu bạn chạy Migration cập nhật database **SAU**: Phiên bản ứng dụng mới (vB) khi vừa được bật lên sẽ lập tức phát nổ vì các cột hoặc bảng mà nó mong đợi chưa hề tồn tại trong cơ sở dữ liệu!
+<Callout type="error" title="Tương thích schema trong rolling update">
+Trong rollout, phiên bản cũ (vA) và mới (vB) cùng dùng một database. Nếu thêm cột `NOT NULL` trước khi triển khai code mới, vA sẽ tiếp tục INSERT mà không cung cấp giá trị cho cột đó và thao tác ghi sẽ lỗi. Nếu triển khai code mới trước migration, vB sẽ truy vấn/ghi cột chưa tồn tại và cũng lỗi.
 </Callout>
 
-Giải pháp duy nhất cho nghịch lý này là: **Mọi thay đổi trong cơ sở dữ liệu đều phải tương thích ngược (backwards-compatible)** thông qua kỹ thuật **Migration Đa Bước (Multi-step Migrations)**.
+Vì vậy, cần tách thay đổi schema và thay đổi hành vi ứng dụng thành các bước nhỏ, sao cho schema tạm thời vẫn dùng được với cả hai phiên bản.
 
 ---
 
@@ -129,7 +127,7 @@ Nội dung file SQL:
 ALTER TABLE subscriptions ADD COLUMN status TEXT NULL;
 ```
 
-Chạy migration này trên database. Vì cột `status` cho phép giá trị `NULL`, nên phiên bản ứng dụng cũ (vA) vẫn tiếp tục đọc và ghi bình thường mà không bị ảnh hưởng gì cả!
+Theo sách, chạy migration trên database cục bộ bằng `SKIP_DOCKER=true ./scripts/init_db.sh`, rồi chạy test suite để kiểm tra code hiện tại với schema mới; sau đó mới migrate production. Vì cột mới cho phép `NULL`, code cũ vẫn có thể ghi mà không chỉ định giá trị này.
 
 ---
 
@@ -171,9 +169,7 @@ Chúng ta chạy bộ test suite và triển khai phiên bản code mới này l
 
 ### Bước 3: Điền Dữ Liệu Cũ (Backfill) & Đánh Dấu `NOT NULL`
 
-Khi 100% các instance chạy phiên bản mới đã hoàn tất rollout, chúng ta chỉ còn một việc duy nhất: cập nhật giá trị cho các bản ghi lịch sử trước đây (những bản ghi đang có `status IS NULL`), sau đó chính thức áp đặt ràng buộc `NOT NULL`.
-
-Tạo migration script thứ hai:
+Sau khi rollout phiên bản mới hoàn tất, các bản ghi mới đều có `status`; những bản ghi lịch sử vẫn có thể là `NULL`. Ta backfill các bản ghi đó rồi đặt ràng buộc `NOT NULL`. Theo sách, migration này được bọc trong transaction tường minh (SQLx không tự làm điều đó cho migration này):
 
 ```bash
 sqlx migrate add make_status_not_null_in_subscriptions
@@ -196,7 +192,7 @@ BEGIN;
 COMMIT;
 ```
 
-Chạy migration này lên production. Toàn bộ quá trình nâng cấp cơ sở dữ liệu đã hoàn thành 100% trơn tru, không phát sinh bất kỳ một lỗi xung đột nào!
+Chạy migration trên database cục bộ và kiểm thử trước khi áp dụng lên production; sau đó cột `status` đã được backfill và đặt thành `NOT NULL`.
 
 ---
 
@@ -213,14 +209,14 @@ sqlx migrate add create_subscription_tokens_table
 CREATE TABLE subscription_tokens(
     subscription_token TEXT NOT NULL,
     subscriber_id UUID NOT NULL 
-        REFERENCES subscriptions (id) ON DELETE CASCADE,
+        REFERENCES subscriptions (id),
     PRIMARY KEY (subscription_token)
 );
 ```
 
 <Callout type="info" title="Thiết Kế Khóa Chính & Khóa Ngoại Thông Minh">
 - `subscription_token` đóng vai trò là **PRIMARY KEY** (Khóa chính) để tối ưu tốc độ tìm kiếm khi độc giả nhấp vào liên kết xác thực `GET /subscriptions/confirm?token=XYZ`.
-- `subscriber_id` là khóa ngoại tham chiếu đến `subscriptions(id)`. Ràng buộc `ON DELETE CASCADE` bảo đảm nếu một subscriber bị xóa khỏi hệ thống, toàn bộ token liên quan của họ cũng sẽ tự động được dọn dẹp sạch sẽ khỏi cơ sở dữ liệu.
+- `subscriber_id` là khóa ngoại tham chiếu đến `subscriptions(id)`, bảo đảm mỗi token được gắn với một subscriber tồn tại.
 </Callout>
 
 Cơ sở dữ liệu của chúng ta giờ đây đã được trang bị đầy đủ các bảng và cột cần thiết. Ở bài học tiếp theo, chúng ta sẽ bắt tay vào việc sinh mã xác thực ngẫu nhiên và gửi email thực tế đến độc giả!

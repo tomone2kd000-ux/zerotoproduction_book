@@ -258,7 +258,7 @@ Hãy chú ý điều gì xảy ra nếu `store_token` bị lỗi và hàm `subsc
 - Biến `transaction` sẽ đi ra ngoài tầm vực (out of scope) và hàm hủy (`Drop`) của nó được kích hoạt tự động.
 - Trong hàm `drop` của `sqlx::Transaction`, SQLx nhận thấy transaction này **chưa hề được gọi `.commit()`**, và nó sẽ **tự động gửi lệnh `ROLLBACK` bất đồng bộ ngầm** về phía PostgreSQL!
 
-Bạn không cần phải viết các khối `try/catch/finally` dài dòng để gọi `rollback()` thủ công. Hệ thống Ownership và Drop của Rust bảo đảm 100% không bao giờ có một transaction nào bị treo lơ lửng hay rò rỉ kết nối!
+Nếu `Transaction` bị drop khi chưa commit hoặc rollback, SQLx xếp lịch rollback để được thực thi ở lần bất đồng bộ tiếp theo trên connection. Rust chưa hỗ trợ async destructor, vì vậy rollback không chạy ngay bên trong `Drop`; đây là chi tiết quan trọng khi xét cách SQLx quản lý transaction.
 </Callout>
 
 Chạy lại toàn bộ test suite của dự án:

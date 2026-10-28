@@ -84,8 +84,10 @@ my_project/
 ```
 
 Sự khác biệt cốt lõi nằm ở **quyền hiển thị (visibility)**:
-- **Embedded Test Module:** Có đặc quyền truy cập vào toàn bộ các struct, hàm, trường nội bộ (private) của module. Rất thích hợp cho các dự án kiểu "tảng băng chìm" (Iceberg projects) — nơi giao diện công khai rất nhỏ nhưng bộ máy tính toán chìm bên dưới cực kỳ phức tạp.
-- **Thư mục `tests/`:** Được biên dịch thành một file nhị phân độc lập hoàn toàn. Nó chỉ có thể tương tác với mã nguồn của bạn thông qua các hàm `pub` được export từ thư viện. Đây chính là nơi hoàn hảo cho **Integration Testing**.
+- **Embedded Test Module:** Được biên dịch cùng crate, chỉ bật khi có `#[cfg(test)]` và có thể truy cập các thành phần private trong module chứa nó. Cách này hữu ích cho dự án có API công khai nhỏ nhưng phần cài đặt bên trong phức tạp: có thể kiểm thử các thành phần private khó bao phủ đầy đủ qua API công khai.
+- **Thư mục `tests/`:** Mỗi tệp kiểm thử ngoài được biên dịch thành binary riêng và chỉ có quyền truy cập như một crate phụ thuộc; đây là lựa chọn tự nhiên cho integration test. Doc tests cũng được biên dịch riêng và có cùng giới hạn quyền truy cập.
+
+Dự án newsletter không phải thư viện Rust được phát hành cho người khác dùng, nên ranh giới unit/integration test ở đây không hoàn toàn rõ. Dù vậy, ta vẫn chọn `tests/`: nó tách biệt rõ ràng và giúp quản lý test helpers dưới dạng submodules của binary kiểm thử.
 
 ---
 
@@ -96,6 +98,31 @@ Tất cả các file đặt trong thư mục `tests/` đều coi dự án của 
 Chúng ta cần tách dự án thành 2 phần:
 1. **Library crate (`src/lib.rs`):** Nơi chứa toàn bộ logic ứng dụng, hàm handler và cấu hình server.
 2. **Binary crate (`src/main.rs`):** Một vỏ bọc siêu mỏng, chỉ đóng vai trò entrypoint gọi thư viện để khởi chạy.
+
+Trước khi sửa cấu trúc, có thể kiểm chứng vì sao cần bước này. Tạo thư mục `tests/` rồi thêm `tests/health_check.rs` với đoạn thử nghiệm sau:
+
+```rust
+//! tests/health_check.rs
+
+use zero2prod::main;
+
+#[test]
+fn dummy_test() {
+    main()
+}
+```
+
+Chạy `cargo test` sẽ thất bại vì crate `zero2prod` chưa được khai báo như một thư viện có thể import:
+
+```text
+error[E0432]: unresolved import `zero2prod`
+ --> tests/health_check.rs:1:5
+  |
+1 | use zero2prod::main;
+  |     ^^^^^^^^^ use of undeclared type or module `zero2prod`
+```
+
+Đây là hệ quả của cách Cargo biên dịch integration tests: mỗi tệp trong `tests/` là một binary riêng, và mã đang kiểm thử được import như một crate. Binary hiện tại chỉ dành để chạy ứng dụng, nên không thể import hàm `main` theo cách trên.
 
 ### 1. Cập nhật `Cargo.toml`
 
@@ -304,9 +331,9 @@ Tuyệt vời! Bài kiểm thử tích hợp đầu tiên của chúng ta đã c
 
 ## V. Tinh Chỉnh & Giải Quyết Đụng Độ Cổng (Polishing & Random Port)
 
-Mặc dù bài test đã chạy thành công, thiết kế hiện tại vẫn tiềm ẩn rủi ro lớn: Cổng `8000` bị gán cứng (hardcoded).
-- Nếu máy bạn đang chạy một dịch vụ khác ở cổng 8000, test sẽ gãy lập tức.
-- Khi viết nhiều bài test chạy song song (`cargo test` mặc định chạy đa luồng), chỉ một test chiếm được cổng 8000, tất cả các test còn lại sẽ sập với lỗi `Address already in use`.
+Mặc dù bài test đã chạy thành công, thiết kế hiện tại vẫn có vấn đề: cổng `8000` bị gán cứng.
+- Nếu một chương trình khác trên máy (chẳng hạn chính ứng dụng đang chạy) đã dùng cổng 8000, test sẽ thất bại.
+- Nếu chạy từ hai test trở lên song song, chỉ một test bind được cổng; các test còn lại sẽ thất bại.
 
 ### Cổng Số 0 (Port 0) Của Hệ Điều Hành
 

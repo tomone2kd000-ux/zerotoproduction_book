@@ -51,14 +51,9 @@ Trong suốt quá trình này, chúng ta sẽ dựa vào đường ống tích h
 
 Chúng ta nên sử dụng web framework nào để viết API backend bằng Rust?
 
-Nếu dạo một vòng quanh hệ sinh thái Rust, bạn sẽ thấy rất nhiều lựa chọn cạnh tranh sôi nổi:
-- `actix-web`: Framework kỳ cựu, hiệu năng cực cao, hệ sinh thái đồ sộ.
-- `axum`: Framework do chính đội ngũ phát triển Tokio bảo trợ, tích hợp sâu với hệ sinh thái Tower và Hyper.
-- `rocket`: Nổi tiếng với trải nghiệm lập trình (DX) trực quan nhờ lạm dụng macro một cách thanh lịch, ban đầu chỉ chạy trên nightly compiler nhưng sau này đã hỗ trợ stable.
-- `warp`: Framework dựa trên mô hình kết hợp bộ lọc (filter composition), có phong cách lập trình hàm rất độc đáo nhưng thời gian biên dịch và thông báo lỗi kiểu dữ liệu đôi khi rất phức tạp.
-- `poem`, `tide`: Các framework nhẹ nhàng, hiện đại khác.
+Trong hệ sinh thái Rust có nhiều framework cạnh tranh như `actix-web`, `axum`, `poem`, `tide` và `rocket`. Cuốn sách chọn **`actix-web`**. Đây là một trong những framework Rust lâu đời nhất, đã được sử dụng rộng rãi trong production và có cộng đồng cùng hệ sinh thái plugin lớn. Một điểm thực dụng khác là `actix-web` chạy trên `tokio`, nhờ đó giảm khả năng gặp vấn đề tương thích khi kết hợp với các thư viện async khác.
 
-Trong khuôn khổ cuốn sách *Zero To Production In Rust*, chúng ta quyết định lựa chọn **`actix-web`**.
+Đây là lựa chọn của cuốn sách, không phải khẳng định rằng có một framework phù hợp nhất cho mọi dự án.
 
 ```text
 +--------------------------------------------------------------------------+

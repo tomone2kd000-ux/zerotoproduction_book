@@ -66,11 +66,17 @@ doctl apps create --spec spec.yaml
 
 Nếu chưa cấp quyền cho DigitalOcean truy cập kho lưu trữ GitHub của bạn, hãy làm theo hướng dẫn trên màn hình để liên kết tài khoản. 
 
+Lần chạy đầu có thể báo thiếu API token; khởi tạo xác thực bằng `doctl auth init` và tạo token trong control panel DigitalOcean. Nếu sau đó nhận lỗi `GitHub user not authenticated`, hãy liên kết tài khoản GitHub theo hướng dẫn DigitalOcean rồi chạy lại lệnh tạo app. Khi thành công, CLI báo `App created` cùng app ID.
+
 Sau khi lệnh hoàn tất, bạn có thể kiểm tra danh sách app:
 
 ```bash
 doctl apps list
 ```
+
+Tạo app thành công chưa có nghĩa là app đã chạy: ở tab Deployment trên dashboard, Docker image có thể vẫn đang build. Một số build có thể mất nhiều thời gian; đội hỗ trợ DigitalOcean khuyến nghị tận dụng Docker layer caching để giảm thời gian này. Nếu image build bị out-of-memory, có thể xem issue được liên kết trong repository của sách. Chờ log báo `Uploaded the built image to the container registry` và `Build complete`; sau đó platform sẽ ping health check khoảng mỗi 10 giây. Lệnh `doctl apps list` cũng cho biết URI công khai.
+
+Khi health check chạy được, HTTPS đã được DigitalOcean thiết lập bằng chứng chỉ và chuyển tiếp lưu lượng HTTPS tới port khai báo trong App Spec.
 
 Trên dashboard của DigitalOcean, bạn sẽ thấy tiến trình build Docker image tự động bắt đầu. Khi build hoàn tất, hệ thống sẽ cấp phát một tên miền công khai dạng:
 
@@ -78,7 +84,7 @@ Trên dashboard của DigitalOcean, bạn sẽ thấy tiến trình build Docker
 https://zero2prod-aaaaa.ondigitalocean.app
 ```
 
-DigitalOcean tự động cấu hình chứng chỉ bảo mật HTTPS (SSL/TLS termination) và điều hướng truy vấn vào container của bạn. Hãy thử gửi request:
+Hãy thử gửi request:
 
 ```bash
 curl -v https://zero2prod-aaaaa.ondigitalocean.app/health_check

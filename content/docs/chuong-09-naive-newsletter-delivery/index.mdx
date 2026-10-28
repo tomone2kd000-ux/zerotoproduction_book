@@ -1,6 +1,6 @@
 ---
 title: "Tổng Quan Chương 9: Triển Khai Endpoint Gửi Bản Tin"
-description: "Xây dựng endpoint phát hành bản tin đầu tiên trong ứng dụng Zero2Prod: kỹ thuật kiểm thử Scoped Mocks với WireMock, xử lý dữ liệu lưu trữ không đồng bộ, và nhận diện 5 giới hạn hệ thống chết người của cách tiếp cận ngây thơ."
+description: "Xây dựng endpoint phát hành bản tin đầu tiên trong ứng dụng Zero2Prod: kiểm thử Scoped Mocks với WireMock, xử lý dữ liệu lưu trữ và nhận diện năm giới hạn của cách tiếp cận ban đầu."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
@@ -27,7 +27,7 @@ Chương này gồm 3 bài học thực chiến:
   Sự tiến hóa của User Stories theo miền nghiệp vụ. Xây dựng integration test đảm bảo không gửi thư cho người chưa xác thực. Kỹ thuật quản lý vòng đời mock với `mount_as_scoped` và `MockGuard`. Tổ chức test helper theo mô hình module hóa và green test đầu tiên cho `POST /newsletters`.
 
 - **[9.4 - 9.7: Chiến Lược Triển Khai, Body Schema & Gửi Email](/docs/chuong-09-naive-newsletter-delivery/02-implementation-va-gui-newsletter)**:
-  Xây dựng Body Schema dạng JSON lồng nhau (`BodyData` & `Content`). Viết kiểm thử tự động cho dữ liệu đầu vào không hợp lệ (400 Bad Request). Truy vấn danh sách subscriber đã xác thực từ PostgreSQL với `sqlx::query!`. Tích hợp `EmailClient` và phân biệt chi phí hiệu năng giữa `context` và lazy `with_context`.
+  Xây dựng Body Schema dạng JSON lồng nhau (`BodyData` & `Content`). Viết kiểm thử tự động cho dữ liệu đầu vào không hợp lệ (400 Bad Request). Truy vấn danh sách subscriber đã xác thực từ PostgreSQL với `sqlx::query_as!`. Tích hợp `EmailClient` và phân biệt chi phí hiệu năng giữa `context` và lazy `with_context`.
 
 - **[9.8 - 9.10: Ranh Giới Trách Nhiệm & Giới Hạn Của Giải Pháp Cơ Bản](/docs/chuong-09-naive-newsletter-delivery/03-gioi-han-cua-naive-approach)**:
   Hiểm họa tiềm ẩn khi giả định *"dữ liệu trong database luôn hợp lệ"*. Khớp nối thời gian (temporal coupling) giữa các phiên bản phần mềm. Kỹ thuật trả về `Vec<Result<T, E>>` để phân định ranh giới trách nhiệm. Phân tích 5 lỗ hổng chí mạng của giải pháp ngây thơ trước khi đưa ra production.

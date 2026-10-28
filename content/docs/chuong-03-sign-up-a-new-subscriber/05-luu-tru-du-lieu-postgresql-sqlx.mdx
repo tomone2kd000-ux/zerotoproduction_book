@@ -52,9 +52,7 @@ Trong hai thập kỷ qua, thị trường cơ sở dữ liệu đã bùng nổ 
 - Cơ sở dữ liệu phân tích dạng cột (Columnar như ClickHouse, AWS Redshift).
 - Các hệ quản trị quan hệ phân tán thế hệ mới (Spanner, CockroachDB, TiDB).
 
-Sự phong phú này rất tuyệt vời, nhưng một sai lầm phổ biến của các kỹ sư là **tự dồn mình vào chân tường khi sớm lựa chọn một cơ sở dữ liệu chuyên biệt** trong khi các mẫu truy cập dữ liệu (data access patterns) của sản phẩm vẫn còn đang biến động liên tục.
-
-Cơ sở dữ liệu quan hệ là một "kẻ đa năng" (jack-of-all-trades) xuất sắc. Nó hỗ trợ mô hình hóa dữ liệu linh hoạt, cung cấp cơ chế Transaction (ACID) vững chắc để bảo vệ tính nhất quán, và cho phép bạn tùy biến truy vấn mà không cần đập đi xây lại cấu trúc lưu trữ.
+Sự phong phú này rất hữu ích khi thiết kế hệ thống. Tuy vậy, nếu các mẫu truy cập dữ liệu (data access patterns) của ứng dụng chưa rõ, việc chọn sớm một giải pháp lưu trữ chuyên biệt có thể khiến ta tự giới hạn lựa chọn. Cơ sở dữ liệu quan hệ thường là lựa chọn đa năng phù hợp cho phiên bản đầu, trong lúc ta tìm hiểu thêm các ràng buộc của nghiệp vụ. Transaction cũng giúp xử lý lỗi từng phần và quản lý truy cập đồng thời vào dữ liệu dùng chung; cuốn sách sẽ bàn sâu hơn về chúng ở Chương 7.
 
 Và trong thế giới quan hệ, **PostgreSQL** là một tượng đài: mã nguồn mở, độ tin cậy tuyệt đối đã được chứng minh qua nhiều thập kỷ, hệ sinh thái mở rộng cực mạnh và được hỗ trợ bởi 100% các nhà cung cấp đám mây lớn (AWS RDS, Google Cloud SQL, Azure Database).
 
@@ -83,7 +81,7 @@ Trong hệ sinh thái Rust, có 3 ứng viên hàng đầu để tương tác v�
 Khi viết mã tương tác với database, bạn rất dễ mắc phải các sai sót ngớ ngẩn: gõ sai chính tả tên cột, ép sai kiểu dữ liệu giữa SQL và Rust, hoặc join nhầm bảng.
 - Với `tokio-postgres`, bạn chỉ phát hiện ra lỗi **khi chạy ứng dụng (at runtime)**.
 - `diesel` sử dụng CLI để soi schema database và sinh ra mã nguồn Rust tương ứng, dùng hệ thống kiểu của Rust để kiểm tra query lúc compile.
-- `sqlx` áp dụng một hướng tiếp cận độc đáo: sử dụng procedural macros (`query!`) để kết nối trực tiếp vào database tại thời điểm biên dịch (`cargo check`), phân tích câu lệnh SQL và đối chiếu kiểu dữ liệu với schema thực tế.
+- `sqlx` áp dụng một hướng tiếp cận độc đáo: sử dụng procedural macros (`query!`) để kết nối trực tiếp vào database tại thời điểm biên dịch (`cargo check`), phân tích câu lệnh SQL và đối chiếu kiểu dữ liệu với schema thực tế. Việc macro thực hiện I/O như vậy gây tranh luận và đồng nghĩa cần có database khi phát triển; `sqlx` cũng hỗ trợ chế độ offline bằng cách cache metadata truy vấn, nội dung này sẽ được dùng ở phần sau của sách.
 
 ### 2. Giao Diện Viết Truy Vấn: SQL Thuần vs DSL
 - `tokio-postgres` và `sqlx` yêu cầu bạn viết **SQL thuần túy**. SQL có tính di động tuyệt đối: kiến thức bạn dùng cho Postgres trong dự án này hoàn toàn có thể áp dụng cho bất kỳ ngôn ngữ nào khác.
@@ -97,11 +95,19 @@ Có một câu châm ngôn kinh điển trong giới lập trình hệ thống:
 
 Database của bạn nằm trên một máy chủ riêng biệt qua mạng. Mỗi truy vấn SQL thực chất là một chuỗi tác vụ mạng (Network I/O). Trong khi chờ database trả về kết quả, một driver bất đồng bộ sẽ giải phóng CPU core để ứng dụng phục vụ hàng nghìn request HTTP khác.
 
-`sqlx` hỗ trợ async native trên nền `tokio`. Trong khi đó, kiến trúc ban đầu của `diesel` được thiết kế đồng bộ (blocking), nếu muốn dùng trong async runtime bạn phải bọc các lời gọi trong `tokio::task::spawn_blocking` để tránh làm tê liệt event loop.
+`sqlx` và `tokio-postgres` đều cung cấp API bất đồng bộ; `diesel` là đồng bộ và tại thời điểm tác giả viết sách chưa có kế hoạch hỗ trợ async trong tương lai gần. Khi framework web đã bất đồng bộ, driver database async thường giúp tránh thêm phức tạp. Tuy vậy, lợi ích hiệu năng phụ thuộc yêu cầu ứng dụng; chạy truy vấn trên thread pool riêng cũng có thể đủ.
+
+Một khác biệt khác: tại thời điểm sách được viết, `tokio-postgres` hỗ trợ query pipelining; tính năng này vẫn đang ở giai đoạn thiết kế trong `sqlx` và tác giả không thấy được đề cập trong tài liệu hay issue tracker của `diesel`.
 
 <Callout type="tip">
   **Chốt lựa chọn:** Dự án của chúng ta chọn **`sqlx`**. Sự kết hợp giữa async native, cú pháp SQL trực quan và cơ chế kiểm tra lỗi compile-time thông qua macro mang lại trải nghiệm phát triển an toàn và thoải mái nhất.
 </Callout>
+
+### 4. Kiểm Tra Side Effect Trong Integration Test
+
+Kiểm tra status `200` chưa chứng minh thông tin subscriber đã được lưu. Có thể xác minh side effect qua một endpoint công khai khác hoặc truy vấn database trực tiếp trong test. Ưu tiên endpoint công khai khi có thể, vì cách đó không phụ thuộc vào database hay schema nội bộ; nhưng hiện API chưa có endpoint đọc subscriber. Thêm `GET /subscriptions` chỉ để kiểm thử sẽ buộc ta xử lý bảo mật cho dữ liệu cá nhân, nên ở giai đoạn này ta sẽ truy vấn database trong test rồi bỏ cách làm đó khi có chiến lược tốt hơn.
+
+Với test, tác giả chủ trương dùng cùng database engine như production thay vì database in-memory: khác biệt giữa database giả lập và engine thật có thể khiến test bỏ sót lỗi.
 
 ---
 
@@ -433,5 +439,9 @@ thread 'subscribe_returns_a_200_for_valid_form_data' panicked at
 ```
 
 Bài test bị fail với lỗi **`RowNotFound`**! Đây chính xác là điều chúng ta mong đợi: handler của chúng ta mới chỉ trả về 200 mà chưa hề thực hiện câu lệnh `INSERT` nào vào database.
+
+### Cập Nhật CI
+
+Từ giờ test cần một Postgres đang chạy. Hơn nữa, vì `sqlx` kiểm tra query ngay lúc biên dịch, các lệnh build như `cargo check`, `cargo lint` và `cargo build` cũng cần truy cập database. Trước khi tiếp tục, cần cập nhật GitHub Actions để chạy Postgres trong CI; trong ví dụ của tác giả, chỉ cần cập nhật `general.yml`.
 
 Mọi thứ đã sẵn sàng để chúng ta kết nối application state và thực thi câu lệnh lưu trữ thực thụ ở bài học tiếp theo!

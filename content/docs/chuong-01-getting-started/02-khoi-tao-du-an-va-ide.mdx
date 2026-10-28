@@ -98,17 +98,15 @@ Nhờ chuẩn LSP, `rust-analyzer` có thể tích hợp mượt mà vào hầu 
 
 ### 2. IntelliJ Rust & RustRover (Hệ Sinh Thái JetBrains)
 
-JetBrains cung cấp hỗ trợ chuyên sâu cho Rust thông qua plugin **IntelliJ Rust** (trên IntelliJ IDEA, CLion) hoặc IDE độc lập chuyên dụng **RustRover**.
+JetBrains cung cấp hỗ trợ Rust thông qua plugin **IntelliJ Rust**. Theo ấn bản sách tại thời điểm viết vào tháng 9 năm 2022, tác giả khuyến nghị IntelliJ Rust vì trải nghiệm IDE khi đó nhỉnh hơn `rust-analyzer`, dù công cụ này đã tiến bộ đáng kể trong năm trước đó. Khi ấy, IntelliJ IDEA có bản miễn phí nếu bạn không có license JetBrains; người đã có license được khuyến nghị dùng CLion.
 
-Nếu bạn yêu thích môi trường hoàn chỉnh (*all-in-one*) với hệ thống giao diện trực quan mạnh mẽ, bộ gỡ lỗi (*debugger*) tích hợp sẵn và khả năng tái cấu trúc mã (*refactoring*) vượt trội, JetBrains là một lựa chọn cực kỳ sáng giá.
+Cuốn sách cũng lưu ý rằng IntelliJ Rust buộc bạn dùng IDE của JetBrains. Nếu muốn giữ editor yêu thích, hãy tìm plugin `rust-analyzer` tương ứng. Các tên sản phẩm và so sánh trên phản ánh bối cảnh tại thời điểm viết, không phải đánh giá hiện tại.
 
 ---
 
 ## III. Lời Khuyên Thực Chiến Dành Cho Bạn
 
-* Nếu bạn yêu thích sự nhẹ nhàng, tùy biến cao và phổ biến: Hãy chọn **VS Code** kết hợp cùng extension chính thức **`rust-analyzer`**.
-* Nếu bạn là tín đồ của dòng lệnh và modal editing: **Neovim** (cấu hình `nvim-lspconfig`) cùng `rust-analyzer` mang lại trải nghiệm vô cùng nhanh nhẹn.
-* Nếu bạn quen thuộc với các IDE đầy đủ tính năng của JetBrains: **RustRover** hoặc **CLion** với plugin Rust sẽ giúp bạn vào guồng ngay lập tức.
+Nguồn sách khuyến nghị IntelliJ Rust vào tháng 9 năm 2022, đồng thời ghi nhận `rust-analyzer` là lựa chọn cho người muốn tiếp tục dùng editor của mình. Đây là nhận định có mốc thời gian, nên hãy cân nhắc trải nghiệm và hỗ trợ hiện tại của từng công cụ khi lựa chọn.
 
 <Callout type="info">
   **Xu hướng tương lai (Library-ification của rustc):**  

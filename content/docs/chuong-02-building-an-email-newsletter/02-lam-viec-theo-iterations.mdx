@@ -37,14 +37,12 @@ Nếu không có một chiến lược rõ ràng, chúng ta rất dễ rơi vào
 ┌─────────────────────────────────────────────────────────────┐
 │ ✅ CÁCH TIẾP CẬN SENIOR: LÀM VIỆC THEO VÒNG LẶP (ITERATIONS) │
 │                                                             │
-│ Iteration 1: Đăng ký cơ bản + Gửi mail text đơn giản (E2E)  │
-│              └── Đưa ngay lên Production!                   │
+│ Bản phát hành đầu: Đủ chức năng cho cả hai User Stories     │
+│                 └── Kiểm thử, tài liệu hóa và đưa lên Prod. │
 │                                                             │
-│ Iteration 2: Thêm xác nhận email kép (Two-phase confirm)    │
-│              └── Nâng cấp Production!                       │
-│                                                             │
-│ Iteration 3: Thêm cơ chế chịu lỗi & Retry gửi mail          │
-│              └── Hoàn thiện hệ thống vững chãi!             │
+│ Các vòng lặp sau: Cải thiện trải nghiệm từng bước           │
+│                 ├── Thêm retry cho gửi email                │
+│                 └── Thêm email xác nhận người đăng ký       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,11 +59,9 @@ Thay vì đào quá sâu vào một câu chuyện duy nhất ngay từ đầu, c
 </Callout>
 
 Sau khi luồng nghiệp vụ xuyên suốt (*End-to-End*) đã vận hành trơn tru từ đầu đến cuối, chúng ta mới quay lại từng bước để cải tiến và gia cố:
-* Bổ sung tính năng chịu lỗi (*fault-tolerance*) và cơ chế thử lại tự động (*retries*) cho tác vụ phát hành email;
-* Bổ sung luồng gửi email xác nhận hai bước (*Confirmation email*) cho người đăng ký mới;
-* Thêm lớp xác thực bảo mật và quản lý phiên làm việc (*Sessions*).
+Chẳng hạn, ta có thể bổ sung khả năng chịu lỗi (*fault-tolerance*) và retry cho việc gửi email, hoặc gửi email xác nhận cho người đăng ký mới.
 
-Mỗi vòng lặp (*Iteration*) sẽ giải quyết một phần việc rõ ràng trong một khoảng thời gian nhất định, mang đến một phiên bản sản phẩm hoàn thiện hơn phiên bản trước, liên tục nâng cao trải nghiệm của người dùng.
+Mỗi vòng lặp (*Iteration*) kéo dài một khoảng thời gian cố định và tạo ra một phiên bản sản phẩm tốt hơn đôi chút, cải thiện trải nghiệm của người dùng.
 
 ---
 

@@ -1,76 +1,48 @@
 ---
-title: "11.9 - 11.11 Xử Lý Request Đồng Thời, Forward Recovery & Lời Kết"
-description: "Đồng bộ hóa request đồng thời với Row-Level Lock trong PostgreSQL, kiến trúc Transactional Outbox với SKIP LOCKED và lời kết hành trình Zero To Production In Rust."
+title: "11.9 - 11.11 Request Đồng Thời, Forward Recovery & Lời Kết"
+description: "Synchronization qua transaction Postgres, giới hạn save-and-replay khi gặp lỗi bên ngoài, hàng đợi email và worker theo nguồn EPUB."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-# 11.9 - 11.11 Xử Lý Request Đồng Thời, Forward Recovery & Lời Kết
+# 11.9 - 11.11 Request Đồng Thời, Forward Recovery & Lời Kết
 
-Trong bài trước, chúng ta đã xử lý thành công kịch bản thử lại tuần tự (khi request thứ nhất đã kết thúc hoàn toàn trước khi request thứ hai tới). 
+## 11.9 Đồng bộ hóa request trùng lặp
 
-Tuy nhiên, trong thế giới thực tế, một kịch bản hiểm hóc hơn rất nhiều thường xuyên diễn ra: **Request thứ hai gửi đến TRƯỚC KHI request thứ nhất kịp hoàn tất (Concurrent Requests)** — ví dụ khi người dùng sốt ruột nhấn nút Submit hai lần liên tiếp.
+### Test đồng thời
 
----
+Integration test gửi cùng form và idempotency key hai lần đồng thời. Mock Postmark trả chậm hai giây và chỉ cho phép một request. Trước khi có synchronization, cả hai handler đều chạy vòng lặp gửi email; request đến sau thất bại khi INSERT response vì khóa chính `(user_id, idempotency_key)` đã tồn tại. Kết quả là gửi trùng và một request nhận `500`.
 
-## I. Xử Lý Request Trùng Lặp Đồng Thời (Concurrent Requests)
+Khóa trong bộ nhớ như `tokio::sync::Mutex` chỉ đủ nếu mọi request đến cùng một API instance. Ứng dụng có nhiều instance, vì vậy synchronization phải ở ngoài process; Postgres là ứng viên tự nhiên.
 
-Hãy mô phỏng kịch bản này bằng một integration test sử dụng `tokio::join!`:
+Test đồng thời dùng mock cố ý trì hoãn phản hồi Postmark hai giây để đảm bảo request thứ hai tới trước khi request đầu hoàn tất:
 
 ```rust
-//! tests/api/newsletter.rs
-use std::time::Duration;
+Mock::given(path("/email"))
+    .and(method("POST"))
+    .respond_with(
+        ResponseTemplate::new(200).set_delay(Duration::from_secs(2))
+    )
+    .expect(1)
+    .mount(&app.email_server)
+    .await;
 
-#[tokio::test]
-async fn concurrent_form_submission_is_handled_gracefully() {
-    // Arrange
-    let app = spawn_app().await;
-    create_confirmed_subscriber(&app).await;
-    app.test_user.login(&app).await;
-
-    // Giả lập Postmark phản hồi chậm 2 giây để request 2 ập tới khi request 1 đang chạy
-    Mock::given(path("/email"))
-        .and(method("POST"))
-        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(2)))
-        .expect(1)
-        .mount(&app.email_server)
-        .await;
-
-    // Act - Bắn đồng thời 2 request cùng chung một Idempotency Key!
-    let newsletter_request_body = serde_json::json!({
-        "title": "Newsletter title",
-        "text_content": "Newsletter body as plain text",
-        "html_content": "<p>Newsletter body as HTML</p>",
-        "idempotency_key": uuid::Uuid::new_v4().to_string()
-    });
-    
-    let response1 = app.post_publish_newsletter(&newsletter_request_body);
-    let response2 = app.post_publish_newsletter(&newsletter_request_body);
-    let (response1, response2) = tokio::join!(response1, response2);
-
-    // Assert: Cả hai đều phải trả về thành công 303 và chỉ có đúng 1 email được gửi!
-    assert_eq!(response1.status(), response2.status());
-    assert_eq!(response1.text().await.unwrap(), response2.text().await.unwrap());
-}
+let body = serde_json::json!({
+    "title": "Newsletter title",
+    "text_content": "Newsletter body as plain text",
+    "html_content": "<p>Newsletter body as HTML</p>",
+    "idempotency_key": uuid::Uuid::new_v4().to_string()
+});
+let first = app.post_publish_newsletter(&body);
+let second = app.post_publish_newsletter(&body);
+let (first, second) = tokio::join!(first, second);
+assert_eq!(first.status(), second.status());
+assert_eq!(first.text().await.unwrap(), second.text().await.unwrap());
 ```
 
-Khi chạy test, hệ thống lập tức sụp đổ với lỗi:
-```text
-exception.details: 
-    error returned from database: duplicate key value violates unique constraint "idempotency_pkey"
-```
+### Đặt reservation trước khi xử lý
 
-Cả hai request cùng kiểm tra `get_saved_response` tại thời điểm ban đầu, cùng thấy chưa có dữ liệu, nên cả hai cùng thực thi vòng lặp gửi email! Đến cuối cùng, request chậm chân hơn cố chèn vào bảng `idempotency` thì bị nổ lỗi trùng khóa chính (Primary Key Violation). Kết quả: độc giả bị nhận 2 bức thư, và tác giả nhận về một mã 500 xấu xí.
-
----
-
-## II. Cơ Chế Khóa Hàng Đợi Bằng Row-Level Lock Trong PostgreSQL
-
-Khóa trong bộ nhớ (như `tokio::sync::Mutex`) hoàn toàn vô dụng nếu ứng dụng được triển khai thành nhiều container/máy chủ chạy song song. Cơ chế đồng bộ hóa **bắt buộc phải nằm ở cơ sở dữ liệu dùng chung (PostgreSQL)**.
-
-Chúng ta đảo ngược thứ tự thực thi:
-1. Thay vì đợi chạy xong mới chèn vào `idempotency`, chúng ta **chèn một dòng tạm thời ngay từ đầu request** (với các cột `response_status_code`, `response_body` để giá trị `NULL`).
-2. Sử dụng mệnh đề `ON CONFLICT DO NOTHING`:
+Thay vì INSERT response sau khi gửi xong, handler tạo hàng idempotency ngay khi bắt đầu. Vì response chưa có, các cột status, headers và body phải cho phép `NULL`:
 
 ```sql
 ALTER TABLE idempotency ALTER COLUMN response_status_code DROP NOT NULL;
@@ -78,185 +50,138 @@ ALTER TABLE idempotency ALTER COLUMN response_body DROP NOT NULL;
 ALTER TABLE idempotency ALTER COLUMN response_headers DROP NOT NULL;
 ```
 
-Trong hàm `try_processing`:
+Chạy migration bằng `sqlx migrate run`. Từ đây, phần truy vấn response cần khẳng định rõ với SQLx rằng các cột này không NULL khi có response; hậu tố `!` trong alias tắt kiểm tra nullable lúc compile-time và nếu giả định sai, lỗi chỉ phát hiện lúc runtime:
+
+```sql
+SELECT
+    response_status_code AS "response_status_code!",
+    response_headers AS "response_headers!: Vec<HeaderPairRecord>",
+    response_body AS "response_body!"
+FROM idempotency
+WHERE user_id = $1 AND idempotency_key = $2
+```
+
+```sql
+ALTER TABLE idempotency ALTER COLUMN response_status_code DROP NOT NULL;
+ALTER TABLE idempotency ALTER COLUMN response_body DROP NOT NULL;
+ALTER TABLE idempotency ALTER COLUMN response_headers DROP NOT NULL;
+```
+
+`try_processing` bắt đầu transaction và INSERT `(user_id, idempotency_key, created_at) ON CONFLICT DO NOTHING`. Nếu thêm được hàng thì request bắt đầu xử lý và giữ transaction. Nếu không thêm được, nó lấy response đã lưu để trả lại. SQLx phải được chỉ dẫn ép kiểu các cột response nullable thành không-null ở kết quả truy vấn; nếu giả định sai, lỗi sẽ xảy ra lúc runtime.
+
+Sau thay đổi này `save_response` không thể INSERT hàng thứ hai nữa: nó UPDATE hàng reservation hiện có. Nhưng nếu request đầu thất bại, transaction rollback và request sau cũng lỗi thay vì gửi email trùng; đây chưa phải hành vi mong muốn.
+
+### Vì sao request thứ hai chờ
+
+Transaction bao quanh INSERT đầu tiên và UPDATE response cuối cùng. Với mức cô lập mặc định `READ COMMITTED`, INSERT cạnh tranh trên cùng unique key chờ transaction đang giữ thay đổi kết thúc. Nếu transaction đầu commit, request sau thực thi nhánh `DO NOTHING`; nếu transaction đầu rollback, request sau có thể INSERT và bắt đầu công việc. Nhờ đó test concurrent thành công: request thứ hai nhận response đã lưu, email chỉ được gửi một lần.
+
+Cách này phụ thuộc isolation level. Khi thử `REPEATABLE READ`, request thứ hai lỗi `could not serialize access due to concurrent update`; `SERIALIZABLE` cũng có vấn đề tương tự trong thử nghiệm. Không nên khái quát hành vi chờ trên thành mọi isolation level.
+
+## 11.10 Xử lý lỗi và phục hồi
+
+### Transaction cục bộ không bao trùm dịch vụ ngoài
+
+Test mới tạo hai subscriber: Postmark nhận thành công email đầu, trả lỗi cho email thứ hai; lần retry sau đó gửi cho cả hai. Test phát hiện subscriber đầu nhận thư trùng. Nguyên nhân: transaction chứa reservation idempotency chỉ commit khi xử lý thành công. Khi handler trả lỗi, transaction bị drop và rollback, xóa reservation; retry bắt đầu lại từ đầu.
+
+Đây là vấn đề transactionality thường gặp khi workflow vừa thay đổi state cục bộ vừa gọi hệ thống khác. Tác giả kỳ vọng hoặc mọi subscriber được gửi, hoặc không ai nhận, nhưng thực tế có trạng thái thứ ba: API trả lỗi trong khi một số subscriber đã nhận thư. Protocol như two-phase commit có thể cung cấp ngữ nghĩa all-or-nothing trong hệ phân tán, nhưng phức tạp và ít được hỗ trợ rộng rãi.
+
+### Backward recovery và forward recovery
+
+**Backward recovery** dùng compensating action để khôi phục ý nghĩa trạng thái trước đó. Ví dụ checkout đã thu tiền nhưng mặt hàng hết hàng khi xác nhận vận chuyển: hủy chỉ thị giao hàng và hoàn tiền. Khách vẫn thấy giao dịch thu tiền rồi hoàn tiền, nhưng số dư được khôi phục.
+
+Email không thể thu hồi sau khi gửi, nên backward recovery không phù hợp. **Forward recovery** cố đưa workflow đến hoàn tất dù một số tác vụ con thất bại. Có hai dạng:
+
+- **Passive recovery**: caller phải tiếp tục gọi API; handler lưu checkpoint, chẳng hạn đã gửi 123 email, để lần sau tiếp tục. Trải nghiệm kém vì tác giả phải submit lặp lại, khó biết lỗi có thể khắc phục bằng retry hay là lỗi database; bỏ cuộc giữa chừng vẫn để hệ thống ở trạng thái không nhất quán.
+- **Active recovery**: hệ thống tự phục hồi bằng tiến trình nền phát hiện workflow dở dang và tiếp tục bên ngoài vòng đời request ban đầu.
+
+Chương chọn active recovery. Endpoint đổi ý nghĩa: thành công có nghĩa newsletter đã được validate và workflow giao thư đã được khởi chạy để gửi bất đồng bộ, không có nghĩa mọi email đã được giao xong. Có thể bổ sung trang theo dõi tiến độ, nhưng workflow observability nằm ngoài phạm vi sách.
+
+### Bảng newsletter và hàng đợi giao thư
+
+Vì cần xử lý sau request, nội dung newsletter được lưu trong `newsletter_issues`; hàng đợi `issue_delivery_queue` lưu cặp issue và email. Hai thao tác cùng việc cập nhật idempotency được thực hiện trong transaction Postgres của handler.
+
+```sql
+CREATE TABLE newsletter_issues (
+   newsletter_issue_id uuid NOT NULL,
+   title TEXT NOT NULL,
+   text_content TEXT NOT NULL,
+   html_content TEXT NOT NULL,
+   published_at TEXT NOT NULL,
+   PRIMARY KEY(newsletter_issue_id)
+);
+
+CREATE TABLE issue_delivery_queue (
+   newsletter_issue_id uuid NOT NULL
+     REFERENCES newsletter_issues (newsletter_issue_id),
+   subscriber_email TEXT NOT NULL,
+   PRIMARY KEY(newsletter_issue_id, subscriber_email)
+);
+```
+
+`insert_newsletter_issue` tạo UUID, ghi nội dung issue; `enqueue_delivery_tasks` dùng một `INSERT ... SELECT` từ các subscription có `status = 'confirmed'`. Handler không còn tải subscriber rồi gửi trực tiếp: nó tạo issue, thêm tác vụ hàng đợi, lưu response idempotency và trả redirect với flash message “đã tiếp nhận, email sẽ được gửi sớm”. Các thao tác Postgres này thuộc cùng transaction, nên hoặc các ghi cục bộ cùng commit, hoặc cùng rollback. Điều đó không bao trùm việc gửi email từ worker.
+
+### Worker, khóa hàng và retry
+
+Nhiều worker không thể chỉ `SELECT ... LIMIT 1`, nếu không chúng cùng lấy một việc. Worker dùng `FOR UPDATE SKIP LOCKED LIMIT 1` trong transaction: mỗi worker chọn hàng chưa bị worker khác khóa; hàng được giữ khóa đến khi hoàn tất. Khi hoàn tất, worker xóa hàng tương ứng và commit.
+
+```sql
+SELECT newsletter_issue_id, subscriber_email
+FROM issue_delivery_queue
+FOR UPDATE SKIP LOCKED
+LIMIT 1;
+```
+
+`dequeue_task` mở transaction và trả về transaction đang giữ lock cùng issue ID và email. Nếu hàng đợi rỗng, không có task; nếu có, worker tải nội dung newsletter, parse email bằng `SubscriberEmail`, gọi Postmark, rồi xóa queue row và commit transaction.
 
 ```rust
-//! src/idempotency/persistence.rs
-
-pub async fn try_processing(
+#[tracing::instrument(skip_all)]
+async fn try_execute_task(
     pool: &PgPool,
-    idempotency_key: &IdempotencyKey,
-    user_id: Uuid,
-) -> Result<NextAction, anyhow::Error> {
-    let mut transaction = pool.begin().await?;
-    let n_inserted_rows = sqlx::query!(
-        r#"
-        INSERT INTO idempotency (
-            user_id,
-            idempotency_key,
-            created_at
-        )
-        VALUES ($1, $2, now())
-        ON CONFLICT (user_id, idempotency_key) DO NOTHING
-        "#,
-        user_id,
-        idempotency_key.as_ref()
-    )
-    .execute(&mut transaction)
-    .await?
-    .rows_affected();
-
-    if n_inserted_rows > 0 {
-        // Request này là người chiến thắng cuộc đua! Giữ Transaction và tiến hành xử lý
-        Ok(NextAction::StartProcessing(transaction))
-    } else {
-        // Request này là kẻ đến sau: Đợi request đầu commit xong và đọc lại response
-        let saved_response = get_saved_response(pool, idempotency_key, user_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("We expected a saved response, we didn't find it"))?;
-        Ok(NextAction::ReturnSavedResponse(saved_response))
-    }
-}
-```
-
-Nhờ cơ chế Row-level Lock của PostgreSQL ở mức cô lập mặc định (`read committed`), request thứ hai khi gọi lệnh sẽ tự động bị chặn lại và xếp hàng chờ cho tới khi giao dịch của request thứ nhất commit hoặc rollback!
-
----
-
-## III. Giải Quyết Bế Tắc Giao Dịch Phân Tán (Distributed Transactions)
-
-Mặc dù việc xử lý đồng thời đã ổn thỏa, chúng ta vẫn còn một lỗ hổng chí mạng khi xảy ra sự cố mạng giữa chừng:
-
-Nếu đang gửi thư tới người thứ 50 mà API Postmark bị lỗi:
-1. Handler trả về lỗi `500`.
-2. Giao dịch SQL bị rollback, dòng tạm trong bảng `idempotency` bị xóa sạch!
-3. Khi tác giả bấm thử lại (Retry), hệ thống coi đây là một request mới tinh và bắt đầu gửi lại từ người số 1!
-4. **Hậu quả**: 49 người đầu tiên lại bị nhận email trùng lặp.
-
-Trong khoa học máy tính, có hai hướng phục hồi:
-- **Backward Recovery (Phục hồi lùi)**: Thực hiện các hành động bù trừ (Compensating Actions) như hoàn tiền (refund) trong thanh toán. Nhưng đối với email, chúng ta **không thể "thu hồi" một bức thư đã bay vào hòm thư người nhận**!
-- **Forward Recovery (Phục hồi tiến)**: Tiếp tục thúc đẩy quy trình đi tới đích cuối cùng, bất chấp việc một vài bước con tạm thời gặp sự cố.
-
----
-
-## IV. Đỉnh Cao Kiến Trúc: Asynchronous Processing & Transactional Outbox
-
-Để đạt được Forward Recovery hoàn hảo, chúng ta thay đổi bản chất của endpoint `POST /admin/newsletters`:
-
-<Callout type="info" title="Thay Đổi Triết Lý Thiết Kế">
-**Request handler KHÔNG CÒN trực tiếp gửi email nữa!**  
-Nó chỉ làm đúng một nhiệm vụ: **Ghi nhận nội dung bản tin và đưa danh sách người cần gửi vào một hàng đợi tác vụ (Task Queue)**. Toàn bộ việc gọi API ra thế giới bên ngoài sẽ được ủy quyền cho các **Background Workers** chạy ngầm.
-</Callout>
-
-Chúng ta tạo hai bảng mới trong PostgreSQL:
-1. `newsletter_issues`: Lưu trữ vĩnh viễn nội dung các số bản tin đã phát hành.
-2. `issue_delivery_queue`: Hàng đợi lưu các cặp `(newsletter_issue_id, subscriber_email)`.
-
-### 1. Phép Màu Của Giao Dịch ACID Đơn Lẻ
-
-Giờ đây, toàn bộ logic trong `POST /admin/newsletters` hoàn toàn là các thao tác SQL thuần túy trên cùng một cơ sở dữ liệu PostgreSQL:
-
-```rust
-//! src/routes/admin/newsletter/post.rs
-
-pub async fn publish_newsletter(
-    form: web::Form<FormData>,
-    pool: web::Data<PgPool>,
-    user_id: web::ReqData<UserId>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let user_id = user_id.into_inner();
-    let idempotency_key: IdempotencyKey = form.0.idempotency_key.try_into().map_err(e400)?;
-
-    // 1. Khóa Idempotency Row
-    let mut transaction = match try_processing(&pool, &idempotency_key, *user_id).await.map_err(e500)? {
-        NextAction::StartProcessing(t) => t,
-        NextAction::ReturnSavedResponse(saved_response) => return Ok(saved_response),
-    };
-
-    // 2. Chèn nội dung bản tin vào `newsletter_issues`
-    let issue_id = insert_newsletter_issue(&mut transaction, &form.title, &form.text_content, &form.html_content)
-        .await
-        .map_err(e500)?;
-
-    // 3. Xếp hàng toàn bộ người nhận bằng một câu lệnh INSERT ... SELECT duy nhất!
-    enqueue_delivery_tasks(&mut transaction, issue_id).await.map_err(e500)?;
-
-    // 4. Lưu phản hồi HTTP vào bảng idempotency
-    let response = see_other("/admin/newsletters");
-    let response = save_response(transaction, &idempotency_key, *user_id, response).await.map_err(e500)?;
-
-    FlashMessage::info("The newsletter issue has been accepted - emails will go out shortly.").send();
-    Ok(response)
-}
-```
-
-<Callout type="warn" title="Bước Ngoặt Kiến Trúc Lớn Nhất Của Cuốn Sách">
-Vì tất cả thao tác (ghi bản tin, xếp hàng 10.000 email, cập nhật idempotency) đều nằm chung trong **một transaction SQL duy nhất**, tính toàn vẹn (ACID) được khôi phục 100%! Handler kết thúc chỉ sau vài mili-giây và tác giả nhận ngay thông báo thành công.
-</Callout>
-
----
-
-### 2. Tiến Trình Chạy Ngầm (Background Worker) Với `SKIP LOCKED`
-
-Ở phía sau cánh gà, một worker bất đồng bộ liên tục lấy các tác vụ trong `issue_delivery_queue` ra xử lý:
-
-```rust
-//! src/issue_delivery_worker.rs
-
-pub async fn run_worker_until_stopped(pool: PgPool, email_client: EmailClient) -> Result<(), anyhow::Error> {
-    loop {
-        match try_execute_task(&pool, &email_client).await {
-            Ok(ExecutionOutcome::EmptyQueue) => {
-                tokio::time::sleep(Duration::from_secs(10)).await;
+    email_client: &EmailClient,
+) -> Result<(), anyhow::Error> {
+    if let Some((transaction, issue_id, email)) = dequeue_task(pool).await? {
+        match SubscriberEmail::parse(email.clone()) {
+            Ok(email) => {
+                let issue = get_issue(pool, issue_id).await?;
+                if let Err(error) = email_client
+                    .send_email(&email, &issue.title, &issue.html_content, &issue.text_content)
+                    .await
+                {
+                    tracing::error!(
+                        error.cause_chain = ?error,
+                        error.message = %error,
+                        "Failed to deliver issue to a confirmed subscriber. Skipping."
+                    );
+                }
             }
-            Ok(ExecutionOutcome::TaskCompleted) => {}
-            Err(_) => {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
+            Err(error) => tracing::error!(
+                error.cause_chain = ?error,
+                error.message = %error,
+                "Skipping a confirmed subscriber. Their stored contact details are invalid"
+            ),
         }
+        delete_task(transaction, issue_id, &email).await?;
     }
-}
-
-async fn dequeue_task(pool: &PgPool) -> Result<Option<(Transaction<'static, Postgres>, Uuid, String)>, anyhow::Error> {
-    let mut transaction = pool.begin().await?;
-    let r = sqlx::query!(
-        r#"
-        SELECT newsletter_issue_id, subscriber_email
-        FROM issue_delivery_queue
-        FOR UPDATE
-        SKIP LOCKED
-        LIMIT 1
-        "#
-    )
-    .fetch_optional(&mut transaction)
-    .await?;
-
-    if let Some(r) = r {
-        Ok(Some((transaction, r.newsletter_issue_id, r.subscriber_email)))
-    } else {
-        Ok(None)
-    }
+    Ok(())
 }
 ```
 
-Mệnh đề **`FOR UPDATE SKIP LOCKED`** là vũ khí tối thượng của PostgreSQL:
-- Cho phép nhiều worker chạy song song cùng rút việc từ một bảng hàng đợi mà không bao giờ bị khóa tranh chấp (deadlock) lẫn nhau.
-- Worker gửi xong email thì xóa dòng tương ứng trong bảng.
-- Nếu gửi thất bại do lỗi mạng, giao dịch của worker tự rollback, dòng việc đó vẫn nằm nguyên trong hàng đợi để được thử lại sau theo cơ chế Exponential Backoff!
+Điểm quan trọng: trong ví dụ này, dù Postmark trả lỗi, code vẫn xóa task. Vì vậy worker không tự retry việc gửi lỗi; việc thêm `n_retries` và `execute_after` được để làm bài tập.
 
----
+Worker tải nội dung issue, parse địa chỉ subscriber rồi gọi Postmark. Transaction giữ row lock trong lúc gửi; sau đó worker xóa queue row và commit. Nếu không tìm thấy task thì transaction không có hàng để xử lý. Nhiều worker dùng `SKIP LOCKED` để tránh cùng nhận một row đang bị khóa, còn transaction duy trì quyền sở hữu task tới lúc hoàn tất.
 
-## V. Lời Kết Của Cuốn Sách (Epilogue)
+Trong mã nguồn chương, lỗi Postmark được log nhưng hàng vẫn bị xóa; địa chỉ không hợp lệ cũng log rồi xóa. Vì vậy bản hiện thực đó **không tự retry lỗi gửi**. Sách gợi ý như bài tập bổ sung `n_retries` và `execute_after` để theo dõi số lần thử và thời điểm được chạy lại. Exponential backoff với jitter cũng chỉ là cải tiến được gợi ý, không phải hành vi có sẵn. Chú thích nguồn lưu ý hầu hết lỗi `try_execute_task` là tạm thời, ngoại trừ email không hợp lệ; ngủ chờ không sửa được địa chỉ sai.
 
-Chúng ta đã cùng nhau đi qua một hành trình phi thường: từ con số không tròn trĩnh (`cargo new zero2prod`), từng bước xây dựng nên một dịch vụ bản tin chuẩn mực có khả năng chịu tải và chống chịu sự cố ở cấp độ doanh nghiệp:
+**Hệ quả suy ra từ thứ tự thao tác trong mã**: Postmark có thể chấp nhận email rồi worker crash trước khi xóa hàng và commit. Khi worker tiếp tục, hàng vẫn còn và email có thể được gửi lại. Giữ row lock ngăn hai worker xử lý đồng thời cùng task, nhưng không tạo transaction chung với Postmark, nên không bảo đảm exactly-once delivery. Ngược lại, trong code mẫu khi lời gọi Postmark trả lỗi, worker vẫn xóa row; đó là khả năng mất lần gửi thay vì retry. Hai rủi ro này là lý do không nên mô tả thiết kế là “forward recovery hoàn hảo”.
 
-1. **Inner Development Loop & CI/CD**: Rèn giũa thói quen kiểm thử tự động, linter, formatting và container hóa Docker.
-2. **Type-Driven Development**: Mô hình hóa miền nghiệp vụ bằng hệ thống kiểu tĩnh của Rust, biến lỗi nghiệp vụ thành lỗi tại thời điểm biên dịch.
-3. **Telemetry & Observability**: Giám sát ứng dụng với Tracing Spans, liên kết toàn bộ nhật ký qua Request ID.
-4. **Kiến Trúc Xử Lý Lỗi**: Phân biệt rạch ròi giữa Control Flow và Reporting, kết hợp hài hòa giữa `thiserror` và `anyhow`.
-5. **Bảo Mật Chiều Sâu**: Triển khai Argon2id, Session Store trên Redis, phòng vệ trước XSS, Timing Attack và CSRF.
-6. **Hệ Thống Phân Tán Bất Biến (Idempotency)**: Làm chủ nguyên lý Transactional Outbox, cứu vãn tính toàn vẹn dữ liệu trước bão tố sự cố mạng.
+Worker loop ngủ 1 giây khi `try_execute_task` trả lỗi để tránh thử dồn dập; khi queue rỗng thì ngủ 10 giây để tránh truy vấn liên tục. Kết quả được phân loại thành `TaskCompleted` và `EmptyQueue`. Worker được chạy song song với API; `tokio::select!` trên hai future trực tiếp chạy chúng cùng task (concurrent, không parallel). Vì vậy sách chuyển sang `tokio::spawn` cho từng task. Sau đó mã thêm `report_exit` để phân biệt task kết thúc bình thường, trả lỗi, hay join thất bại; nếu không thì không biết task nào kết thúc trước hoặc có lỗi hay không.
 
-Rust không phải là một ngôn ngữ dễ học, nhưng phần thưởng mà nó mang lại là vô giá: **Sự an tâm tuyệt đối (Fearless Concurrency & Rock-Solid Reliability)**. Khi mã nguồn của bạn biên dịch thành công và vượt qua bộ kiểm thử, bạn có thể tự tin triển khai nó lên môi trường Production mà không phải giật mình thức giấc giữa đêm vì những lỗi ngớ ngẩn.
+Test không chạy worker loop nền vì phải chờ bằng khoảng thời gian tùy ý sẽ làm suite flaky. Thay vào đó, `TestApp` có helper gọi `try_execute_task` lặp đến khi queue rỗng. Các test cập nhật để kiểm tra flash message “accepted”, chủ động drain queue rồi mới kiểm tra mock email. Test về transient errors/retries bị xóa vì không còn phù hợp với thiết kế mới.
 
-Chúc mừng bạn đã hoàn thành cuốn sách **Zero To Production In Rust** và chính thức bước vào hàng ngũ những kỹ sư hệ thống Rust chuyên nghiệp!
+> Còn một chi tiết chưa giải quyết: idempotency key hiện chưa có cơ chế hết hạn. Sách để thiết kế cleanup như một bài tập, tham khảo cách xây dựng background worker.
+
+## 11.11 Epilogue
+
+Hành trình bắt đầu từ một project rỗng và tạo ra một ứng dụng hoạt động được, có test và bảo mật ở mức hợp lý — một MVP. Project chỉ là phương tiện để trải nghiệm việc viết API production bằng Rust. Cuốn sách trả lời câu hỏi Rust có thể là ngôn ngữ hiệu quả cho API development không, giới thiệu một phần hệ sinh thái cùng các tính năng ngôn ngữ, rồi trao cho người đọc nền tảng để tự đi tiếp.
+
+Tác giả xem việc Rust được áp dụng rộng hơn như một bước ngoặt và hy vọng cuốn sách là hướng dẫn nhập môn cho những người muốn tham gia. Câu chuyện của cộng đồng vẫn đang được viết tiếp.

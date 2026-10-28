@@ -5,7 +5,7 @@ description: "Tìm hiểu Unknown Unknowns, định nghĩa Observability, crate 
 
 # Quan Sát Hệ Thống & Logging Cơ Bản
 
-Ở giai đoạn này, ứng dụng của chúng ta đã có một số bài kiểm thử tự động. Kiểm thử là điều tuyệt vời — chúng gia tăng mức độ tự tin vào tính đúng đắn của phần mềm. Tuy nhiên, một bộ test suite không bao giờ là *bằng chứng tuyệt đối* chứng minh ứng dụng không có lỗi. Để thực sự chứng minh toán học một hệ thống không có khiếm khuyết, chúng ta sẽ phải viện đến các phương pháp kiểm chứng hình thức (formal methods) vô cùng tốn kém.
+Ở giai đoạn này, ứng dụng của chúng ta đã có một số bài kiểm thử tự động. Kiểm thử là điều tuyệt vời — chúng gia tăng mức độ tự tin vào tính đúng đắn của phần mềm. Tuy nhiên, một bộ test suite không bao giờ là *bằng chứng tuyệt đối* chứng minh ứng dụng không có lỗi. Để thực sự chứng minh toán học một hệ thống không có khiếm khuyết, chúng ta sẽ phải viện đến các phương pháp kiểm chứng hình thức ([formal methods](https://lamport.azurewebsites.net/tla/formal-methods-amazon.pdf)) vô cùng tốn kém.
 
 Khi ứng dụng chạy trong môi trường thực tế (runtime), nó chắc chắn sẽ đối mặt với những kịch bản mà chúng ta chưa từng viết test, thậm chí chưa từng nghĩ tới khi thiết kế hệ thống.
 
@@ -16,7 +16,7 @@ Khi ứng dụng chạy trong môi trường thực tế (runtime), nó chắc c
 Dựa trên kinh nghiệm thực tế, chúng ta có thể điểm qua ngay một vài "điểm mù" trong mã nguồn hiện tại:
 
 - **Mất kết nối cơ sở dữ liệu**: Điều gì xảy ra nếu đường truyền tới PostgreSQL bị ngắt? Liệu `sqlx::PgPool` có tự động phục hồi kết nối hay mọi truy vấn từ thời điểm đó sẽ sập hoàn toàn cho đến khi khởi động lại ứng dụng?
-- **Tải trọng độc hại (Malicious Payloads)**: Điều gì xảy ra nếu kẻ tấn công gửi một payload khổng lồ hoặc cố tình tấn công SQL Injection vào body của endpoint `POST /subscriptions`?
+- **Tải trọng độc hại (Malicious Payloads)**: Điều gì xảy ra nếu kẻ tấn công gửi một payload khổng lồ hoặc cố tình tấn công [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection) vào body của endpoint `POST /subscriptions`?
 
 Những vấn đề này được gọi là **Known Unknowns** (những điều ta biết là mình chưa biết): đó là những thiếu sót mà ta đã lường trước được nhưng chưa có thời gian điều tra sâu, hoặc tạm thời gác lại vì chưa đủ độ ưu tiên. Với đủ thời gian và nỗ lực kỹ thuật, ta hoàn toàn có thể giải quyết hầu hết các *known unknowns*.
 
@@ -50,7 +50,7 @@ Tuy nhiên, phần lớn các *unknown unknowns* là các chế độ lỗi đ�
 
 Chúng thường chỉ bùng phát khi:
 1. Hệ thống bị đẩy ra ngoài điều kiện vận hành bình thường (ví dụ: lượng truy cập đột biến bất thường);
-2. Nhiều thành phần cùng gặp sự cố một lúc (ví dụ: một transaction SQL bị treo đúng lúc cụm database đang thực hiện chuyển đổi master-replica failover);
+2. Nhiều thành phần cùng gặp sự cố một lúc (ví dụ: một transaction SQL bị treo đúng lúc cụm database đang thực hiện chuyển đổi [master-replica failover](https://www.postgresql.org/docs/current/warm-standby-failover.html));
 3. Một thay đổi nhỏ làm lệch điểm cân bằng của hệ thống (ví dụ: tinh chỉnh lại retry policy khiến dịch vụ phía sau bị nghẽn do bão request);
 4. Hệ thống không hề thay đổi trong thời gian dài (ví dụ: ứng dụng chạy liên tục nhiều tuần không restart và bắt đầu rò rỉ bộ nhớ âm ỉ).
 

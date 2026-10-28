@@ -1,155 +1,167 @@
 ---
-title: "10.8 - 10.10 Khởi Tạo Seed Users, Đổi Mật Khẩu & Actix Middleware"
-description: "Thiết lập người dùng quản trị ban đầu với SQLx Migration, xây dựng luồng đổi mật khẩu và đăng xuất, cùng kỹ thuật viết Middleware chuẩn mực với actix_web_lab from_fn."
+title: "10.8–10.10 Seed Users, Password Reset và Middleware"
+description: "Tạo seed admin bằng migration, hoàn thiện luồng đổi mật khẩu qua test, rồi refactor kiểm tra xác thực thành Actix middleware."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-# 10.8 - 10.10 Khởi Tạo Seed Users, Đổi Mật Khẩu & Actix Middleware
+# 10.8–10.10 Seed Users, Password Reset và Refactoring
 
-Chúng ta đã xây dựng toàn bộ cơ chế bảo mật tinh vi: từ băm mật khẩu Argon2id, form đăng nhập, đến session store trên Redis. Nhưng hiện tại, nếu chạy ứng dụng thực tế trên trình duyệt, bạn **chưa thể đăng nhập được** vì trong cơ sở dữ liệu chưa có bất kỳ tài khoản người dùng nào!
+## I. Tạo Seed User
 
-Đã đến lúc đưa hệ thống vào thực tiễn bằng cách tạo tài khoản quản trị đầu tiên (**Seed User**).
+Các test đã chạy qua, nhưng ta chưa thể thử luồng thành công bằng trình duyệt vì database chưa có user và ứng dụng không có signup cho admin. Chủ ứng dụng cần có tài khoản đầu tiên; chương giải quyết bằng một migration tạo seed user với username/password định trước. Sau lần đăng nhập đầu tiên, user có thể đổi mật khẩu. Trong hệ thống thực tế nâng cao hơn, operator có thể được yêu cầu cấu hình thông tin seed user lúc triển khai.
 
----
-
-## I. Khởi Tạo Seed User Bằng Database Migration
-
-Thay vì chèn dữ liệu thủ công hay xây dựng một trang đăng ký admin công khai (vốn tiềm ẩn nguy cơ bảo mật cực lớn), phương pháp chuẩn mực trong phát triển phần mềm là sử dụng **Database Migration**:
-
-Tạo một migration mới bằng `sqlx`:
+Tạo migration:
 
 ```bash
 sqlx migrate add seed_user
 ```
 
-File migration được sinh ra: `migrations/<timestamp>_seed_user.sql`. Chúng ta sẽ chèn một người dùng quản trị mặc định:
-- `username`: `admin`
-- `password`: `everythinghastostartsomewhere` (một mật khẩu khởi tạo tạm thời)
+Cần một UUID, username và password hash ở dạng PHC. Để lấy hash, sách tạm chỉnh `TestUser::generate` thành password `everythinghastostartsomewhere`, in kết quả hash bằng `dbg!`, rồi chạy `cargo test -- --nocapture`. Đây là thay đổi tạm thời trong test helper và cần hoàn nguyên sau khi lấy hash.
 
-Mã băm PHC String tương ứng được sinh ra bởi Argon2id:
+Migration ví dụ của sách:
 
 ```sql
--- migrations/<timestamp>_seed_user.sql
+-- migrations/20211217223217_seed_user.sql
 INSERT INTO users (user_id, username, password_hash)
 VALUES (
     'ddf8994f-d522-4659-8d02-c1d479057be6',
     'admin',
-    '$argon2id$v=19$m=15000,t=2,p=1$OEx/rcq+3ts//WUDzGNl2g$Am8UFBA4w5NJEmAtquGvBmAlu92q/VQcaoL5AyJPfc8'
+    '$argon2id$v=19$m=15000,t=2,p=1$OEx/rcq+3ts//'
+    'WUDzGNl2g$Am8UFBA4w5NJEmAtquGvBmAlu92q/VQcaoL5AyJPfc8'
 );
 ```
 
-Chạy migration:
+Chạy `sqlx migrate run`, sau đó `cargo run`; đăng nhập bằng `admin` và password đã dùng để tạo hash. Kết quả mong đợi là dashboard hiển thị “Welcome admin!”.
 
-```bash
-sqlx migrate run
+## II. Password Reset (đổi password)
+
+Seed user dùng password đã biết trước, nên cần cho phép user đổi password. Phần này ôn lại các cơ chế đã xây dựng: form HTML, session, flash messages, xác minh credentials, Argon2 và test tích hợp.
+
+### Skeleton form và endpoint
+
+Tạo module `src/routes/admin/password/` với `GET /admin/password` trả form có ba field: `current_password`, `new_password`, `new_password_check`; `POST /admin/password` nhận form và ban đầu chưa triển khai phần xử lý. Đăng ký cả hai route. Cả hai endpoint phải yêu cầu đăng nhập; test riêng cho GET và POST khi chưa đăng nhập đều xác nhận redirect `/login`.
+
+HTML form trong nguồn dùng `method="post"`, action `/admin/password`, ba input kiểu password, nút submit và liên kết quay về dashboard. Handler lấy `user_id` từ `TypedSession`; nếu không có thì redirect `/login`. Dashboard được cập nhật để liệt kê link “Change password”. Hàm `e500` và `see_other` được chuyển sang `src/utils.rs` để các route dùng chung; `e500` trả lỗi 500 mà không đưa nội dung lỗi ra response, còn nguyên nhân vẫn có thể được log.
+
+### Unhappy path: password mới không khớp
+
+Test đăng nhập trước, gửi hai giá trị password mới khác nhau, kiểm tra redirect về `/admin/password`, rồi theo redirect và tìm thông báo:
+
+```text
+You entered two different new passwords - the field values must match.
 ```
 
-Bây giờ bạn có thể khởi chạy ứng dụng với `cargo run`, mở trình duyệt truy cập `http://localhost:8000/login`, nhập `admin` / `everythinghastostartsomewhere`, và thưởng thức màn hình chào đón *"Welcome admin!"* tại `/admin/dashboard`!
+`Secret<String>` không triển khai `Eq`; so sánh chuỗi bên trong qua `ExposeSecret`. Khi không khớp, gửi `FlashMessage::error(...)` rồi redirect. GET form nhận `IncomingFlashMessages` và render thông báo trong body.
 
----
+### Unhappy path: current password không hợp lệ
 
-## II. Đổi Mật Khẩu & Đăng Xuất An Toàn
+Yêu cầu nhập password hiện tại nhằm giảm nguy cơ kẻ chiếm được session token đổi password và khóa chủ tài khoản hợp pháp. Handler lấy username ứng với `user_id` (dùng `get_username`), tạo `Credentials { username, password: current_password }` rồi gọi lại `validate_credentials`.
 
-Tài khoản quản trị khởi tạo bằng mật khẩu mặc định là một hiểm họa tiềm tàng nếu bị quên lãng. Vì vậy, việc đầu tiên người quản trị phải làm là **Đổi mật khẩu (Password Change)**.
+Nếu lỗi là `AuthError::InvalidCredentials`, gửi flash message “The current password is incorrect.” và redirect về form; lỗi bất ngờ không được che giấu như lỗi xác thực mà chuyển thành 500. Test đăng nhập hợp lệ, gửi current password sai và xác nhận cả redirect lẫn thông báo.
 
-Chúng ta thiết kế hai endpoint trong module `src/routes/admin/password/`:
-- `GET /admin/password`: Phục vụ form HTML yêu cầu nhập: Mật khẩu hiện tại, Mật khẩu mới, Xác nhận mật khẩu mới.
-- `POST /admin/password`: Xử lý cập nhật mật khẩu.
+### Unhappy path: password mới quá ngắn hoặc quá dài
+
+Yêu cầu OWASP ASVS mà sách dẫn quy định password dài hơn 12 ký tự và ngắn hơn 129 ký tự. Nguồn giao phần kiểm tra này như một bài tập cho endpoint `POST /admin/password`; đây không phải phần implementation hoàn chỉnh trong ví dụ của chương.
+
+### Logout
+
+Kịch bản happy path đổi password cần đăng xuất rồi đăng nhập lại; vì thế trước tiên cần endpoint logout. Logout là thao tác làm thay đổi state nên được gửi bằng `POST` từ form/button, không dùng link GET. Test xác nhận: đăng nhập, thấy dashboard; logout và nhận redirect `/login` cùng flash message “You have successfully logged out.”; sau đó dashboard lại redirect về login.
+
+Về bản chất, logout xóa session state ở backend và cookie phía client. `TypedSession` bọc `Session::purge`:
 
 ```rust
-//! src/routes/admin/password/post.rs
-use crate::authentication::{validate_credentials, AuthError, Credentials};
-use crate::session_state::TypedSession;
-use crate::utils::{e500, see_other};
-
-pub async fn change_password(
-    form: web::Form<FormData>,
-    session: TypedSession,
-    pool: web::Data<PgPool>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let user_id = session.get_user_id().map_err(e500)?.ok_or_else(|| see_other("/login"))?;
-
-    // 1. Kiểm tra hai ô mật khẩu mới có khớp nhau hay không
-    if form.new_password.expose_secret() != form.new_password_check.expose_secret() {
-        return Ok(see_other("/admin/password"));
+// src/session_state.rs
+impl TypedSession {
+    pub fn log_out(self) {
+        self.0.purge()
     }
-
-    // 2. Xác minh lại mật khẩu cũ qua Argon2id
-    let username = get_username(user_id, &pool).await.map_err(e500)?;
-    let credentials = Credentials {
-        username,
-        password: form.0.current_password,
-    };
-    if let Err(e) = validate_credentials(credentials, &pool).await {
-        return Ok(see_other("/admin/password"));
-    }
-
-    // 3. Băm mật khẩu mới bằng Argon2id (trong spawn_blocking) và cập nhật Database
-    crate::authentication::change_password(user_id, form.0.new_password, &pool)
-        .await
-        .map_err(e500)?;
-
-    Ok(see_other("/admin/password"))
 }
 ```
 
-### Xử lý Đăng xuất (Logout)
-
-Để đăng xuất, ta xóa sạch dữ liệu phiên trên Redis và hủy cookie trên trình duyệt bằng phương thức `session.purge()`:
+Handler chỉ purge khi session có `user_id`; trường hợp không có session xác thực thì redirect login. Khi đăng xuất thành công, gửi flash message thông tin rồi redirect:
 
 ```rust
-//! src/routes/admin/logout.rs
-use actix_web::HttpResponse;
-use crate::session_state::TypedSession;
-use crate::utils::see_other;
-
+// src/routes/admin/logout.rs
 pub async fn log_out(session: TypedSession) -> Result<HttpResponse, actix_web::Error> {
-    session.purge();
-    Ok(see_other("/login"))
+    if session.get_user_id().map_err(e500)?.is_none() {
+        Ok(see_other("/login"))
+    } else {
+        session.log_out();
+        FlashMessage::info("You have successfully logged out.").send();
+        Ok(see_other("/login"))
+    }
 }
 ```
 
----
+Form logout được thêm vào dashboard với `action="/admin/logout"` và `method="post"`; đăng ký route POST. Trang login phải hiển thị mọi level flash message, không chỉ error.
 
-## III. Tái Cấu Trúc: Viết Middleware Chuẩn Mực Trong Actix-web
+### Happy path: đổi password thành công
 
-Khi số lượng trang trong khu vực `/admin/*` ngày càng nhiều (`/admin/dashboard`, `/admin/password`, `/admin/newsletters`), đoạn code kiểm tra đăng nhập bắt đầu bị sao chép lặp đi lặp lại ở đầu mọi handler:
+Test đầy đủ sáu bước: đăng nhập bằng password ban đầu; POST form đổi password với current password chính xác và hai password mới giống nhau; theo redirect và kiểm tra “Your password has been changed.”; logout; xác nhận flash logout; đăng nhập lại bằng password mới.
+
+Để xử lý bước đổi password, module authentication có `change_password`: hash password mới bằng Argon2id với salt mới, sau đó cập nhật `users.password_hash`. Hash là công việc CPU-bound nên dùng helper `spawn_blocking_with_tracing`; truy vấn SQL cập nhật theo `user_id` chạy async. Các tham số Argon2 trong ví dụ là `m_cost=15000`, `t_cost=2`, `p_cost=1`.
 
 ```rust
-let user_id = session.get_user_id().map_err(e500)?;
-if user_id.is_none() {
-    return Ok(see_other("/login"));
+// src/authentication.rs
+#[tracing::instrument(name = "Change password", skip(password, pool))]
+pub async fn change_password(
+    user_id: uuid::Uuid,
+    password: Secret<String>,
+    pool: &PgPool,
+) -> Result<(), anyhow::Error> {
+    let password_hash = spawn_blocking_with_tracing(move || compute_password_hash(password))
+        .await?
+        .context("Failed to hash password")?;
+
+    sqlx::query!(
+        "UPDATE users SET password_hash = $1 WHERE user_id = $2",
+        password_hash.expose_secret(),
+        user_id
+    )
+    .execute(pool)
+    .await
+    .context("Failed to change user's password in the database.")?;
+    Ok(())
 }
-let user_id = user_id.unwrap();
+
+fn compute_password_hash(password: Secret<String>) -> Result<Secret<String>, anyhow::Error> {
+    let salt = SaltString::generate(&mut rand::thread_rng());
+    let password_hash = Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        Params::new(15000, 2, 1, None).unwrap(),
+    )
+    .hash_password(password.expose_secret().as_bytes(), &salt)?
+    .to_string();
+    Ok(Secret::new(password_hash))
+}
 ```
 
-Đây là vi phạm nguyên tắc **DRY (Don't Repeat Yourself)**. Cách xử lý chuyên nghiệp nhất là bọc toàn bộ khu vực admin bên trong một **Authentication Middleware**.
+Handler gọi `change_password`, rồi gửi flash message “Your password has been changed.” và redirect về `/admin/password`. Nguồn dùng `FlashMessage::error` cho thông báo này dù nội dung báo thành công; khi hiệu đính, nội dung được giữ như trong sách chứ không tự thay đổi mức message.
 
-### Kỹ thuật `actix_web_lab::middleware::from_fn`
+## III. Refactoring kiểm tra quyền truy cập
 
-Thay vì phải tự mình triển khai các trait phức tạp mức thấp của Actix-web như `Transform` và `Service`, hệ sinh thái Actix cung cấp crate tiện ích [`actix-web-lab`](https://crates.io/crates/actix-web-lab) với hàm `from_fn`:
+Nhiều `/admin/*` handler hiện đang lặp đoạn đọc session, kiểm tra `user_id` và redirect nếu thiếu. Có thể trước tiên tách thành hàm `reject_anonymous_users`; helper trả `Uuid` nếu đã đăng nhập, nếu không trả `InternalError` gắn với response redirect `/login`, nhờ vậy handler dùng `?`. Nhưng sẽ phải gọi helper ở từng route. Middleware phù hợp hơn để bảo vệ toàn bộ nhóm route.
+
+### Middleware bằng `actix_web_lab::from_fn`
+
+Tự viết middleware đầy đủ yêu cầu hiểu `Transform` và `Service`. Nhu cầu ở đây đơn giản hơn nên chương dùng `actix_web_lab::middleware::from_fn`:
 
 ```toml
-#! Cargo.toml
-[dependencies]
+# Cargo.toml
 actix-web-lab = "0.18"
 ```
 
-Hàm `from_fn` cho phép biến một hàm async bất kỳ thành Middleware nếu nó tuân thủ chữ ký:
+`from_fn` nhận async function có cấu trúc `ServiceRequest` vào, gọi `next.call(req).await`, rồi trả `ServiceResponse`. Trước tiên middleware dựng `TypedSession` từ `ServiceRequest` (wrapper quanh `HttpRequest` và `Payload`) bằng extractor đã có:
 
 ```rust
-//! src/authentication/middleware.rs
+// src/authentication/middleware.rs
 use actix_web::body::MessageBody;
 use actix_web::dev::{ServiceRequest, ServiceResponse};
-use actix_web::error::InternalError;
 use actix_web::FromRequest;
 use actix_web_lab::middleware::Next;
 use crate::session_state::TypedSession;
-use crate::utils::{e500, see_other};
-
-#[derive(Copy, Clone, Debug)]
-pub struct UserId(pub uuid::Uuid);
 
 pub async fn reject_anonymous_users(
     mut req: ServiceRequest,
@@ -161,54 +173,34 @@ pub async fn reject_anonymous_users(
     }?;
 
     match session.get_user_id().map_err(e500)? {
-        Some(user_id) => {
-            // Đính kèm UserId vào Request Extensions để handler bên trong dùng lại!
-            req.extensions_mut().insert(UserId(user_id));
-            next.call(req).await
-        }
+        Some(_) => next.call(req).await,
         None => {
             let response = see_other("/login");
-            let e = anyhow::anyhow!("Người dùng chưa đăng nhập.");
+            let e = anyhow::anyhow!("The user has not logged in");
             Err(InternalError::from_response(e, response).into())
         }
     }
 }
 ```
 
-### Đăng ký Middleware cho Scope `/admin`
-
-Trong `src/startup.rs`, chúng ta gom tất cả các endpoint quản trị vào một `web::scope("/admin")` và gắn middleware bảo vệ:
+Chỉ cho request đi tiếp nếu session có user ID. Để handler downstream tiếp tục dùng được danh tính, middleware đưa nó vào request extensions. Dùng newtype `UserId` tránh xung đột type map; triển khai `Display` và `Deref<Target = Uuid>` như trong nguồn để handler dùng giá trị UUID thuận tiện. Handler lấy dữ liệu bằng `web::ReqData<UserId>`.
 
 ```rust
-//! src/startup.rs
-use actix_web_lab::middleware::from_fn;
-use crate::authentication::reject_anonymous_users;
+// src/authentication/middleware.rs
+#[derive(Copy, Clone, Debug)]
+pub struct UserId(Uuid);
 
-App::new()
-    // [...]
-    .service(
-        web::scope("/admin")
-            .wrap(from_fn(reject_anonymous_users))
-            .route("/dashboard", web::get().to(admin_dashboard))
-            .route("/password", web::get().to(change_password_form))
-            .route("/password", web::post().to(change_password))
-            .route("/logout", web::post().to(log_out))
-            // Di chuyển endpoint gửi bản tin vào khu vực an toàn!
-            .route("/newsletters", web::post().to(publish_newsletter)),
-    )
+// Trong reject_anonymous_users, nhánh Some:
+Some(user_id) => {
+    req.extensions_mut().insert(UserId(user_id));
+    next.call(req).await
+}
 ```
 
-Giờ đây, trong các handler nội bộ (như `admin_dashboard` hay `publish_newsletter`), chúng ta không cần chạm tới session nữa! Chỉ cần khai báo tham số `user_id: web::ReqData<UserId>`, Actix-web sẽ tự động trích xuất từ Request Extensions một cách thanh lịch và an toàn tuyệt đối.
+Nếu handler khai báo `ReqData<UserId>` mà middleware chưa đăng ký, request thất bại với “Missing expected request extension data”. Vì chỉ `/admin/*` cần bảo vệ, gom các endpoint vào `web::scope("/admin")`, gắn `wrap(from_fn(reject_anonymous_users))` lên scope thay vì toàn `App`. Các route con dùng path tương đối: `/dashboard`, `/password`, `/logout`. Sau khi middleware hoạt động, handler đổi từ `TypedSession` sang `web::ReqData<UserId>` và các đoạn kiểm tra session lặp được bỏ đi.
 
----
+## IV. Tổng kết chương 10
 
-## IV. Tổng Kết Chương 10
+Chương đã đi từ Basic authentication và các lựa chọn xác thực sang quản lý password hash, salt và PHC string; xử lý công việc Argon2 CPU-bound bằng `spawn_blocking` và giữ tracing context; xem xét user enumeration/timing attack, TLS, XSS và chữ ký HMAC; rồi xây session authentication với Redis, form đăng nhập, seed user, đổi password, logout và middleware bảo vệ khu vực admin.
 
-Chương 10 đã trang bị cho chúng ta một bộ giáp bảo mật hoàn chỉnh cho dịch vụ Web trong Rust:
-1. **Mật mã học thực chiến**: Hiểu rõ sự khác biệt giữa hàm băm nhanh (SHA) và hàm băm tốn kém bộ nhớ (**Argon2id**), loại bỏ Rainbow Tables bằng **Salting**.
-2. **Kỷ luật Async Rust**: Bảo vệ Tokio runtime khỏi hiện tượng tê liệt luồng (Thread Starvation) bằng cách cô lập các tác vụ nặng vào `spawn_blocking`.
-3. **Phòng vệ chiều sâu**: Ngăn ngừa Timing Attack, mã hóa dữ liệu với TLS, chống XSS bằng HTML Escaping, chống giả mạo thông điệp với chữ ký **HMAC-SHA256**.
-4. **Hệ thống phiên chuẩn mực**: Sử dụng Cookie `HttpOnly`, `SameSite`, `Secure` kết hợp **Redis Session Store** phân tán.
-5. **Kiến trúc Middleware hiện đại**: Tận dụng `actix_web_lab::from_fn` để xây dựng ranh giới xác thực phân tầng sắc nét.
-
-Hệ thống của chúng ta giờ đây đã được bảo vệ vững chắc. Bước tiếp theo là giải quyết bài toán lớn nhất của hệ thống phân tán: **Làm sao để luồng phát hành bản tin không bao giờ bị mất mát dữ liệu hoặc gửi trùng lặp khi xảy ra sự cố mạng (Chương 11)**.
+Nguồn nhắc rằng `POST /newsletters` vẫn đang dùng Basic authentication; bài tập cuối chương là chuyển endpoint vào admin dashboard, tạo form `GET /admin/newsletters`, chuyển POST thành `/admin/newsletters`, dùng session authentication thay Basic, dùng form extractor thay JSON extractor và cập nhật test. Đây là bài tập được giao, không phải thay đổi đã hoàn tất trong các mục 10.7–10.10. Chương tiếp theo sẽ xem xét cách endpoint này hoạt động khi có lỗi, trong phạm vi fault tolerance, scalability và asynchronous processing.

@@ -1,58 +1,35 @@
 ---
-title: "Tổng Quan Chương 11: Luồng Chịu Lỗi & Tính Bất Biến (Idempotency)"
-description: "Thiết kế kiến trúc hệ thống phân tán chịu lỗi trong Rust: nguyên lý Idempotency, mô hình Save-and-Replay, khóa hàng đợi đồng thời trên PostgreSQL và kiến trúc xử lý tác vụ bất đồng bộ Transactional Outbox."
+title: "Tổng Quan Chương 11: Luồng Chịu Lỗi & Idempotency"
+description: "Từ failure modes của newsletter đến idempotency, synchronization trong Postgres và forward recovery bằng hàng đợi cùng background worker."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-# Tổng Quan Chương 11: Luồng Chịu Lỗi & Tính Bất Biến (Idempotency)
+# Tổng Quan Chương 11: Luồng Chịu Lỗi & Idempotency
 
-Ở các chương trước, endpoint gửi bản tin được thiết kế một cách ngây thơ: khi tác giả nhấn xuất bản, ứng dụng lập tức duyệt qua danh sách độc giả và gửi từng email một qua mạng. Cách làm này có thể chấp nhận được nếu danh sách chỉ có vài chục người, nhưng **chắc chắn sẽ sụp đổ thảm hại** khi quy mô lên tới hàng ngàn độc giả trong môi trường phân tán thực tế.
+Ban đầu endpoint newsletter truy vấn subscriber rồi gửi email tuần tự qua Postmark. Cách làm đơn giản này gặp vấn đề khi có lỗi giữa chừng, ứng dụng crash hoặc người dùng gửi lại form. Chương khảo sát cách giảm gửi trùng và tiếp tục workflow khi có lỗi; không đảm bảo email không bao giờ bị mất hay trùng.
 
-Chương 11 là chương đỉnh cao khép lại hành trình kiến trúc của cuốn sách, đưa ứng dụng của chúng ta chạm tới chuẩn mực **Chịu lỗi toàn diện (Fault-tolerant Architecture)**. Chúng ta sẽ giải quyết bài toán hóc búa nhất của hệ thống phân tán: *Làm thế nào để hệ thống vẫn vận hành chính xác, không mất mát dữ liệu và không gửi thư trùng lặp, ngay cả khi xảy ra sự cố mạng, ứng dụng bị crash đột ngột hay người dùng liên tục nhấn F5/Retry?*
+## Lộ trình
 
----
+- [11.1–11.3: Endpoint và failure modes](/docs/chuong-11-fault-tolerant-workflows/01-post-admin-newsletters-va-cac-failure-modes) — Luồng hiện tại, mục tiêu best-effort delivery, lỗi input/Postgres/Postmark, crash và thao tác người dùng.
+- [11.4–11.6: Idempotency và keys](/docs/chuong-11-fault-tolerant-workflows/02-khai-niem-idempotency-va-chia-khoa) — Định nghĩa theo khả năng quan sát, ví dụ thanh toán, request đồng thời và chiến lược stateful/stateless. Postmark không hỗ trợ idempotency nên sách chọn save-and-replay.
+- [11.7–11.8: Store và save-and-replay](/docs/chuong-11-fault-tolerant-workflows/03-idempotency-store-save-and-replay) — Lưu response trong Postgres, composite type cho HTTP headers và serialize body response.
+- [11.9–11.11: Đồng bộ, phục hồi và epilogue](/docs/chuong-11-fault-tolerant-workflows/04-concurrent-requests-va-recovery) — Reservation bằng transaction và `ON CONFLICT`, giới hạn khi gọi dịch vụ ngoài, active forward recovery với `newsletter_issues`, `issue_delivery_queue` và worker `FOR UPDATE SKIP LOCKED`.
 
-## I. Lộ Trình Nội Dung Chương 11
-
-Chương này gồm 4 bài học chuyên sâu về kiến trúc hệ thống:
-
-- **[11.1 - 11.3: Ôn Lại POST /admin/newsletters & Các Loại Lỗi Hệ Thống](/docs/chuong-11-fault-tolerant-workflows/01-post-admin-newsletters-va-cac-failure-modes)**:
-  Phân tích kiến trúc hiện tại của `POST /admin/newsletters`. Định nghĩa mục tiêu *"Best-effort delivery"*. Mổ xẻ 4 kịch bản lỗi chí mạng: dữ liệu đầu vào không hợp lệ, sự cố mạng I/O (Postgres & Postmark), ứng dụng bị ngắt nguồn đột ngột (crash), và hành vi người dùng bấm đúp hoặc hết thời gian chờ (timeout).
-
-- **[11.4 - 11.6: Khái Niệm Idempotency, Idempotency Keys & Chiến Lược](/docs/chuong-11-fault-tolerant-workflows/02-khai-niem-idempotency-va-chia-khoa)**:
-  Bản chất toán học và thực tế của tính bất biến (Idempotency / Retry-safety). Bài học kinh điển từ hệ thống cổng thanh toán quốc tế (Stripe/PayPal). Cơ chế hoạt động của **Idempotency Keys**. So sánh hai trường phái: *Stateful Idempotency (Save-and-Replay)* và *Stateless Idempotency (Deterministic Key Generation)*.
-
-- **[11.7 - 11.8: Lưu Trữ Trạng Thái: Idempotency Store & Mô Hình Save-and-Replay](/docs/chuong-11-fault-tolerant-workflows/03-idempotency-store-save-and-replay)**:
-  Lựa chọn cơ sở dữ liệu tối ưu giữa Redis và PostgreSQL. Thiết kế bảng `idempotency` và giải quyết bài toán mảng tuple trong Postgres bằng Composite Type `header_pair`. Xây dựng kiểu dữ liệu miền `IdempotencyKey` và triển khai cơ chế tuần tự hóa/giải tuần tự hóa toàn bộ HTTP Response.
-
-- **[11.9 - 11.11: Xử Lý Request Đồng Thời, Forward Recovery & Lời Kết](/docs/chuong-11-fault-tolerant-workflows/04-concurrent-requests-va-recovery)**:
-  Đồng bộ hóa các request đồng thời bằng Row-level Lock trong Postgres (`ON CONFLICT DO NOTHING`). Giải quyết bế tắc giao dịch phân tán (Distributed Transactions): Backward Recovery vs Forward Recovery. Hiện thực hóa kiến trúc xử lý bất đồng bộ (**Transactional Outbox Pattern**) với bảng `newsletter_issues`, hàng đợi `issue_delivery_queue`, Background Worker sử dụng `FOR UPDATE SKIP LOCKED`, và lời kết đầy cảm hứng của cuốn sách.
-
----
-
-## II. Sơ Đồ Kiến Trúc Chịu Lỗi Hoàn Chỉnh
+## Luồng ở giai đoạn bất đồng bộ
 
 ```mermaid
 flowchart TD
-    Client[Author Browser] -->|POST with Idempotency-Key| API[Actix-web Handler]
-    
-    subgraph PostgresTransaction [Single ACID Postgres Transaction]
-        API -->|1. Try Lock| IdempTable[(idempotency)]
-        API -->|2. Store Details| IssuesTable[(newsletter_issues)]
-        API -->|3. Enqueue Tasks| QueueTable[(issue_delivery_queue)]
-        API -->|4. Save Response| IdempTable
-    end
-    
-    API -->|Immediate 303 Redirect| Client
-    
-    subgraph BackgroundWorkers [Async Background Workers Pool]
-        Worker[Background Worker Loop] -->|5. FOR UPDATE SKIP LOCKED| QueueTable
-        Worker -->|6. Send Email API| Postmark[Postmark Email Service]
-        Worker -->|7. Delete Task on Success| QueueTable
-    end
+    Client[Author form] -->|POST + idempotency key| Handler[Request handler]
+    Handler -->|Postgres transaction| Idempotency[(idempotency)]
+    Handler -->|Store issue| Issues[(newsletter_issues)]
+    Handler -->|Enqueue confirmed subscribers| Queue[(issue_delivery_queue)]
+    Handler -->|Commit and redirect| Client
+    Worker[Background worker] -->|FOR UPDATE SKIP LOCKED| Queue
+    Worker -->|Send email| Postmark[Postmark]
+    Worker -->|Delete completed queue row| Queue
 ```
 
-<Callout type="info" title="Tinh hoa của Kiến trúc Transactional Outbox">
-Bằng cách chuyển đổi từ việc gửi email trực tiếp sang đưa các tác vụ vào bảng hàng đợi nội bộ trong PostgreSQL, **toàn bộ thao tác của request handler được đóng gói gọn trong một giao dịch ACID duy nhất**. Hoặc toàn bộ việc ghi nhận bản tin, xếp hàng email và lưu idempotency cùng thành công, hoặc không có bất kỳ thứ gì thay đổi — triệt tiêu 100% tình trạng dữ liệu dở dang!
+<Callout type="warn" title="Giới hạn cần nhớ">
+Transaction của request bảo vệ các thay đổi Postgres — issue, queue và idempotency response — cùng nhau. Nó không bao trùm API Postmark. Trong ví dụ worker của sách, lỗi gửi được log nhưng task vẫn bị xóa; retry với `n_retries`, `execute_after` và backoff chỉ được đề xuất làm bài tập, chưa được triển khai. Idempotency key cũng chưa có cơ chế hết hạn.
 </Callout>

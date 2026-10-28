@@ -122,13 +122,13 @@ Chạy lại test: **Bài test đã chuyển sang màu xanh (Pass)!**
 
 Một email xác thực chỉ thực sự có ý nghĩa nếu nó chứa một liên kết trỏ về endpoint xác thực của API. Làm thế nào để bài test tích hợp có thể trích xuất liên kết nằm bên trong nội dung email do Mock Server ghi nhận?
 
-Chúng ta sử dụng crate [`linkify`](https://crates.io/crates/linkify) trong `dev-dependencies` để bóc tách URL:
+Chúng ta sử dụng crate [`linkify`](https://crates.io/crates/linkify) trong `dev-dependencies` để bóc tách URL. Trong nguyên tác dùng phiên bản `0.9`:
 
 ```toml
 # Cargo.toml
 # [...]
 [dev-dependencies]
-linkify = "0.8"
+linkify = "0.9"
 ```
 
 Viết bài test kiểm tra liên kết xác thực:
@@ -279,13 +279,13 @@ App::new()
     .app_data(Data::new(ApplicationBaseUrl(base_url)))
 ```
 
-Trong handler `subscribe`, chúng ta chỉ việc inject `base_url: web::Data<ApplicationBaseUrl>` để sinh ra liên kết xác thực chính xác 100%!
+Trong handler `subscribe`, inject `base_url: web::Data<ApplicationBaseUrl>` để tạo liên kết theo cấu hình môi trường. Trong test, vì cổng được cấp ngẫu nhiên sau khi dựng server, helper cần bổ sung cổng thực tế vào URL.
 
 ---
 
 ## VI. Sinh Subscription Tokens Ngẫu Nhiên An Toàn Bằng `rand`
 
-Token xác thực là chiếc chìa khóa duy nhất bảo vệ danh tính của độc giả. Nếu token quá ngắn hoặc được sinh ra theo quy luật dễ đoán (như số tự tăng 1, 2, 3...), kẻ tấn công có thể dễ dàng đoán mò (brute-force) để tự ý kích hoạt hàng loạt tài khoản trái phép.
+Token xác nhận không phải mật khẩu và không cấp quyền truy cập thông tin được bảo vệ; nó chỉ dùng để xác nhận đăng ký. Dù vậy, token cần khó đoán để tránh người khác tự xác nhận đăng ký thay cho chủ hộp thư.
 
 <Callout type="warn" title="Tiêu Chuẩn Bảo Mật Của Subscription Token">
 Token xác thực bắt buộc phải thỏa mãn:
@@ -379,8 +379,6 @@ pub async fn confirm(
 }
 ```
 
-Toàn bộ luồng xác thực từ gửi mail đến click link đã hoàn thành và hoạt động hoàn hảo!
+Đến đây, endpoint xác nhận đã tra token, lấy subscriber tương ứng và cập nhật trạng thái thành `confirmed`; bài test tích hợp kiểm tra cả luồng click liên kết lẫn trạng thái lưu trong database.
 
-Thế nhưng, hãy dừng lại một chút và nhìn vào hàm `subscribe`: chúng ta đang thực hiện **hai câu lệnh INSERT độc lập** vào database. Điều gì sẽ xảy ra nếu câu lệnh thứ nhất thành công nhưng câu lệnh thứ hai thất bại? 
-
-Đó chính là câu hỏi lớn sẽ được giải quyết trọn vẹn ở bài học cuối cùng về **Database Transactions**!
+Tuy nhiên, trong `subscribe` hiện vẫn có hai thao tác INSERT độc lập. Nếu thao tác đầu thành công còn thao tác sau thất bại, dữ liệu có thể ở trạng thái dở dang. Phần tiếp theo giải quyết vấn đề này bằng **Database Transactions**.

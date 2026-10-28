@@ -59,7 +59,7 @@ Khi người dùng đăng ký, chúng ta yêu cầu hai thông tin: tên (`name`
 
 ### 1. Ràng Buộc Nghiệp Vụ (Domain Constraints)
 
-Thực tế đã chứng minh rằng: **xử lý tên người là một bài toán vô cùng phức tạp**. Nếu bạn từng đọc bài viết kinh điển *"Falsehoods programmers believe about names"* của Patrick McKenzie (patio11), bạn sẽ nhận ra việc cố gắng định nghĩa thế nào là một cái tên "hợp lệ" trên phạm vi toàn cầu là một nỗ lực vô vọng. Tên người có thể có hoặc không có họ, có thể chỉ gồm một chữ cái, có thể chứa dấu gạch ngang, dấu nháy đơn, ký tự tượng hình hoặc thậm chí là các ký tự Unicode hiếm gặp tùy theo từng nền văn hóa và khu vực địa lý.
+Thực tế đã chứng minh rằng: **xử lý tên người là một bài toán vô cùng phức tạp**. Bài viết ["Falsehoods programmers believe about names"](https://www.kalzumeus.com/2010/06/17/falsehoods-programmers-believe-about-names/) của [patio11](https://twitter.com/patio11) là điểm khởi đầu hữu ích để xem lại những điều ta tưởng mình biết về tên người. Bạn sẽ nhận ra việc cố gắng định nghĩa thế nào là một cái tên "hợp lệ" trên phạm vi toàn cầu là một nỗ lực vô vọng. Tên người có thể có hoặc không có họ, có thể chỉ gồm một chữ cái, có thể chứa dấu gạch ngang, dấu nháy đơn, ký tự tượng hình hoặc thậm chí là các ký tự Unicode hiếm gặp tùy theo từng nền văn hóa và khu vực địa lý.
 
 Hãy nhớ lại mục đích thu thập tên của chúng ta: chúng ta chỉ dùng tên để đặt vào dòng chào mở đầu trong các email gửi đi (ví dụ: *"Chào Ursula,"*). Chúng ta hoàn toàn không cần tên đó phải khớp 100% với danh tính pháp lý trên giấy tờ tùy thân của độc giả. Sẽ thật vô lý và phản cảm nếu chúng ta áp đặt những quy tắc kiểm tra hà khắc hoặc sai lệch lên người dùng, khiến họ không thể đăng ký chỉ vì hệ thống từ chối cấu trúc tên thật của họ.
 
@@ -74,7 +74,7 @@ Tuy nhiên, không phải tất cả người dùng trên Internet đều mang t
 Các biểu mẫu (forms) và dữ liệu đầu vào từ người dùng luôn là mục tiêu tấn công hàng đầu. Nếu dữ liệu không được khử trùng (sanitise) đúng cách, kẻ tấn công có thể tiêm mã độc vào cơ sở dữ liệu (SQL injection), thực thi mã từ xa trên máy chủ, làm sập ứng dụng (DoS) hoặc nhiều kịch bản nguy hiểm khác.
 
 Trong bối cảnh một ứng dụng gửi newsletter qua email, những mối đe dọa thực tế mà chúng ta phải đối mặt là gì?
-- **Từ chối dịch vụ (Denial of Service - DoS)**: Cố tình gửi các payload khổng lồ làm cạn kiệt tài nguyên bộ nhớ hoặc đĩa cứng của máy chủ, khiến người dùng khác không thể đăng ký.
+- **Từ chối dịch vụ (denial of service - DoS)**: Cố tình làm gián đoạn dịch vụ để ngăn người khác đăng ký; đây là mối đe dọa phổ biến với hầu hết dịch vụ trực tuyến.
 - **Đánh cắp dữ liệu (Data theft)**: Thu thập hoặc chiếm quyền truy cập danh sách hàng nghìn địa chỉ email độc giả.
 - **Lừa đảo (Phishing)**: Lợi dụng hệ thống newsletter uy tín của chúng ta để gửi email chứa các đoạn mã độc hoặc liên kết lừa đảo đến nạn nhân, đánh lừa họ nhấp vào liên kết.
 
@@ -188,8 +188,8 @@ unicode-segmentation = "1"
 # [...]
 ```
 
-<Callout type="info" title="Tại Sao Phải Dùng Graphemes Thay Vì len() Hay chars().count() Trong Rust?">
-Trong Rust, phương thức `s.len()` trả về **số lượng byte** (theo mã hóa UTF-8), không phải số lượng ký tự. Một ký tự tiếng Việt (như `ệ`) hoặc ký tự tiếng Nhật/Trung có thể tốn từ 2 đến 4 bytes. Phương thức `s.chars().count()` đếm số lượng Unicode Scalar Values, nhưng vẫn có thể tính tách rời các dấu thanh (combining characters). Chỉ có `unicode-segmentation` với thuật toán đếm **extended grapheme clusters** mới phản ánh chính xác số ký tự hiển thị trên màn hình người dùng!
+<Callout type="info" title="Đếm Graphemes Unicode">
+`String::len()` trả về số byte của chuỗi UTF-8, còn `chars().count()` đếm Unicode scalar values; cả hai đều không nhất thiết tương ứng với ký tự mà người đọc cảm nhận. Ví dụ, `å` có thể được biểu diễn bằng `a` và dấu kết hợp `◌̊`, nhưng tạo thành một grapheme. Crate `unicode-segmentation` cung cấp `graphemes(true)` để duyệt extended grapheme clusters — lựa chọn được khuyến nghị trong sách cho giới hạn 256 graphemes.
 </Callout>
 
 Thoạt nhìn, hàm `is_valid_name` có vẻ là một giải pháp hoàn hảo (miễn là chúng ta viết đủ unit test để bao phủ các trường hợp). Thế nhưng, các hàm dạng `is_valid_...` như thế này thực chất lại đang mang đến cho lập trình viên một **ảo tưởng nguy hiểm về sự an toàn**.

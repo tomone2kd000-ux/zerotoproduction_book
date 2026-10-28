@@ -15,7 +15,7 @@ Dù chưa dựng giao diện web với form HTML để kiểm thử luồng ngư
 - Khi dữ liệu form hợp lệ (có đầy đủ tên và email), thông tin người dùng được lưu thành công vào cơ sở dữ liệu PostgreSQL.
 - Khi dữ liệu form bị thiếu hoặc sai lệch, API phản hồi mã lỗi `400 Bad Request`.
 
-Liệu chúng ta đã có thể yên tâm đem phiên bản này đi triển khai lên môi trường thực tế (production)? **Chưa thể.** Hệ thống hiện tại hoàn toàn "mù lòa": chúng ta chưa gắn các công cụ đo đạc (instrumentation) và chưa thu thập bất kỳ dữ liệu giám sát từ xa (telemetry data) nào. Nếu đem ứng dụng này lên production, chúng ta sẽ hoàn toàn bất lực trước những sự cố không thể lường trước (**unknown unknowns**).
+Liệu chúng ta đã có thể yên tâm đem phiên bản này đi triển khai lên môi trường thực tế (production) của một cloud provider thật hấp dẫn? **Chưa thể.** Hệ thống hiện tại hoàn toàn "mù lòa": ứng dụng chưa được instrument và chưa thu thập dữ liệu telemetry, khiến ta dễ bị động trước những sự cố không thể lường trước (**unknown unknowns**). Nếu các thuật ngữ này còn xa lạ, đừng lo: tìm hiểu chúng là trọng tâm của chương này.
 
 ---
 

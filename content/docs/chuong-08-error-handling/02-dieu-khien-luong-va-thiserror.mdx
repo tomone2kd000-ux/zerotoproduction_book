@@ -9,7 +9,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 Ở phần trước, chúng ta đã thành công trong việc ghi lại nhật ký lỗi chi tiết cho operator thông qua Newtype `StoreTokenError` và việc triển khai trait `ResponseError`. 
 
-Tuy nhiên, nếu nhìn nhận từ góc độ **Kiến trúc phần mềm sạch (Clean Architecture / Separation of Concerns)**, giải pháp này bộc lộ một lỗ hổng nghiêm trọng về ranh giới trách nhiệm giữa các tầng (Layering).
+Tuy nhiên, nếu nhìn từ góc độ phân tầng (layering), giải pháp này làm mờ ranh giới trách nhiệm giữa các tầng.
 
 ---
 
@@ -25,11 +25,11 @@ impl ResponseError for StoreTokenError {}
 
 Chúng ta đang cài đặt một trait thuộc về web framework (`actix_web::ResponseError`) cho một kiểu lỗi trả về từ một hàm nghiệp vụ lưu trữ cơ sở dữ liệu (`store_token`). 
 
-Hàm `store_token` về bản chất chỉ quan tâm đến việc ghi dữ liệu vào bảng `subscription_tokens`. Nó hoàn toàn **không nên và không được phép biết** gì về giao thức HTTP hay kiến trúc REST:
+Hàm `store_token` về bản chất chỉ quan tâm đến việc ghi dữ liệu vào bảng `subscription_tokens`; nó không nên phụ thuộc vào giao thức HTTP hay kiến trúc REST:
 1. Nếu sau này `store_token` được gọi từ một ứng dụng dòng lệnh (CLI), một message queue worker (RabbitMQ/Kafka consumer), hoặc một bài kiểm thử đơn vị, việc nó phụ thuộc vào `ResponseError` của web framework là một sự rò rỉ phụ thuộc (leaky abstraction).
 2. Kể cả khi chỉ chạy trong REST API, một endpoint khác sau này sử dụng `store_token` có thể muốn xử lý lỗi theo một cách khác chứ không nhất thiết phải trả về mã `500 Internal Server Error`.
 
-**Quy tắc bất di bất dịch**: *Việc quyết định HTTP status code nào tương ứng với một lỗi là trách nhiệm độc quyền của Request Handler (tầng giao diện/vận chuyển), không được phép rò rỉ vào các tầng nghiệp vụ bên dưới.*
+Nguyên tắc phân tầng ở đây là: *Việc quyết định HTTP status code nào tương ứng với một lỗi thuộc về Request Handler (tầng giao diện/vận chuyển), không nên đặt ở các tầng bên dưới.*
 
 Vì vậy, ta phải xóa bỏ việc triển khai `ResponseError` trên `StoreTokenError`:
 
@@ -310,7 +310,7 @@ Kết quả log quay trở lại trạng thái hoàn hảo:
 
 Mặc dù đã đạt được mục tiêu về kiến trúc và chất lượng telemetry, chúng ta phải viết tới gần 90 dòng mã thủ công chỉ để cài đặt `Debug`, `Display`, `Error::source`, `From` và `ResponseError` cho `SubscribeError`.
 
-Code quá nhiều mã thừa (boilerplate) sẽ làm giảm năng suất và dễ gây lỗi chính tả. May mắn thay, trong hệ sinh thái Rust đã có giải pháp hoàn hảo: crate [`thiserror`](https://github.com/dtolnay/thiserror) do David Tolnay phát triển.
+Đoạn mã này có nhiều boilerplate. Có thể dùng crate [`thiserror`](https://github.com/dtolnay/thiserror) để sinh phần lớn mã đó.
 
 Thêm vào `Cargo.toml`:
 
@@ -348,7 +348,7 @@ impl std::fmt::Debug for SubscribeError {
 }
 ```
 
-Từ **90 dòng code thủ công**, chúng ta rút gọn chỉ còn **21 dòng mã khai báo** rõ ràng, sạch sẽ và an toàn tuyệt đối!
+Theo ví dụ trong sách, phần định nghĩa enum được rút từ khoảng 90 dòng mã thủ công còn 21 dòng.
 
 ### Các thuộc tính cốt lõi của `thiserror`
 

@@ -34,13 +34,7 @@ Nhiệm vụ hàng đầu của trình biên dịch Rust (`rustc`) là biến đ
 
 Do đó, bạn sẽ cần một backend tương ứng của trình biên dịch cho từng **Mục tiêu biên dịch (Compilation Target)**, tức là cho từng nền tảng phần cứng và hệ điều hành mà bạn muốn sản phẩm chạy trên đó (chẳng hạn như Linux 64-bit, macOS ARM64 Apple Silicon, hay Windows x86_64).
 
-Dự án Rust cam kết hỗ trợ một phổ rộng các nền tảng phần cứng khác nhau, được phân cấp theo các **tầng bảo đảm (Tiers)**:
-
-| Phân Tầng (Tier) | Tên Gọi | Mức Độ Đảm Bảo Chất Lượng |
-| :--- | :--- | :--- |
-| **Tier 1** | *Guaranteed-to-work* | Đảm bảo hoạt động hoàn hảo 100%. Mọi commit vào compiler đều phải vượt qua toàn bộ bộ kiểm thử tự động trên nền tảng này trước khi được merge. |
-| **Tier 2** | *Guaranteed-to-build* | Đảm bảo biên dịch thành công. Mã nguồn compiler build được cho target này, nhưng có thể chưa chạy kiểm thử toàn diện trên thiết bị thực tế. |
-| **Tier 3** | *Best-effort* | Hỗ trợ theo nỗ lực tối đa của cộng đồng. Không có cam kết tự động hóa kiểm thử chính thức từ phía Rust core team. |
+Dự án Rust cố gắng hỗ trợ nhiều mục tiêu biên dịch với các mức bảo đảm khác nhau. Các mục tiêu được chia thành nhiều *tier*, từ Tier 1, được bảo đảm hoạt động, đến Tier 3, hỗ trợ theo khả năng.
 
 Bạn có thể tra cứu danh sách các nền tảng được hỗ trợ đầy đủ và cập nhật nhất tại [Trang Rust Forge Platform Support](https://forge.rust-lang.org/release/platform-support.html).
 
@@ -78,7 +72,7 @@ Mô hình phát hành của Rust được tổ chức thành 3 kênh (Release Ch
 ### 1. Kênh Ổn Định (`stable`)
 Đối với phát triển ứng dụng thực tế trong doanh nghiệp, bạn **luôn luôn nên dựa vào kênh `stable`** để biên dịch, kiểm thử và vận hành mã nguồn. 
 
-Kênh `stable` phát hành một phiên bản mới đều đặn **mỗi 6 tuần một lần** theo mô hình đoàn tàu (*train release model*). Khi một phiên bản mới ra mắt, nó đã trải qua hàng tháng trời kiểm tra kỹ lưỡng.
+Kênh `stable` phát hành một phiên bản mới đều đặn **mỗi 6 tuần một lần** theo mô hình đoàn tàu (*train release model*)[^1]. Tại thời điểm viết sách, phiên bản mới nhất là `v1.72.0`[^2]. Khi một phiên bản mới ra mắt, nó đã trải qua hàng tháng trời kiểm tra kỹ lưỡng.
 
 ### 2. Kênh Thử Nghiệm (`beta`)
 Đây là nhánh ứng viên cho bản phát hành `stable` tiếp theo. Việc các đội ngũ kỹ sư thử nghiệm dự án của họ trên trình biên dịch `beta` là một hành động đóng góp tuyệt vời cho cộng đồng: nó giúp phát hiện các lỗi hồi quy (*regressions*) trước khi bản phát hành chính thức đến tay hàng triệu lập trình viên.
@@ -117,4 +111,9 @@ rustup update
 rustup toolchain list
 ```
 
-Chúng ta sẽ **không cần thực hiện kỹ thuật biên dịch chéo (cross-compilation)** phức tạp trên máy cá nhân. Trong các chương tiếp theo, ứng dụng backend của chúng ta sẽ được đóng gói và vận hành bên trong các Docker Container Linux, cho phép mã nguồn được biên dịch trực tiếp trong đúng môi trường mục tiêu của Production.
+Chúng ta sẽ **không cần (và cũng không thực hiện) biên dịch chéo (cross-compilation)**. Khối lượng công việc Production sẽ chạy trong các container, vì vậy chúng ta không cần biên dịch từ máy phát triển sang host mục tiêu Production.
+
+[^1]: Thông tin chi tiết về lịch phát hành có trong [Rust Book](https://doc.rust-lang.org/book/appendix-07-nightly-rust.html).
+[^2]: Có thể xem phiên bản kế tiếp và ngày phát hành tại [Rust Forge](https://forge.rust-lang.org/).
+[^3]: Lỗi trong các bản `beta` khá hiếm nhờ quy trình CI/CD của dự án Rust. Một thành phần đáng chú ý là [`crater`](https://github.com/rust-lang/crater), công cụ quét các dự án Rust trên [crates.io](https://crates.io) và GitHub, biên dịch chúng và chạy test suite để tìm hồi quy tiềm ẩn. [Pietro Albini](https://www.pietroalbini.org/about/) trình bày quy trình phát hành Rust trong bài nói [Shipping a compiler every six weeks](https://www.pietroalbini.org/blog/shipping-a-compiler-every-six-weeks/) tại RustFest 2019.
+[^4]: Danh sách feature flags của `nightly` có trong [The Unstable Book](https://doc.rust-lang.org/nightly/unstable-book/the-unstable-book.html).

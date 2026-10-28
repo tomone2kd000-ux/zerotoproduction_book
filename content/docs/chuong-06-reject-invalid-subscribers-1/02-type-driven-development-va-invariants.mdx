@@ -84,7 +84,7 @@ error[E0603]: tuple struct constructor `SubscriberName` is private
    |                                  any of the fields is private
 ```
 
-Điều này đồng nghĩa với việc: **hoàn toàn không có cách nào để khởi tạo một thể hiện của `SubscriberName` từ bên ngoài module `domain`** nếu chúng ta không cung cấp một phương thức công khai!
+Điều này đồng nghĩa với việc: **không thể gọi tuple-struct constructor để khởi tạo `SubscriberName` từ bên ngoài module `domain`** khi trường bên trong vẫn private. Module vẫn có thể cung cấp một phương thức công khai làm cổng tạo giá trị — như `parse` dưới đây.
 
 ---
 
@@ -124,7 +124,7 @@ Toàn bộ logic kiểm tra bên trong `parse` tương tự như những gì ch�
 - Hàm `is_valid_name` chỉ trả về một giá trị boolean (`bool`).
 - Phương thức `parse` trả về một **thể hiện kiểu `SubscriberName`** nếu tất cả các bước kiểm tra đều thành công.
 
-Vì `parse` là con đường duy nhất để tạo ra một instance của `SubscriberName` từ bên ngoài module `domain`, chúng ta có thể khẳng định chắc chắn 100% rằng: **bất kỳ một đối tượng `SubscriberName` nào đang tồn tại trong bộ nhớ đều chắc chắn thỏa mãn tất cả các ràng buộc nghiệp vụ của chúng ta!**
+Với định nghĩa hiện tại, `parse` là con đường duy nhất để tạo `SubscriberName` từ bên ngoài module `domain`. Vì vậy, mọi giá trị được tạo theo API này đều thỏa mãn các ràng buộc validation đã nêu.
 
 Chúng ta đã biến việc tạo ra một `SubscriberName` không hợp lệ thành **điều không thể thực hiện được về mặt cú pháp**.
 
@@ -160,7 +160,7 @@ pub async fn insert_subscriber(
 
 Hãy dừng lại một giây để chiêm nghiệm điều kỳ diệu vừa xảy ra:
 - Trước đây, khi `insert_subscriber` nhận `FormData`, trường `name` là một `String` thô. Hàm không có cách nào biết được liệu chuỗi đó đã hợp lệ hay chưa, buộc ta phải kiểm tra toàn cục toàn bộ codebase.
-- Giờ đây, với chữ ký mới, bản thân `insert_subscriber` có thể **tin tưởng tuyệt đối** rằng `new_subscriber.name` chắc chắn không rỗng và không chứa ký tự độc hại! Bất kỳ lập trình viên nào cố tình truyền một chuỗi rỗng vào hàm này sẽ bị trình biên dịch chặn lại ngay lập tức tại thời điểm compile.
+- Giờ đây, với chữ ký mới, `insert_subscriber` có thể suy ra từ kiểu của tham số rằng `new_subscriber.name` đã đi qua các ràng buộc validation của `SubscriberName`. Bất kỳ mã nào cố truyền trực tiếp một `String` vào vị trí này sẽ không biên dịch.
 
 <Callout type="info" title="Triết Lý Make Illegal States Unrepresentable">
 Đây chính là cốt lõi của **Type-Driven Development**: Chúng ta mã hóa các quy tắc nghiệp vụ (**Invariants**) vào bên trong hệ thống kiểu dữ liệu, và mượn sức mạnh của trình biên dịch để cưỡng chế thực thi các quy tắc đó. Trình biên dịch trở thành người gác cổng trung thành nhất của bạn.
@@ -335,7 +335,7 @@ pub async fn insert_subscriber(
 }
 ```
 
-Dự án biên dịch thành công 100%!
+Dự án đã biên dịch thành công.
 
 ---
 
@@ -380,7 +380,7 @@ Trong Rust, `panic!` được sinh ra để đại diện cho các lỗi **khôn
 Như kỹ sư danh tiếng `burntsushi` (tác giả của `ripgrep`) từng nhấn mạnh trên diễn đàn cộng đồng Rust:
 > *"Nếu ứng dụng Rust của bạn phát nổ `panic!` trước dữ liệu đầu vào của người dùng, thì chắc chắn ứng dụng của bạn đang chứa một con BUG (lỗi lập trình) — bất kể lỗi đó nằm ở thư viện bên thứ ba hay trong chính mã nguồn của bạn."*
 
-Khi một request handler bị panic, `actix-web` xem đây là một sự cố nghiêm trọng và lập tức hủy bỏ luồng worker đang phục vụ request đó. Kết quả là kết nối socket bị ngắt ngang xương giữa chừng.
+Khi một request handler bị panic, `actix-web` hủy worker đang xử lý request đó; kết nối hiện tại bị ngắt đột ngột và client có thể nhận lỗi `IncompleteMessage`. Tuy nhiên, panic ở một request không làm sập toàn bộ ứng dụng: `actix-web` chạy nhiều worker và sẽ tạo worker thay thế cho worker bị lỗi.
 
 Trước tiên, hãy cập nhật lại bài test để phản ánh kỳ vọng chuẩn mực của một REST API: khi người dùng gửi dữ liệu không hợp lệ, API phải trả về mã trạng thái **`400 Bad Request`**!
 

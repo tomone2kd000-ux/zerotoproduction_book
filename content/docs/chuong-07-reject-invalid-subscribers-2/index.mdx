@@ -13,8 +13,8 @@ Thế nhưng, một địa chỉ email đúng chuẩn cú pháp (`syntactically 
 
 Nếu không có cơ chế xác minh, bất kỳ ai cũng có thể nhập email của người khác để quấy rối (email bombing), hoặc một chủ sở hữu newsletter vô lương tâm có thể cào hàng loạt email trên mạng rồi tự ý đưa vào danh sách gửi tin.
 
-<Callout type="warn" title="Sự Đồng Thuận Của Subscriber (Subscriber Consent) & Luật GDPR">
-Để bảo vệ độc giả và tuân thủ các quy định pháp lý quốc tế (chẳng hạn như đạo luật GDPR của Liên minh Châu Âu), việc một người gửi request đến `POST /subscriptions` là **chưa đủ để khẳng định họ muốn nhận bản tin**. Hệ thống bắt buộc phải thu thập sự đồng thuận rõ ràng (explicit consent) thông qua quy trình **xác thực email hai bước (Double Opt-In)**: gửi một email xác nhận vào hòm thư và chỉ kích hoạt trạng thái đăng ký khi người dùng nhấp vào liên kết xác nhận.
+<Callout type="warn" title="Subscriber Consent">
+Một request đến `POST /subscriptions` chưa đủ để khẳng định chủ hộp thư đồng ý nhận newsletter. Chương này dùng confirmation email để xác nhận người đăng ký có thể nhận thư và muốn đăng ký; sách lưu ý explicit consent là yêu cầu pháp lý khi xử lý dữ liệu công dân châu Âu.
 </Callout>
 
 ---

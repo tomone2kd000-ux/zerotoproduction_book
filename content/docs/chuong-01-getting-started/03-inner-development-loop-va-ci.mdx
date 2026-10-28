@@ -32,17 +32,17 @@ Tốc độ của vòng lặp này đóng vai trò như một **chặn trên (up
 * Nếu mất **5 phút** để biên dịch và chạy kiểm thử sau mỗi thay đổi, bạn chỉ có thể thực hiện tối đa **12 lần lặp trong một giờ**.
 * Nếu rút ngắn thời gian đó xuống còn **2 phút**, bạn có thể hoàn thành tới **30 lần lặp trong cùng một giờ**!
 
-Rust nổi tiếng với sự khắt khe của trình biên dịch, và thời gian biên dịch (*compilation time*) trên các dự án lớn có thể trở thành một điểm nghẽn khó chịu. Chúng ta có hai giải pháp kỹ thuật hiệu quả để giải quyết vấn đề này.
+Thời gian biên dịch (*compilation time*) trên các dự án lớn có thể trở thành một điểm nghẽn. Chúng ta có thể giảm thời gian chờ thực tế bằng linker nhanh hơn và giảm thời gian chờ có cảm nhận bằng `cargo-watch`.
 
 ---
 
 ### 1. Tăng Tốc Khâu Liên Kết (Faster Linking Với `lld`)
 
-Khi xem xét vòng lặp phát triển cục bộ, chúng ta chủ yếu quan tâm đến hiệu năng của **biên dịch tăng dần (Incremental Compilation)** — tức là `cargo` mất bao lâu để tái đóng gói file nhị phân sau khi chúng ta vừa sửa một hàm nhỏ.
+Khi xem xét vòng lặp phát triển cục bộ, chúng ta chủ yếu quan tâm đến hiệu năng của **biên dịch tăng dần (Incremental Compilation)** — tức là `cargo` mất bao lâu để xây dựng lại binary sau khi sửa mã nguồn.
 
-Một phần lớn thời gian trong quá trình này bị tiêu tốn ở **giai đoạn liên kết (Linking phase)** — khâu kết nối các file đối tượng (`.o`, `.rlib`) sau các bước biên dịch trước đó thành file nhị phân thực thi cuối cùng.
+Một phần đáng kể thời gian có thể nằm ở **giai đoạn liên kết (Linking phase)** — khâu kết hợp đầu ra của các bước biên dịch trước đó thành binary thực thi cuối cùng.
 
-Linker mặc định của hệ điều hành thường hoạt động ổn định nhưng không được tối ưu cho tốc độ. Chúng ta có thể thay thế bằng **`lld`** — một linker hiệu năng cao phát triển bởi dự án LLVM.
+Linker mặc định làm tốt công việc của nó, nhưng có một lựa chọn nhanh hơn: **`lld`**, linker do dự án LLVM phát triển.
 
 Để kích hoạt `lld`, bạn hãy tạo một file cấu hình `.cargo/config.toml` ngay trong thư mục gốc của dự án:
 
@@ -73,8 +73,7 @@ rustflags = ["-C", "link-arg=-fuse-ld=/opt/homebrew/opt/llvm/bin/ld64.lld"]
 ```
 
 <Callout type="info">
-  **Cập nhật công nghệ mới (`mold` linker):**  
-  Bên cạnh `lld`, hiện nay cộng đồng còn có [**`mold`**](https://github.com/rui314/mold) do Rui Ueyama phát triển với tốc độ liên kết cực kỳ ngoạn mục trên môi trường Linux. Trên các dự án lớn, `mold` có thể nhanh hơn linker mặc định tới hàng chục lần.
+  Tác giả cũng nhắc đến [**`mold`**](https://github.com/rui314/mold) như một linker mới có vẻ nhanh hơn `lld`. Khi viết sách, ông nhận định còn sớm để dùng nó làm linker mặc định, nhưng gợi ý nên theo dõi dự án.
 </Callout>
 
 ---
@@ -125,7 +124,11 @@ Thực hành này mang lại những tác động tích cực to lớn:
 * **Loại bỏ ác mộng giải quyết xung đột mã nguồn (Merge Conflicts)**: Các nhánh tính năng ngắn ngủi giúp giảm thiểu nguy cơ rẽ nhánh quá xa so với `main`.
 * **Thắt chặt vòng lặp phản hồi (Tightening Feedback Loop)**: Bạn sẽ không bao giờ rơi vào cái bẫy tự giam mình viết code trong suốt hai tuần, để rồi phát hiện ra giải pháp của mình hoàn toàn không thể hòa hợp với phần còn lại của hệ thống.
 
-Chúng ta hiện thực hóa điều đó bằng một tập hợp các bước kiểm tra tự động chạy trên mọi commit: **CI Pipeline**.
+Chúng ta hiện thực hóa điều đó bằng một tập hợp các bước kiểm tra tự động chạy trên mọi commit: **CI Pipeline**. Nếu một bước kiểm tra thất bại, thay đổi không thể được merge vào `main`.
+
+CI thường còn được dùng cho những kiểm tra quan trọng khác ngoài việc bảo đảm chất lượng code, chẳng hạn quét cây dependency để tìm lỗ hổng đã biết, lint và format.
+
+Trong các phần tiếp theo, chúng ta sẽ lần lượt tìm hiểu những kiểm tra có thể đưa vào CI của dự án Rust cùng các công cụ tương ứng, sau đó xem các cấu hình pipeline có sẵn cho một số nhà cung cấp CI lớn.
 
 ```text
                      ĐƯỜNG ỐNG CI HOÀN CHỈNH CHO RUST
@@ -158,7 +161,7 @@ Nếu pipeline của bạn chỉ có duy nhất một bước, đó bắt buộc
 cargo test
 ```
 
-`cargo test` sẽ tự động biên dịch toàn bộ dự án trước khi thực thi các ca kiểm thử đơn vị (*unit tests*) và kiểm thử tích hợp (*integration tests*).
+`cargo test` cũng tự biên dịch dự án trước khi chạy test, vì vậy bạn không cần gọi `cargo build` trước. Dù vậy, nhiều pipeline vẫn chạy `cargo build` trước test để cache dependencies.
 
 ---
 
@@ -173,7 +176,7 @@ cargo install cargo-tarpaulin
 cargo tarpaulin --ignore-tests
 ```
 
-`tarpaulin` có thể xuất dữ liệu để tích hợp trực tiếp lên các dịch vụ phân tích chất lượng như Codecov hay Coveralls.
+`tarpaulin` có thể xuất dữ liệu để tích hợp trực tiếp lên các dịch vụ phân tích chất lượng như [Codecov](https://codecov.io/) hay [Coveralls](https://coveralls.io/). Lưu ý, tại thời điểm sách được viết, `tarpaulin` chỉ hỗ trợ kiến trúc x86_64 chạy Linux.
 
 ---
 
@@ -190,7 +193,7 @@ rustup component add clippy
 cargo clippy -- -D warnings
 ```
 
-Nếu một cảnh báo cụ thể là cố ý và an toàn trong ngữ cảnh của bạn, bạn có thể chủ động bỏ qua cảnh báo đó bằng thuộc tính `#[allow(clippy::lint_name)]` ngay trên khối mã tương ứng.
+Nếu một cảnh báo cụ thể là cố ý và an toàn trong ngữ cảnh của bạn, bạn có thể chủ động bỏ qua cảnh báo đó bằng thuộc tính `#[allow(clippy::lint_name)]` ngay trên khối mã tương ứng. Cũng có thể tắt lint gây nhiễu cho cả dự án trong `clippy.toml` hoặc bằng chỉ thị cấp dự án `#![allow(clippy::lint_name)]`. Danh sách lint và cách tinh chỉnh được mô tả trong [README của clippy](https://github.com/rust-lang/rust-clippy#configuration).
 
 ---
 
@@ -210,6 +213,8 @@ cargo fmt
 cargo fmt -- --check
 ```
 
+Lệnh kiểm tra sẽ thất bại nếu commit chứa mã chưa được định dạng và in phần khác biệt ra console. Để giảm phiền toái, hầu hết IDE có tính năng “format on save”; một lựa chọn khác là dùng [git pre-push hook](https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks). Có thể cấu hình `rustfmt` cho dự án bằng `rustfmt.toml`; chi tiết nằm trong [README của rustfmt](https://github.com/rust-lang/rustfmt#configuring-rustfmt).
+
 ---
 
 ### 5. Kiểm Toán Lỗ Hổng Bảo Mật Với `cargo-audit`
@@ -226,66 +231,19 @@ cargo audit
   Trong môi trường doanh nghiệp, bạn nên chạy `cargo audit` không chỉ trên mỗi commit của PR, mà còn **đặt lịch chạy tự động hàng ngày (Daily Cron Job)**. Nhờ đó, bạn sẽ nhận được thông báo ngay khi một lỗ hổng bảo mật mới được công bố trên một thư viện của dự án đang chạy trên Production, kể cả khi dự án đó không có commit mới trong nhiều tuần.
 </Callout>
 
+`cargo-deny` là một lựa chọn khác để kiểm tra lỗ hổng dependency. Công cụ này còn hỗ trợ phát hiện crate không còn được duy trì, giới hạn license được phép dùng và tìm nhiều phiên bản của cùng một crate trong `Cargo.lock`. Nó cần cấu hình ban đầu nhưng có thể bổ sung hữu ích cho CI.
+
 ---
 
-## III. Mẫu Cấu Hình CI Chuẩn Sẵn Dùng (GitHub Actions)
+## III. Các Mẫu Cấu Hình CI Sẵn Dùng
 
-Để bạn không phải tốn hàng giờ mày mò cú pháp YAML, đây là mẫu file cấu hình `.github/workflows/general.yml` đầy đủ các bước kiểm tra chất lượng chuẩn mực:
+Để tránh mất thời gian làm quen với cú pháp riêng của từng nhà cung cấp CI, tác giả tổng hợp các cấu hình mẫu cho những dịch vụ phổ biến. Các mẫu này triển khai những bước kiểm tra đã trình bày ở trên:
 
-```yaml
-name: Rust
+* [GitHub Actions](https://gist.github.com/LukeMathWalker/5ae1107432ce283310c3e601fac915f3)
+* [CircleCI](https://gist.github.com/LukeMathWalker/6153b07c4528ca1db416f24b09038fca)
+* [GitLab CI](https://gist.github.com/LukeMathWalker/d98fa8d0fc5394b347adf734ef0e85ec)
+* [Travis](https://gist.github.com/LukeMathWalker/41c57a57a61c75cc8a9d137a8d41ec10)
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-env:
-  CARGO_TERM_COLOR: always
-
-jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Run tests
-        run: cargo test
-
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Enforce formatting
-        run: cargo fmt --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - name: Linting
-        run: cargo clippy -- -D warnings
-
-  coverage:
-    name: Code coverage
-    runs-on: ubuntu-latest
-    container:
-      image: xd009642/tarpaulin:latest
-      options: --security-opt seccomp=unconfined
-    steps:
-      - uses: actions/checkout@v3
-      - name: Generate code coverage
-        run: cargo tarpaulin --verbose --workspace
-```
+Thông thường, việc điều chỉnh một cấu hình có sẵn cho phù hợp với dự án sẽ dễ hơn viết mới từ đầu.
 
 Bây giờ toàn bộ hệ thống công cụ và quy trình kiểm thử tự động đã sẵn sàng. Chúng ta sẽ bước sang **Chương 2** để định hình bài toán thực tế mà chúng ta sẽ giải quyết: **Hệ thống Email Newsletter**.

@@ -35,11 +35,9 @@ Mỗi khi thêm một hàm có khả năng thất bại vào request handler, ta
 
 Hãy tư duy dưới góc độ **Các tầng trừu tượng (Abstraction Layers)**: Bên gọi hàm `subscribe` (chính là Actix-web router và middleware) thực sự **cần** biết điều gì?
 
-Tầng web bên ngoài chỉ cần biết đúng một thông tin duy nhất: **Cần trả về mã phản hồi HTTP nào cho client (thông qua `ResponseError`)**.
+Request handler cần quyết định response HTTP nào sẽ trả về (`ResponseError`), nhưng không nhất thiết phải phơi bày mọi bước triển khai trong kiểu lỗi của mình. Trong ví dụ này, caller không cần phân biệt `SendEmailError` với `TransactionCommitError` để quyết định status code; cả hai đều được ánh xạ thành lỗi 500.
 
-Web server không hiểu và cũng không cần hiểu sự khác biệt nghiệp vụ giữa việc `SendEmailError` hay `TransactionCommitError` thất bại. Đối với web server, tất cả những lỗi đó đều quy về một bản chất duy nhất: *Hệ thống đã gặp một lỗi bất ngờ ngoài tầm kiểm soát và cần trả về mã 500 cho người dùng*.
-
-Do đó, kiểu lỗi lý tưởng ở tầng này chỉ nên có đúng hai nhóm khả năng:
+Vì vậy, kiểu lỗi ở tầng này có thể gom các lỗi nội bộ thành một nhóm `UnexpectedError`, bên cạnh lỗi validation:
 
 ```rust
 //! src/routes/subscriptions.rs 
@@ -110,11 +108,10 @@ Thêm vào `Cargo.toml`:
 anyhow = "1"
 ```
 
-Theo tài liệu của crate:
-> `anyhow::Error` là một wrapper bao bọc xung quanh một dynamic error type, tương tự như `Box<dyn std::error::Error>`, nhưng sở hữu các ưu điểm vượt trội:
-> - Yêu cầu lỗi phải thỏa mãn `Send`, `Sync` và `'static` (an toàn tuyệt đối khi gửi qua các luồng async của tokio).
-> - Đảm bảo luôn sẵn sàng `Backtrace`, ngay cả khi kiểu lỗi gốc không hỗ trợ.
-> - Được tối ưu dung lượng bộ nhớ: chỉ chiếm đúng kích thước 1 từ máy (narrow pointer - 1 word size).
+Theo tài liệu của crate, `anyhow::Error` bọc một dynamic error type và tương tự `Box<dyn std::error::Error>`, với một số khác biệt:
+- Yêu cầu lỗi thỏa mãn `Send`, `Sync` và `'static`.
+- Đảm bảo có thể truy cập backtrace, kể cả khi kiểu lỗi bên dưới không cung cấp.
+- Được biểu diễn bằng narrow pointer — một word thay vì hai.
 
 Hãy thay thế `Box<dyn std::error::Error>` bằng `anyhow::Error`:
 
@@ -211,13 +208,13 @@ Trong cộng đồng Rust, có một quan niệm truyền miệng rất phổ bi
           (Kết hợp thiserror)                               (Kết hợp anyhow)
 ```
 
-1. **Khi nào dùng `thiserror`**:
-   - Khi bạn muốn bên gọi có khả năng dùng `match` để xử lý từng trường hợp lỗi cụ thể (ví dụ: phân biệt giữa lỗi dữ liệu 400 và lỗi hạ tầng 500, hoặc phân biệt lỗi mất mạng để retry với lỗi sai cú pháp SQL).
-   - Thường xuất hiện ở các thư viện hoặc ranh giới giữa các tầng kiến trúc cần kiểm soát chặt chẽ.
+1. **Khi nào dùng enum với `thiserror`**:
+   - Khi bên gọi cần phân biệt failure mode bằng `match` để đưa ra hành động khác nhau.
+   - Enum cho caller nhiều quyền kiểm soát, đổi lại họ phải xem xét các biến thể và quyết định trường hợp nào cần xử lý riêng. Thư viện thường không thể giả định intent của mọi caller, nên kiểu lỗi liệt kê có thể phù hợp; nhưng đây không phải quy tắc cứng dựa trên việc code là library hay application.
 
-2. **Khi nào dùng `anyhow`**:
-   - Khi bên gọi không thể và không muốn can thiệp cứu vãn tình thế, chỉ cần chuyển tiếp lỗi lên cấp cao nhất để ghi log hoặc trả về phản hồi chung chung cho người dùng.
-   - Khi bạn muốn làm giàu ngữ cảnh lỗi nhanh chóng bằng `.context(...)` mà không cần tốn công định nghĩa hàng chục biến thể enum vô nghĩa.
+2. **Khi nào dùng kiểu lỗi mờ đục với `anyhow`**:
+   - Khi caller không cần truy cập programmatic vào chi tiết lỗi bên trong và chủ yếu cần báo cáo lỗi cho operator hoặc user.
+   - Có thể chọn `anyhow` hoặc `eyre` nếu API của chúng phù hợp; `anyhow` cũng cho phép bổ sung context bằng `.context(...)`.
 
 ---
 
@@ -228,14 +225,14 @@ Khi một request gặp sự cố trong hệ thống của chúng ta, nếu quan
 2. Một dòng log do `actix_web` phát ra khi chuyển đổi kiểu lỗi thành `actix_web::Error`.
 3. Một dòng log tổng hợp do middleware `tracing_actix_web::TracingLogger` phát ra.
 
-Việc log trùng lặp này gây ô nhiễm hệ thống giám sát (log spamming), làm gia tăng chi phí lưu trữ đám mây và gây hoang mang cho operator: *"Đây là 3 lỗi độc lập xảy ra đồng thời, hay chỉ là 1 lỗi duy nhất bị ghi nhiều lần?"*
+Việc log trùng lặp khiến operator khó biết đây là ba lỗi độc lập hay cùng một lỗi bị ghi nhiều lần. Trong ví dụ này, ba bản ghi không cung cấp ba thông tin khác nhau; chúng làm nhiễu việc đọc log.
 
 <Callout type="info" title="Nguyên Tắc Vàng Khi Ghi Log Lỗi">
 **"Errors should be logged when they are handled" (Lỗi chỉ nên được ghi log khi nó thực sự được xử lý).**
 </Callout>
 
-- Nếu một hàm chỉ đơn thuần chuyển tiếp lỗi lên tầng trên thông qua toán tử `?`, hàm đó **TUYỆT ĐỐI KHÔNG** được ghi log. Nó chỉ nên làm giàu ngữ cảnh thông qua `.context()` nếu cần.
-- Việc ghi log sự cố chưa được xử lý tại biên dịch vụ (edge) phải được ủy quyền toàn bộ cho một **middleware tập trung duy nhất** (`tracing_actix_web::TracingLogger`).
+- Nếu một hàm chỉ đơn thuần chuyển tiếp lỗi lên tầng trên thông qua toán tử `?`, hàm đó không nên ghi log lỗi tại chỗ; nếu phù hợp, có thể bổ sung ngữ cảnh.
+- Nếu lỗi được truyền lên request handler, việc ghi log trong ví dụ này được giao cho middleware `tracing_actix_web::TracingLogger`.
 
 Vì vậy, chúng ta dọn dẹp triệt để các lệnh log thừa trong `insert_subscriber` và `store_token`:
 
@@ -268,6 +265,6 @@ Chúng ta đã trải qua toàn bộ hành trình tiến hóa của hệ thống
 4. **Tối ưu năng suất với Tooling hiện đại**: Kết hợp nhuần nhuyễn `thiserror` (cho enum điều khiển luồng nghiệp vụ) và `anyhow` (cho lỗi mờ đục đính kèm ngữ cảnh).
 5. **Văn hóa ghi log chuyên nghiệp**: Loại bỏ log rác, chỉ ghi log tại nơi lỗi thực sự được xử lý.
 
-<Callout type="info" title="Bài tập thực hành củng cố">
-Hãy áp dụng toàn bộ kỹ thuật đã học trong chương này để tái cấu trúc lại route handler `src/routes/subscriptions_confirm.rs`. Tạo một kiểu lỗi `ConfirmationError`, định nghĩa các biến thể cần thiết, cấu hình status code phù hợp và đảm bảo telemetry log ghi lại đầy đủ nguyên nhân nếu token không hợp lệ hoặc database bị lỗi.
+<Callout type="info" title="Bài tập thực hành">
+Áp dụng các khái niệm trong chương cho request handler `confirm`: cải thiện response trả về cho người dùng khi dữ liệu form không hợp lệ. Có thể tham khảo implementation trong repository GitHub của sách.
 </Callout>

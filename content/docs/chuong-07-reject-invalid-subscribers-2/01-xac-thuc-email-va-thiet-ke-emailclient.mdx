@@ -45,7 +45,7 @@ flowchart TD
     B --> C[Sinh subscription_token ngẫu nhiên & lưu vào DB]
     C --> D[Gửi email chứa link xác thực kèm token qua Postmark]
     D --> E[Trả về HTTP 200 OK cho User]
-    
+
     F[User nhấp vào link trong email] --> G[Browser gửi GET /subscriptions/confirm?token=XYZ]
     G --> H[Truy vấn subscriber_id từ token]
     H --> I[Cập nhật status thành confirmed]
@@ -69,7 +69,7 @@ Hầu hết các nhà cung cấp dịch vụ gửi email chuyên nghiệp ngày 
 
 ### 1. Lựa Chọn Nhà Cung Cấp Email API
 
-Trên thị trường có rất nhiều tên tuổi lớn như AWS SES, SendGrid, Mailgun, Mailchimp và Postmark. Chúng ta lựa chọn **[Postmark](https://postmarkapp.com)** vì API cực kỳ trực quan, tài liệu xuất sắc, và gói miễn phí của họ cho phép thử nghiệm ngay mà không đòi hỏi phải nhập thông tin thẻ tín dụng.
+Trên thị trường có rất nhiều tên tuổi lớn như AWS SES, SendGrid, Mailgun, Mailchimp và Postmark. Tác giả chọn **[Postmark](https://postmarkapp.com)** vì muốn có API đơn giản, quy trình bắt đầu sử dụng thuận tiện và gói miễn phí không yêu cầu nhập thẻ tín dụng chỉ để thử nghiệm. Đây là lựa chọn của sách, không phải khuyến nghị rằng Postmark vượt trội hơn các nhà cung cấp khác. Trước khi tiếp tục, cần đăng ký Postmark và xác thực một địa chỉ người gửi đơn lẻ (single sender).
 
 Để chuẩn bị, bạn cần tạo một tài khoản Postmark và xác thực một địa chỉ email người gửi (single sender):
 
@@ -102,8 +102,8 @@ impl EmailClient {
 }
 ```
 
-<Callout type="info" title="Tại Sao Lại Cần Cả Nội Dung HTML Lẫn Plain Text?">
-Một số ứng dụng đọc email cổ điển hoặc trên thiết bị đầu cuối không hỗ trợ render HTML. Ngoài ra, một số người dùng có thói quen tắt chế độ hiển thị HTML vì lý do bảo mật. Gửi kèm cả phiên bản Plain Text là một thực hành kỹ thuật chuyên nghiệp, đảm bảo thông điệp luôn được truyền tải trọn vẹn đến 100% độc giả.
+<Callout type="info" title="Vì sao cần cả HTML và Plain Text?">
+Một số ứng dụng email không thể hiển thị HTML; một số người dùng cũng chủ động tắt email HTML. Gửi cả hai phiên bản giúp nội dung vẫn đọc được trong những trường hợp đó.
 </Callout>
 
 Khai báo module mới trong `src/lib.rs`:
@@ -122,7 +122,7 @@ pub mod telemetry;
 
 ### 3. Hiện Thực REST Client Bằng `reqwest`
 
-Trong hệ sinh thái Rust, [`reqwest`](https://crates.io/crates/reqwest) là thư viện HTTP Client phổ biến và được kiểm chứng qua thực tế nhiều nhất. Chúng ta đưa `reqwest` từ `dev-dependencies` lên `dependencies` trong `Cargo.toml`:
+Trong hệ sinh thái Rust, [`reqwest`](https://crates.io/crates/reqwest) là thư viện HTTP Client phổ biến và được kiểm chứng qua thực tế nhiều nhất. Chương này dùng `reqwest` phiên bản `0.11`; chuyển crate từ `dev-dependencies` lên `dependencies` trong `Cargo.toml`. Các lựa chọn được nêu gồm giao diện đồng bộ hoặc bất đồng bộ, triển khai Rust thuần hay binding, và executor tương thích. Ở đây chọn giao diện bất đồng bộ vì ứng dụng đã dùng `tokio` qua `actix-web`; bật `rustls-tls` thay cho `default-tls` để không phụ thuộc thư viện hệ thống.
 
 ```toml
 # Cargo.toml
@@ -134,28 +134,29 @@ default-features = false
 features = ["json", "rustls-tls"]
 ```
 
-#### Connection Pooling (Tái Sử Dụng Kết Nối)
-Mỗi lần thiết lập kết nối HTTP (đặc biệt là HTTPS) đều tốn kém tài nguyên: bắt tay TCP 3 bước (TCP handshake), bắt tay mã hóa TLS, đàm phán chứng chỉ... Nếu mỗi lần gửi email chúng ta lại tạo một kết nối mới, hiệu năng ứng dụng sẽ sụt giảm nghiêm trọng.
+#### Connection Pooling (Tái sử dụng kết nối)
+Trước mỗi request, client cần thiết lập kết nối tới server; việc này tốn kém hơn với HTTPS. Tạo kết nối mới cho từng request có thể làm giảm hiệu năng và dưới tải có thể dẫn tới cạn socket.
 
-Rất may mắn, bên dưới lớp vỏ của `reqwest::Client` đã tích hợp sẵn một **Connection Pool**. Việc clone một `reqwest::Client` thực chất chỉ là clone một con trỏ `Arc` tham chiếu đến pool kết nối nội bộ!
+`reqwest::Client` khởi tạo connection pool. Dùng lại cùng một client cho nhiều request giúp tái sử dụng kết nối; gọi `Client::clone` cũng không tạo pool mới mà chỉ clone con trỏ tới pool hiện có.
 
 ```rust
 //! src/email_client.rs
 use crate::domain::SubscriberEmail;
 use reqwest::Client;
+use secrecy::Secret;
 
 pub struct EmailClient {
     http_client: Client,
     base_url: String,
     sender: SubscriberEmail,
-    authorization_token: String,
+    authorization_token: Secret<String>,
 }
 
 impl EmailClient {
     pub fn new(
-        base_url: String, 
+        base_url: String,
         sender: SubscriberEmail,
-        authorization_token: String,
+        authorization_token: Secret<String>,
     ) -> Self {
         Self {
             http_client: Client::new(),
@@ -168,7 +169,7 @@ impl EmailClient {
 ```
 
 #### Tái Sử Dụng Trong Actix-Web
-Để chia sẻ `EmailClient` cho các Actix worker threads mà không cấp phát lại bộ nhớ cho các trường chuỗi (`base_url`, `authorization_token`), chúng ta bọc `EmailClient` vào `actix_web::web::Data` (con trỏ `Arc` luồng an toàn), tương tự như cách chúng ta đã làm với `PgPool`:
+Để dùng lại cùng `EmailClient` trong các request của `actix-web`, ta có thể đặt nó trong application context và lấy ra bằng extractor `web::Data`. Có hai cách: derive `Clone` cho client và truyền bản clone vào `app_data`, hoặc bọc client bằng `Data` (dùng `Arc`) rồi clone `Data` cho từng `App`. Ở đây chọn cách thứ hai vì ngoài `Client`, `EmailClient` còn giữ `base_url` và `sender`; cách này chia sẻ cả các giá trị ấy giữa các `App`. Tác giả cũng lưu ý rằng chi phí cấp phát chuỗi hay clone con trỏ là nhỏ trong bối cảnh tổng thể.
 
 ```rust
 //! src/startup.rs
@@ -202,7 +203,7 @@ pub fn run(
 
 Làm thế nào để kiểm thử phương thức `send_email` mà không phải gửi hàng nghìn email rác thật đến Postmark làm cạn kiệt hạn ngạch tài khoản?
 
-Chúng ta cần một **Mock Server** chạy trên localhost để đánh chặn (intercept) các request HTTP đi ra. Crate [`wiremock`](https://github.com/lukemathwalker/wiremock-rs) của Luke Mathwalker là giải pháp tiêu chuẩn vàng trong hệ sinh thái Rust.
+Ta cần một **Mock Server** chạy trên localhost để chặn các request HTTP đi ra. Chương này dùng crate [`wiremock`](https://github.com/lukemathwalker/wiremock-rs) để thực hiện việc đó.
 
 ```toml
 # Cargo.toml
@@ -225,6 +226,7 @@ mod tests {
     use fake::faker::internet::en::SafeEmail;
     use fake::faker::lorem::en::{Paragraph, Sentence};
     use fake::{Fake, Faker};
+    use secrecy::Secret;
     use wiremock::matchers::any;
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -234,10 +236,9 @@ mod tests {
         let mock_server = MockServer::start().await;
         let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
         let email_client = EmailClient::new(
-            mock_server.uri(), 
-            sender, 
-            Faker.fake(),
-            std::time::Duration::from_millis(200),
+            mock_server.uri(),
+            sender,
+            Secret::new(Faker.fake()),
         );
 
         // Thiết lập kỳ vọng: Mọi request gửi tới mock_server phải nhận được phản hồi 200 OK
@@ -319,7 +320,10 @@ impl EmailClient {
         };
         self.http_client
             .post(&url)
-            .header("X-Postmark-Server-Token", &self.authorization_token)
+            .header(
+                "X-Postmark-Server-Token",
+                self.authorization_token.expose_secret(),
+            )
             .json(&request_body)
             .send()
             .await?
@@ -329,13 +333,15 @@ impl EmailClient {
 }
 ```
 
-<Callout type="info" title="Tối Ưu Bộ Nhớ: Zero-Allocation Serialization">
-Chú ý struct `SendEmailRequest<'a>` sử dụng các tham chiếu chuỗi `&'a str` thay vì sở hữu kiểu `String`. Nhờ đó, việc tuần tự hóa (serialize) sang JSON diễn ra trực tiếp từ các tham chiếu sẵn có mà **không tốn thêm một byte bộ nhớ nào** để clone chuỗi!
+<Callout type="info" title="Tránh cấp phát chuỗi không cần thiết">
+`SendEmailRequest<'a>` giữ các trường dưới dạng `&'a str` thay vì tạo các `String` mới bằng `to_owned`. Nhờ vậy không cần cấp phát và sao chép từng chuỗi chỉ để dựng request body.
 </Callout>
 
-### Kiểm Thử Toàn Diện Các Kịch Bản Thất Bại (Failure Modes)
+### Kiểm thử request, lỗi HTTP và timeout
 
-Một client mạng chuẩn production bắt buộc phải xử lý khéo léo các lỗi ngoại cảnh:
+Bài test ban đầu chỉ dùng matcher `any()` và `.expect(1)` để xác nhận có đúng một request. Sau đó, siết điều kiện theo từng phần: header `X-Postmark-Server-Token` tồn tại, `Content-Type` là `application/json`, path là `/email`, method là `POST`. Với body, test dùng custom `wiremock::Match`: parse request bytes bằng `serde_json`, rồi xác nhận có đủ các key `From`, `To`, `Subject`, `HtmlBody`, `TextBody`. Lần đầu matcher thất bại vì `serde` phát ra key snake_case; thêm `#[serde(rename_all = "PascalCase")]` khiến test khớp với định dạng Postmark. Test được đổi tên thành `send_email_sends_the_expected_request`.
+
+`reqwest::Response::error_for_status` là cần thiết: `send().await` chỉ báo lỗi gửi request/kết nối/redirect, không trả `Err` chỉ vì server phản hồi status 4xx hoặc 5xx. Test với status 500 cho thấy điều đó và xác nhận thêm `.error_for_status()?` để chuyển response lỗi thành error.
 
 1. **Lỗi máy chủ trả về mã HTTP 500**:
    ```rust
@@ -352,25 +358,104 @@ Một client mạng chuẩn production bắt buộc phải xử lý khéo léo c
    claims::assert_err!(outcome);
    ```
 
-2. **Xử lý Timeout (Mạng chập chờn, server treo kết nối)**:
-   Nếu máy chủ Postmark bị quá tải và không phản hồi, ứng dụng của chúng ta không thể treo kết nối vĩnh viễn chờ đợi. Chúng ta cấu hình timeout cho `reqwest::ClientBuilder` (mặc định 10 giây).
-   
-   Trong bài test, chúng ta giả lập tình huống server phản hồi cực chậm bằng phương thức `.set_delay`:
+2. **Timeout khi server phản hồi chậm**:
+   Test ban đầu dùng `wiremock` delay 180 giây nhưng không cấu hình timeout, nên phải chờ rất lâu và giữ connection bận; khi nhiều request như vậy tích tụ, có thể gây suy giảm hiệu năng hoặc cạn socket. Nguyên tắc rút ra là đặt timeout cho mọi thao tác I/O. `reqwest` cho phép đặt timeout toàn client hoặc từng request; sách chọn timeout toàn client 10 giây trong `EmailClient::new`:
    ```rust
-   let response = ResponseTemplate::new(200)
-       .set_delay(std::time::Duration::from_secs(180)); // Trì hoãn 3 phút!
-
-   Mock::given(any())
-       .respond_with(response)
-       .expect(1)
-       .mount(&mock_server)
-       .await;
-
-   let outcome = email_client
-       .send_email(&subscriber_email, &subject, &content, &content)
-       .await;
-
-   claims::assert_err!(outcome);
+   let http_client = Client::builder()
+       .timeout(std::time::Duration::from_secs(10))
+       .build()
+       .unwrap();
    ```
 
-Toàn bộ các unit test của `EmailClient` đều hoạt động chính xác và bao phủ trọn vẹn cả trường hợp thành công lẫn các ca lỗi biên mạng. Bây giờ, trước khi tích hợp `EmailClient` vào luồng ứng dụng chính, chúng ta cần dừng lại một chút để xem xét lại cấu trúc bộ kiểm thử tích hợp (integration tests) của toàn dự án.
+   Để test chạy nhanh, thêm `timeout: std::time::Duration` vào constructor, lấy cấu hình từ `timeout_milliseconds` trong `EmailClientSettings`, đặt giá trị cấu hình mẫu là `10000`, và dùng 200ms trong test helper. Khi đó test delay 180 giây nhận `Err` sau khoảng 200ms; toàn bộ test suite trong sách chạy dưới một giây.
+
+### Chi tiết vòng lặp kiểm thử `EmailClient`
+
+Mock server mặc định trả `404 Not Found` cho request không khớp mock nào. `Mock::given(any())` khớp mọi request, bất kể method, path, header hay body; `respond_with(ResponseTemplate::new(200))` trả `200 OK` không có body. Mock chỉ hoạt động sau khi được `.mount(&mock_server)`. Kỳ vọng `.expect(1)` yêu cầu đúng một request khớp; cũng có thể dùng `expect(1..)` cho ít nhất một request hoặc `expect(1..=3)` cho từ một đến ba request. Wiremock kiểm tra kỳ vọng khi `MockServer` bị drop lúc kết thúc test và panic nếu số lượng không đúng.
+
+Ban đầu test dùng `todo!()` nên thất bại với `not yet implemented`. Thay tạm phần thân `send_email` bằng `Ok(())` giúp chạy tới cuối test, khi đó Wiremock báo kỳ vọng một request nhưng nhận được không. Hai thất bại này xác nhận test đã kiểm tra cả việc gọi code lẫn side effect HTTP, chứ không chỉ kiểm tra giá trị trả về.
+
+Trong test này, dữ liệu đầu vào được sinh bằng `fake`: địa chỉ từ `SafeEmail`, subject từ `Sentence(1..2)`, nội dung từ `Paragraph(1..10)`. Dữ liệu ngẫu nhiên làm rõ rằng giá trị cụ thể không ảnh hưởng đến thuộc tính đang kiểm tra. Với dữ liệu cố định, người đọc có thể tự hỏi liệu test có phụ thuộc nhầm vào một giá trị cụ thể hay không.
+
+Sau khi hoàn thiện request, có thể tăng độ chính xác của test bằng các matcher sau:
+
+```rust
+use wiremock::matchers::{header, header_exists, method, path};
+
+Mock::given(header_exists("X-Postmark-Server-Token"))
+    .and(header("Content-Type", "application/json"))
+    .and(path("/email"))
+    .and(method("POST"))
+    .and(SendEmailBodyMatcher)
+    .respond_with(ResponseTemplate::new(200))
+    .expect(1)
+    .mount(&mock_server)
+    .await;
+```
+
+Matcher cho body cần kiểm tra JSON hợp lệ và các trường bắt buộc, nhưng không cần so sánh giá trị từng trường:
+
+```rust
+use wiremock::Request;
+
+struct SendEmailBodyMatcher;
+
+impl wiremock::Match for SendEmailBodyMatcher {
+    fn matches(&self, request: &Request) -> bool {
+        let result: Result<serde_json::Value, _> =
+            serde_json::from_slice(&request.body);
+        if let Ok(body) = result {
+            body.get("From").is_some()
+                && body.get("To").is_some()
+                && body.get("Subject").is_some()
+                && body.get("HtmlBody").is_some()
+                && body.get("TextBody").is_some()
+        } else {
+            false
+        }
+    }
+}
+```
+
+Để viết matcher này cần thêm `serde_json = "1"` vào `dev-dependencies`. Lần đầu test không khớp; thêm `dbg!(&body)` cho thấy JSON có các key `from`, `to`, `subject`, `html_body`, `text_body` ở snake_case. Postmark yêu cầu PascalCase, nên kiểu request cần `#[serde(rename_all = "PascalCase")]`. Sau đó đổi tên test thành `send_email_sends_the_expected_request`, phản ánh đúng việc nó kiểm tra toàn bộ request.
+
+Mẫu API của Postmark cho thấy request `POST https://api.postmarkapp.com/email` có `Accept: application/json`, `Content-Type: application/json`, header `X-Postmark-Server-Token` và JSON gồm `From`, `To`, `Subject`, `TextBody`, `HtmlBody`. Phản hồi thành công mẫu là `HTTP/1.1 200 OK` với JSON chứa `To`, `SubmittedAt`, `MessageID`, `ErrorCode: 0`, `Message: "OK"`. Phần triển khai chỉ cần kiểm tra status; không deserialize response body.
+
+Khi gọi `.send().await?`, compiler ban đầu báo không thể chuyển `reqwest::Error` thành `String`: `String` chỉ là kiểu placeholder được chọn để phác thảo interface. Đổi chữ ký sang `Result<(), reqwest::Error>` giải quyết lỗi kiểu. Cần lưu authorization token trong `EmailClient` dưới dạng `secrecy::Secret<String>` để tránh vô tình log secret; cấu hình `EmailClientSettings` cũng nhận trường này. Chỉ cấu hình token phát triển trong `base.yaml`; production token phải được cung cấp ngoài version control vì là secret. Header được tạo bằng `self.authorization_token.expose_secret()`.
+
+`send().await?` chỉ trả lỗi khi gửi request thất bại, gặp redirect loop hoặc vượt giới hạn redirect; một phản hồi HTTP 500 vẫn là `Ok(Response)`. Vì vậy, sau `send().await?` phải gọi `.error_for_status()?` để các status lỗi trở thành `reqwest::Error`. Test 200 dùng `claims::assert_ok!`; test 500 dùng `claims::assert_err!`. Test chỉ thiết lập matcher `any()` tối thiểu vì mục tiêu ở đây là kiểm tra kết quả của `send_email`, không phải lặp lại assertions về hình dạng request.
+
+### Timeout và test helpers
+
+Test delay của Wiremock dùng `ResponseTemplate::new(200).set_delay(Duration::from_secs(180))`. Không có timeout, test vẫn chạy sau 60 giây và kết nối tiếp tục bận; nhiều request treo có thể khiến client mở thêm kết nối, gây suy giảm hiệu năng hoặc socket exhaustion. Quy tắc thực hành là đặt timeout cho mọi thao tác I/O. Có thể đặt timeout dùng chung trên `Client` hoặc timeout riêng từng request; ở đây timeout mặc định của client là 10 giây:
+
+```rust
+let http_client = Client::builder()
+    .timeout(std::time::Duration::from_secs(10))
+    .build()
+    .unwrap();
+```
+
+Thời gian 10 giây làm test chờ lâu, nên đưa `timeout: std::time::Duration` thành tham số của `EmailClient::new`, thêm `timeout_milliseconds: u64` vào `EmailClientSettings` cùng hàm chuyển sang `Duration::from_millis`, và cấu hình `10000` trong `base.yaml`. Test helper khởi tạo client với timeout 200ms; test response delay 180 giây khi đó phải nhận `Err` sau khoảng 200ms. Constructor production nhận timeout từ configuration, và test tích hợp cũng truyền `configuration.email_client.timeout()`.
+
+Bốn test của client có thể dùng chung các helper sinh subject, content, email và client:
+
+```rust
+fn subject() -> String { Sentence(1..2).fake() }
+fn content() -> String { Paragraph(1..10).fake() }
+fn email() -> SubscriberEmail {
+    SubscriberEmail::parse(SafeEmail().fake()).unwrap()
+}
+fn email_client(base_url: String) -> EmailClient {
+    EmailClient::new(
+        base_url,
+        email(),
+        Secret::new(Faker.fake()),
+        std::time::Duration::from_millis(200),
+    )
+}
+```
+
+Nhờ vậy, test request chỉ còn phần Arrange (MockServer và matcher), Act (gọi `send_email`) và Assert (kỳ vọng mock được kiểm tra khi drop). Cấu hình timeout kiểm thử thấp giúp toàn bộ test suite trong ví dụ của sách hoàn tất dưới một giây.
+
+Toàn bộ các unit test của `EmailClient` đều hoạt động chính xác và bao phủ trường hợp thành công lẫn các ca lỗi biên mạng. Bây giờ, trước khi tích hợp `EmailClient` vào luồng ứng dụng chính, chúng ta cần dừng lại để xem xét cấu trúc bộ kiểm thử tích hợp (integration tests) của toàn dự án.

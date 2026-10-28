@@ -46,12 +46,16 @@ pub struct Content {
 
 Ở endpoint `POST /subscriptions`, vì tiếp nhận dữ liệu từ HTML form trên web, chúng ta đã sử dụng định dạng `application/x-www-form-urlencoded` cùng extractor `web::Form`. 
 
-Ở endpoint `POST /newsletters`, đây là một API hướng tới giao tiếp giữa các dịch vụ (Machine-to-Machine REST API), do đó định dạng chuẩn mực nhất là **JSON** (`application/json`). Actix-web cung cấp sẵn extractor `web::Json`:
+Các struct lồng nhau được Serde deserialize bình thường vì `String` và `Content` đều triển khai `serde::Deserialize`; dữ liệu JSON phải có `title` và object `content` với cả `html` lẫn `text`.
+
+Với `POST /newsletters`, không bị ràng buộc bởi form HTML, ta chọn JSON (`application/json`), một định dạng thường dùng trong REST API. Actix-web cung cấp extractor `web::Json`:
 
 ```rust
 //! src/routes/newsletters.rs
-use actix_web::{web, HttpResponse};
+use actix_web::web;
+use actix_web::HttpResponse;
 
+// Prefix body with `_` to avoid a compiler warning about the unused argument.
 pub async fn publish_newsletter(_body: web::Json<BodyData>) -> HttpResponse {
     HttpResponse::Ok().finish()
 }
@@ -148,7 +152,7 @@ async fn get_confirmed_subscribers(
 }
 ```
 
-Điểm mới ở đây là macro `sqlx::query_as!`. Khác với `query!`, `query_as!` tự động ánh xạ các cột lấy được từ câu lệnh SQL sang các trường tương ứng của struct `ConfirmedSubscriber` tại thời điểm biên dịch (compile-time checked).
+Macro `sqlx::query_as!` ánh xạ các cột lấy được từ câu lệnh SQL sang các trường tương ứng của struct `ConfirmedSubscriber`. Ở bước này, trường `email` vẫn là `String`; việc chuyển dữ liệu thô từ database sang kiểu miền đã được kiểm tra sẽ được xử lý ở phần tiếp theo.
 
 <Callout type="info" title="Tối ưu băng thông dữ liệu">
 Lưu ý rằng struct `ConfirmedSubscriber` chỉ chứa đúng một trường `email`. Câu lệnh SQL chỉ lấy đúng cột `email` thay vì `SELECT *`. Đây là nguyên tắc quan trọng trong thiết kế hệ thống lớn: hạn chế tối đa dữ liệu trung chuyển qua mạng, giảm tải cho cả PostgreSQL lẫn bộ nhớ ứng dụng.
@@ -212,7 +216,7 @@ pub async fn publish_newsletter(
     for subscriber in subscribers {
         email_client
             .send_email(
-                &subscriber.email,
+                subscriber.email,
                 &body.title,
                 &body.content.html,
                 &body.content.text,
@@ -223,7 +227,7 @@ pub async fn publish_newsletter(
 }
 ```
 
-Đoạn code trên chưa thể biên dịch ngay vì `send_email` trả về `Result<(), reqwest::Error>`, trong khi `PublishError` chỉ bọc `anyhow::Error`. Để gắn ngữ cảnh cụ thể cho lỗi khi gửi thư tới từng địa chỉ, ta sử dụng `anyhow::Context`.
+Đoạn code trên chưa biên dịch được vì `send_email` yêu cầu `SubscriberEmail`, trong khi truy vấn hiện trả về `String`; thêm vào đó, `reqwest::Error` không thể tự chuyển thành `PublishError`. Phần tiếp theo xử lý lỗi gửi bằng cách thêm ngữ cảnh qua `anyhow::Context`.
 
 ### So sánh: `context` vs `with_context`
 

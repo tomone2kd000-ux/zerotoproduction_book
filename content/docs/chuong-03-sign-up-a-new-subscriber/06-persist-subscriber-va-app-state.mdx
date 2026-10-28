@@ -89,9 +89,9 @@ Tại sao `connection` lại bắt buộc phải cài đặt trait `Clone`?
 Hãy quan sát kỹ chữ ký của `HttpServer::new`: nó không nhận vào một struct `App`, mà nhận vào **một closure sinh ra struct `App`** (`F: Fn() -> App`).
 
 Mô hình thực thi của `actix-web` hoạt động như sau:
-- Khi khởi động, `HttpServer` sẽ tự động tạo ra một số lượng worker thread tương ứng với số nhân CPU khả dụng trên máy chủ.
-- Mỗi worker thread sẽ sở hữu một bản sao độc lập của `App`, được tạo ra bằng cách thực thi chính closure mà bạn truyền vào.
-- Do closure được gọi nhiều lần trên nhiều luồng khác nhau, mọi biến từ môi trường bên ngoài muốn đưa vào bên trong `App` bắt buộc phải sao chép được (`Clone`).
+- `HttpServer` khởi chạy các worker; mặc định số lượng worker dựa trên số CPU khả dụng.
+- Mỗi worker có một bản sao `App`, được tạo bằng cách gọi closure truyền vào `HttpServer::new`.
+- Closure có thể được gọi nhiều lần, nên dữ liệu được capture từ môi trường bên ngoài cần dùng được qua các lần gọi đó (trong ví dụ này, cần `Clone`).
 
 Nhưng struct `PgConnection` đại diện cho một socket TCP độc quyền giữa ứng dụng và máy chủ Postgres. Bạn không thể "clone" một kết nối TCP vật lý trên hệ điều hành!
 
@@ -183,7 +183,7 @@ Hãy mở tài liệu của `sqlx`: kiểu dữ liệu nào vừa hỗ trợ chi
 Khi bạn thực hiện truy vấn trên một tham chiếu bất biến `&PgPool`:
 1. `sqlx` sẽ tự động mượn một kết nối `PgConnection` còn rỗi từ pool.
 2. Thực thi câu lệnh SQL trên kết nối đó.
-3. Tự động hoàn trả kết nối về lại pool khi hoàn tất để các request khác sử dụng.
+3. Trả kết nối về pool khi hoàn tất để các request khác sử dụng.
 
 ### Cập Nhật Mã Nguồn Chuyển Sang `PgPool`
 

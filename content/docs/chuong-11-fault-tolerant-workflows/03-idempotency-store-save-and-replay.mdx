@@ -1,248 +1,61 @@
 ---
 title: "11.7 - 11.8 Lưu Trữ Trạng Thái: Idempotency Store & Cơ Chế Save-and-Replay"
-description: "Thiết kế bảng lưu trữ Idempotency trong PostgreSQL với Composite Type, kỹ thuật tuần tự hóa HTTP Response và xây dựng cơ chế Save-and-Replay trong Rust."
+description: "Lựa chọn Postgres, schema idempotency và các bước serialize/khôi phục HTTP response trong Actix và SQLx."
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
 # 11.7 - 11.8 Lưu Trữ Trạng Thái: Idempotency Store & Cơ Chế Save-and-Replay
 
-Để triển khai chiến lược **Stateful Save-and-Replay**, chúng ta cần một nơi lưu trữ bền vững (Idempotency Store) để ghi lại cặp khóa-giá trị: `(User ID, Idempotency Key) -> Phản hồi HTTP (HttpResponse)`.
+## 11.7 Chọn nơi lưu Idempotency Store
 
----
+Mỗi key cần gắn với response HTTP tương ứng. Ứng dụng đang dùng Redis cho session và Postgres cho dữ liệu còn lại. Không nên giữ key mãi mãi: việc đó vừa tốn chỗ vừa không thực tế. Các bản ghi cũng phải được cô lập theo user để thao tác của người này không làm lộ kết quả cho người khác.
 
-## I. Lựa Chọn Cơ Sở Dữ Liệu: Postgres Hay Redis?
+Lưu trong session có sẵn cách ly và hết hạn, nhưng tuổi thọ key khi đó bị buộc vào tuổi thọ session. Redis có vẻ phù hợp hơn vì có thể đặt TTL riêng và tự dọn bản ghi. Tuy nhiên, yêu cầu sắp tới là cập nhật idempotency record cùng application state trong một SQL transaction. Vì thế chương chọn Postgres; Redis sẽ không đáp ứng được transaction SQL chung đó.
 
-Hệ thống của chúng ta hiện đang có sẵn cả Redis lẫn PostgreSQL. Đâu là nơi thích hợp nhất để lưu Idempotency Store?
+### Schema lưu response
 
-Thoạt nhìn, Redis có vẻ rất hấp dẫn vì nó hỗ trợ cơ chế tự hủy bản ghi sau một khoảng thời gian (TTL) mà không cần dọn rác thủ công.
-
-Tuy nhiên, trong các bài toán chịu lỗi phân tán, một yêu cầu kiến trúc tối quan trọng sẽ xuất hiện: **Chúng ta cần sửa đổi trạng thái ứng dụng và cập nhật Idempotency Store bên trong CÙNG MỘT GIAO DỊCH NGUYÊN TỬ (ACID Transaction)**!
-- Redis và PostgreSQL là hai hệ thống độc lập. Chúng không thể tham gia vào cùng một SQL Transaction. Nếu thao tác trên Postgres thành công nhưng ghi vào Redis thất bại (hoặc ngược lại), hệ thống sẽ rơi vào trạng thái bất nhất (inconsistent state).
-- **Quyết định kiến trúc**: Chúng ta chọn **PostgreSQL**. Toàn bộ dữ liệu nghiệp vụ lẫn thông tin Idempotency sẽ nằm chung trong một cơ sở dữ liệu duy nhất, cho phép khóa dòng và rollback nguyên tử hoàn hảo.
-
----
-
-## II. Thiết Kế Bảng `idempotency` Trong PostgreSQL
-
-Chúng ta cần lưu trữ các thành phần cốt lõi của một phản hồi HTTP:
-- `user_id`: Định danh người thực hiện thao tác.
-- `idempotency_key`: Khóa bất biến do client sinh ra.
-- `response_status_code`: Mã trạng thái HTTP (200, 303, 400,...) dạng số nguyên `smallint`.
-- `response_headers`: Danh sách các cặp tiêu đề `(tên, giá trị)`.
-- `response_body`: Phần thân phản hồi dưới dạng mảng byte nhị phân `bytea`.
-- `created_at`: Thời điểm tạo để phục vụ dọn dẹp sau này.
-
-### Xử lý mảng Tuple trong PostgreSQL bằng Composite Type
-
-Một header HTTP có thể có nhiều giá trị khác nhau cho cùng một tên gọi. Do đó, các header được biểu diễn dưới dạng danh sách các cặp `(HeaderName, HeaderValue)`.
-
-Vì PostgreSQL không hỗ trợ mảng của kiểu tuple trực tiếp, chúng ta định nghĩa một **Composite Type** có tên là `header_pair`:
-
-Tạo migration mới:
-```bash
-sqlx migrate add create_idempotency_table
-```
-
-Nội dung file migration:
+Khóa chính ghép `(user_id, idempotency_key)` vừa phân biệt thao tác vừa cô lập theo user. `created_at` được lưu để có thể dọn key cũ. Thay vì serialize một `HttpResponse` thành blob — Actix không cung cấp serialization/deserialization cho kiểu này — ta tự lưu status, headers và body. Ví dụ giả định chỉ làm việc với HTTP/1.1 nên không lưu HTTP version. Status dùng `SMALLINT`; body dùng `BYTEA`. Header name là `TEXT`, value là `BYTEA` vì value có thể chứa octet không phải text. Header được lưu thành mảng cặp; Postgres không có array tuple trực tiếp nên định nghĩa composite type:
 
 ```sql
--- migrations/<timestamp>_create_idempotency_table.sql
 CREATE TYPE header_pair AS (
     name TEXT,
     value BYTEA
 );
 
 CREATE TABLE idempotency (
-    user_id uuid NOT NULL REFERENCES users(user_id),
-    idempotency_key TEXT NOT NULL,
-    response_status_code SMALLINT NOT NULL,
-    response_headers header_pair[] NOT NULL,
-    response_body BYTEA NOT NULL,
-    created_at timestamptz NOT NULL,
-    PRIMARY KEY(user_id, idempotency_key)
+   user_id uuid NOT NULL REFERENCES users(user_id),
+   idempotency_key TEXT NOT NULL,
+   response_status_code SMALLINT NOT NULL,
+   response_headers header_pair[] NOT NULL,
+   response_body BYTEA NOT NULL,
+   created_at timestamptz NOT NULL,
+   PRIMARY KEY(user_id, idempotency_key)
 );
 ```
 
-Chạy migration:
-```bash
-sqlx migrate run
-```
+Nguồn lưu ý tránh composite `http_response` lồng nhau do lỗi SQLx/Rust compiler được dẫn trong sách. Đây là chi tiết phụ thuộc phiên bản công cụ ở thời điểm viết.
 
----
+## 11.8 Save-and-replay
 
-## III. Kiểu Dữ Liệu Miền `IdempotencyKey`
+### Nhận và kiểm tra key
 
-Trong form gửi bản tin HTML, chúng ta bổ sung một trường input ẩn chứa `idempotency_key`:
+Endpoint được kích hoạt bằng HTML form, nên cách thực tế là thêm `idempotency_key` vào form body thay vì dựa vào header. Trang GET tạo key mới bằng `uuid::Uuid::new_v4()` và đặt vào hidden input. Kiểu miền `IdempotencyKey` kiểm tra key không rỗng và độ dài nhỏ hơn 50 ký tự; không yêu cầu một định dạng cụ thể. Giá trị lỗi được đổi thành `400 Bad Request`. Khi thêm field bắt buộc, các test request cũ cũng phải được cập nhật để gửi key.
 
-```rust
-//! src/idempotency/key.rs
+### Đọc response đã lưu
 
-#[derive(Debug)]
-pub struct IdempotencyKey(String);
+Truy vấn `idempotency` theo cả `user_id` và key bằng `fetch_optional`. SQLx cần type annotation để giải mã `header_pair[]` thành `Vec<HeaderPairRecord>`; struct Rust tương ứng có `name: String`, `value: Vec<u8>` và derive `sqlx::Type` với `type_name = "header_pair"`. Response được khôi phục bằng status code, append từng header và dùng body đã lưu. Nếu không tìm thấy hàng thì trả `None`.
 
-impl TryFrom<String> for IdempotencyKey {
-    type Error = anyhow::Error;
+Khi handler tìm thấy response, nó gửi lại flash message thành công và trả response đã lưu mà không chạy vòng lặp gửi email. Mô hình này lưu response sau lần xử lý thành công; đồng bộ hóa tình huống request đồng thời được xử lý ở mục tiếp theo, không phải bởi lần đọc đơn thuần này.
 
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        if s.is_empty() {
-            anyhow::bail!("The idempotency key cannot be empty");
-        }
-        let max_length = 50;
-        if s.len() >= max_length {
-            anyhow::bail!("The idempotency key must be shorter than {max_length} characters");
-        }
-        Ok(Self(s))
-    }
-}
+### Lưu response và xử lý body stream
 
-impl AsRef<str> for IdempotencyKey {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-```
+`HttpResponse` generic theo body type; kiểu mặc định là `BoxBody`, có thể chứa body rỗng, bytes hoặc stream. Streaming gửi payload từng chunk thay vì gom cả payload vào RAM. Muốn lưu body trong bảng, chương dùng `actix_web::body::to_bytes` để đọc hết stream vào `Bytes`. Điều này tạo áp lực bộ nhớ với payload lớn; trong ví dụ response nhỏ và không dùng streaming nên phù hợp.
 
-Kiểu `IdempotencyKey` bảo đảm rằng mọi khóa đi vào hệ thống đều không được rỗng và có độ dài tối đa 50 ký tự (đủ cho định dạng UUID v4 chuẩn).
+Body không thể đọc qua `&HttpResponse`: `body()` trả tham chiếu, trong khi đọc stream cần quyền sở hữu và mutable access; các chunk đã đọc không thể phát lại từ stream. Vì vậy `save_response` nhận ownership của response, gọi `into_parts()`, gom body bằng `to_bytes`, chuyển status và header sang dạng lưu trữ, rồi lắp response lại với `set_body()` (và `map_into_boxed_body()` trong ví dụ) để gửi cho caller.
 
----
+Khi ghi mảng custom composite, macro `sqlx::query!` không thể kiểm tra kiểu `_header_pair` lúc compile-time, nên ví dụ chuyển sang `query_unchecked!`. SQLx còn cần biết tên kiểu array; Postgres tự tạo tên `_header_pair`, được khai báo cho SQLx qua `PgHasArrayType`. Sau khi ghép `save_response` vào handler, test retry tuần tự xác nhận Postmark chỉ được gọi một lần.
 
-## IV. Cơ Chế Lưu Trữ Và Tái Hiện Phản Hồi (Save And Replay)
-
-Module `src/idempotency/persistence.rs` phụ trách việc lưu trữ và khôi phục `HttpResponse`:
-
-### 1. Truy xuất phản hồi đã lưu (`get_saved_response`)
-
-Khi có request gửi đến, hàm này kiểm tra xem trong bảng `idempotency` đã có kết quả tương ứng với `(user_id, idempotency_key)` hay chưa:
-
-```rust
-//! src/idempotency/persistence.rs
-use actix_web::HttpResponse;
-use sqlx::PgPool;
-use uuid::Uuid;
-use crate::idempotency::IdempotencyKey;
-
-pub async fn get_saved_response(
-    pool: &PgPool,
-    idempotency_key: &IdempotencyKey,
-    user_id: Uuid,
-) -> Result<Option<HttpResponse>, anyhow::Error> {
-    let saved_response = sqlx::query!(
-        r#"
-        SELECT 
-            response_status_code,
-            response_headers as "response_headers: Vec<HeaderPairRecord>",
-            response_body
-        FROM idempotency
-        WHERE 
-            user_id = $1 AND
-            idempotency_key = $2
-        "#,
-        user_id,
-        idempotency_key.as_ref()
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    if let Some(r) = saved_response {
-        let status_code = StatusCode::from_u16(r.response_status_code as u16)?;
-        let mut response = HttpResponse::build(status_code);
-        for HeaderPairRecord { name, value } in r.response_headers {
-            response.append_header((name, value));
-        }
-        Ok(Some(response.body(r.response_body)))
-    } else {
-        Ok(None)
-    }
-}
-```
-
-### 2. Lưu phản hồi mới (`save_response`)
-
-Sau khi request được thực thi thành công, chúng ta trích xuất `status_code`, `headers` và `body` từ `HttpResponse` rồi ghi vào PostgreSQL:
-
-```rust
-//! src/idempotency/persistence.rs
-
-pub async fn save_response(
-    pool: &PgPool,
-    idempotency_key: &IdempotencyKey,
-    user_id: Uuid,
-    http_response: HttpResponse,
-) -> Result<HttpResponse, anyhow::Error> {
-    let (response_head, body) = http_response.into_parts();
-    // Đọc toàn bộ body stream thành mảng byte
-    let body = actix_web::body::to_bytes(body).await.map_err(|e| anyhow::anyhow!("{}", e))?;
-    let status_code = response_head.status().as_u16() as i16;
-    
-    let headers = {
-        let mut h = Vec::with_capacity(response_head.headers().len());
-        for (name, value) in response_head.headers().iter() {
-            let name = name.as_str().to_owned();
-            let value = value.as_bytes().to_owned();
-            h.push(HeaderPairRecord { name, value });
-        }
-        h
-    };
-
-    sqlx::query!(
-        r#"
-        INSERT INTO idempotency (
-            user_id,
-            idempotency_key,
-            response_status_code,
-            response_headers,
-            response_body,
-            created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, now())
-        "#,
-        user_id,
-        idempotency_key.as_ref(),
-        status_code,
-        headers as Vec<HeaderPairRecord>,
-        body.as_ref()
-    )
-    .execute(pool)
-    .await?;
-
-    // Tái tạo lại HttpResponse ban đầu để trả về cho client
-    let http_response = response_head.set_body(body);
-    Ok(http_response)
-}
-```
-
-### 3. Tích hợp vào Request Handler
-
-Bây giờ chúng ta lắp ghép cơ chế Save-and-Replay vào `publish_newsletter`:
-
-```rust
-//! src/routes/admin/newsletter/post.rs
-
-pub async fn publish_newsletter(
-    form: web::Form<FormData>,
-    pool: web::Data<PgPool>,
-    email_client: web::Data<EmailClient>,
-    user_id: web::ReqData<UserId>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let user_id = user_id.into_inner();
-    let idempotency_key: IdempotencyKey = form.0.idempotency_key.try_into().map_err(e400)?;
-
-    // BƯỚC 1: Kiểm tra xem đã có phản hồi lưu sẵn chưa
-    if let Some(saved_response) = get_saved_response(&pool, &idempotency_key, *user_id).await.map_err(e500)? {
-        FlashMessage::info("The newsletter issue has been published!").send();
-        return Ok(saved_response);
-    }
-
-    // BƯỚC 2: Nếu chưa có, thực hiện gửi email bình thường
-    // [...] (vòng lặp gửi email)
-
-    // BƯỚC 3: Lưu lại phản hồi trước khi trả về
-    let response = see_other("/admin/newsletters");
-    let response = save_response(&pool, &idempotency_key, *user_id, response).await.map_err(e500)?;
-    FlashMessage::info("The newsletter issue has been published!").send();
-    Ok(response)
-}
-```
-
-Chạy lại bài kiểm thử ở bài trước, kịch bản thử lại tuần tự (`newsletter_creation_is_idempotent`) đã chính thức chuyển sang màu xanh (`passed`)!
+<Callout type="warn" title="Phạm vi của cơ chế ở bước này">
+Ở giai đoạn đầu, response được INSERT sau khi gửi xong email. Hai request đồng thời vẫn có thể cùng gửi email trước khi một request gặp lỗi khóa chính; việc lưu response ở cuối chưa tạo synchronization. Mục 11.9 thay đổi quy trình bằng cách tạo hàng idempotency và giữ transaction từ đầu xử lý.
+</Callout>
